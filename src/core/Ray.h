@@ -7,12 +7,13 @@ namespace fishy
 	{
 	public:
 		Ray() = default;
-		Ray(const vector3& o, const vector3& d) : origin(o), direction(d) {}
+		Ray(const vector3& o, const vector3& d, float distance = Infinity) : origin(o), direction(d), distance(distance) {}
 
 		vector3 operator()(float t) const { return origin + direction * t; }
 
 		vector3 origin;
 		vector3 direction;
+        float distance;
 	};
 }
 

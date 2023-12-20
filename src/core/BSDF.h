@@ -9,7 +9,7 @@ namespace fishy
     {
         vector3 f; // scattering rate
         vector3 wi; // world wi
-        float pdf{};
+        double pdf{};
     };
 
     class BSDF
@@ -23,12 +23,12 @@ namespace fishy
         }
 
         vector3 f(const vector3 &world_wo, const vector3 &world_wi) const;
-        vector3 pdf(const vector3 &world_wo, const vector3 &world_wi) const;
+        double pdf(const vector3 &world_wo, const vector3 &world_wi) const;
         virtual BSDFSample sample(const vector3 &wo, const vector2 &random) const;
 
     protected:
         virtual vector3 f_(const vector3 &wo, const vector3 &wi) const = 0;
-        virtual vector3 pdf_(const vector3 &wo, const vector3 &wi) const = 0;
+        virtual double pdf_(const vector3 &wo, const vector3 &wi) const = 0;
         virtual BSDFSample sample_(const vector3 &wo, const vector2 &random) const = 0;
 
     private:
@@ -45,7 +45,7 @@ namespace fishy
         LambertionReflection(const Frame& shadingFrame, const vector3& albedo) : BSDF(shadingFrame), albedo(albedo){}
 
         vector3 f_(const fishy::vector3 &wo, const fishy::vector3 &wi) const override;
-        vector3 pdf_(const fishy::vector3 &wo, const fishy::vector3 &wi) const override;
+        double pdf_(const vector3 &wo, const vector3 &wi) const override;
         BSDFSample sample_(const fishy::vector3 &wo, const fishy::vector2 &random) const override;
 
     private:

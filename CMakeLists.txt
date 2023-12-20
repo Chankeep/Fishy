@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.26)
+cmake_minimum_required(VERSION 3.25)
 project(Fishy)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -28,16 +28,14 @@ add_executable(Fishy
         ${HEADERS}
         main.cpp
         src/Fishy.cpp
-        src/shapes/sphere.cpp
+        src/shapes/Sphere.cpp
         src/samplers/RandomSampler.cpp
         src/core/Transform.cpp
         src/core/Shape.cpp
         src/core/Scene.cpp
         src/core/Sampler.cpp
         src/core/Ray.cpp
-        src/core/Interaction.cpp
         src/core/Integrator.cpp
-        src/core/Geometry.cpp
         src/core/Frame.cpp
         src/core/Film.cpp
         src/core/Camera.cpp

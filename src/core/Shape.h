@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include "ray.h"
+#include "Interaction.h"
 
 namespace fishy
 {
@@ -7,6 +8,6 @@ namespace fishy
 	{
 	public:
 		virtual ~Shape() = default;
-		virtual float Intersect(const Ray& r) const = 0;
+		virtual bool Intersect(Ray &r, Interaction& isect) const = 0;
 	};
 }

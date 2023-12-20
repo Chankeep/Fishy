@@ -1,3 +1,9 @@
 # Project exclude paths
 /cmake-build-debug/
 /cmake-build-release/
+/.idea/inspectionProfiles/Project_Default.xml
+/.idea/vcs.xml
+/.gitignore
+/.gitignore
+/out/build
+/.vs

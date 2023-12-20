@@ -1,11 +1,13 @@
 #include <QApplication>
 #include <QPushButton>
+#include "src/Fishy.h"
 
 int main(int argc, char *argv[])
 {
     QApplication a(argc, argv);
-    QPushButton button("Hello world!", nullptr);
-    button.resize(200, 100);
-    button.show();
+    auto *fish = new fishy::Fishy();
+    qDebug() << fish->render();
+
+
     return QApplication::exec();
 }

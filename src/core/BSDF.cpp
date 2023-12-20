@@ -24,7 +24,7 @@ namespace fishy
         return res;
     }
 
-    vector3 BSDF::pdf(const vector3 &world_wo, const vector3 &world_wi) const
+    double BSDF::pdf(const vector3 &world_wo, const vector3 &world_wi) const
     {
         return pdf_(ToLocal(world_wo), ToLocal(world_wi));
     }
@@ -34,15 +34,21 @@ namespace fishy
         return albedo * InvPi;
     }
 
-    vector3 LambertionReflection::pdf_(const vector3 &wo, const vector3 &wi) const
+    double LambertionReflection::pdf_(const vector3 &wo, const vector3 &wi) const
     {
-        return
+        return wo.z() * wi.z() > 0 ? qAbs(wi.z()) * InvPi : 0;
     }
 
     BSDFSample LambertionReflection::sample_(const vector3 &wo, const vector2 &random) const
     {
         BSDFSample res;
 
+        res.wi = CosineSampleHemisphere(random);
+        if(wo.z() < 0)
+            res.wi.setZ(res.wi.z() * -1);
+        res.pdf = pdf_(wo, res.wi);
+        res.f = f_(wo, res.wi);
 
+        return res;
     }
 }
