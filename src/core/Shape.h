@@ -1,13 +1,15 @@
 ﻿#pragma once
-#include "ray.h"
+#include "Ray.h"
 #include "Interaction.h"
 
-namespace fishy
+#include <Qt3DCore/QEntity>
+
+namespace Fishy
 {
-	class Shape
+	class Shape : Qt3DCore::QEntity
 	{
 	public:
 		virtual ~Shape() = default;
-		virtual bool Intersect(Ray &r, Interaction& isect) const = 0;
+		virtual bool Intersect(const Ray &r, Interaction& isect) const = 0;
 	};
 }

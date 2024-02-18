@@ -2,9 +2,9 @@
 
 #include "Ray.h"
 #include "Film.h"
+#include "Fishy.h"
 
-
-namespace fishy
+namespace Fishy
 {
 
     struct CameraSample

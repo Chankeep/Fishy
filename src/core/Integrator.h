@@ -3,7 +3,7 @@
 #include "Scene.h"
 #include "Sampler.h"
 
-namespace fishy
+namespace Fishy
 {
     class Integrator
     {
@@ -20,10 +20,10 @@ namespace fishy
     {
     public:
         using Integrator::Integrator;
-        vector3 Li(fishy::Ray &ray, fishy::Scene &scene, fishy::Sampler &sampler) override{
+        vector3 Li(Ray &ray, Scene &scene, Sampler &sampler) override{
             return Li(ray, scene, sampler, 0);
         }
-        vector3 Li(fishy::Ray &ray, fishy::Scene &scene, fishy::Sampler &sampler, int depth);
+        vector3 Li(Ray &ray, Fishy::Scene &scene, Sampler &sampler, int depth);
 
 
         int maxDepth = 10;

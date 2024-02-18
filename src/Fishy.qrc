@@ -1,4 +1,4 @@
 <RCC>
-    <qresource prefix="Fishy">
+    <qresource prefix="FishyRenderer">
     </qresource>
 </RCC>

@@ -3,15 +3,15 @@
 #include <QtWidgets/QMainWindow>
 #include "ui_Fishy.h"
 
-namespace fishy
+namespace Fishy
 {
-    class Fishy : public QMainWindow
+    class FishyRenderer : public QMainWindow
     {
     Q_OBJECT
 
     public:
-        Fishy(QWidget *parent = nullptr);
-        ~Fishy();
+        FishyRenderer(QWidget *parent = nullptr);
+        ~FishyRenderer();
 
         bool render();
 

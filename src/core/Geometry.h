@@ -1,6 +1,6 @@
 ﻿#pragma once
 
-#include "common.h"
+#include "Fishy.h"
 
 #include <QColor>
 #include <QVector2D>
@@ -11,7 +11,7 @@
 #include <random>
 #include <numbers>
 
-namespace fishy
+namespace Fishy
 {
 
     constexpr double Infinity = std::numeric_limits<double>::infinity();
@@ -21,6 +21,9 @@ namespace fishy
     using vector2 = QVector2D;
     using vector3 = QVector3D;
     using vector4 = QVector4D;
+    using Color = QVector3D;
+    using Normal3 = QVector3D;
+    using Point3 = QVector3D;
 
     inline float dot(vector2 v1, vector2 v2)
     {
@@ -56,50 +59,6 @@ namespace fishy
     // 	return v * t;
     // }
 
-    template<typename T>
-    class Bounds2D
-    {
-    public:
-        Bounds2D()
-        {
-            T minNum = std::numeric_limits<T>::lowest();
-            T maxNum = std::numeric_limits<T>::max();
-            pMin = vector2(maxNum, maxNum);
-            pMax = vector2(minNum, minNum);
-        }
-
-        Bounds2D(const vector2 &p) : pMin(p), pMax(p)
-        {
-        }
-
-        Bounds2D(const vector2 &p1, const vector2 &p2)
-        {
-            pMin = vector2(std::min(p1.x(), p2.x()), std::min(p1.y(), p2.y()));
-            pMax = vector2(std::max(p1.x(), p2.x()), std::max(p1.y(), p2.y()));
-        }
-
-        vector2 Diagonal() const
-        {
-            return pMax - pMin;
-        }
-
-        T Area() const
-        {
-            const vector2 d = Diagonal();
-            return d.x() * d.y();
-        }
-
-        int MaximumExtent() const
-        {
-            vector2 diag = Diagonal();
-            if (diag.x() > diag.y())
-                return 0;
-            return 1;
-        }
-
-        vector2 pMin, pMax;
-    };
-
     inline float Clamp(float f)
     {
         if(f > 1.f)
@@ -107,6 +66,11 @@ namespace fishy
         else if(f < 0.f)
             return 0.f;
         return f;
+    }
+
+    inline bool isBlack(vector3 v)
+    {
+        return v.x() == 0.f && v.y() == 0.f && v.z() == 0.f;
     }
 
     inline QRgb Clamp(const vector3 &v)
@@ -118,9 +82,9 @@ namespace fishy
 
     inline vector2 UniformSampleDisk(const vector2 &random)
     {
-        double radius = qSqrt(random[0]);
-        double theta = 2 * Pi * random[1];
-        return {static_cast<float>(radius * qCos(theta)), static_cast<float>(radius * sin(theta))};
+        float radius = qSqrt(random[0]);
+        float theta = 2 * Pi * random[1];
+        return {radius * qCos(theta), radius * sin(theta)};
     }
 
     inline vector3 CosineSampleHemisphere(const vector2 &random)

@@ -1,7 +1,7 @@
 ﻿#include "BSDF.h"
 
 
-namespace fishy
+namespace Fishy
 {
     vector3 BSDF::ToWorld(const vector3 &v) const
     {

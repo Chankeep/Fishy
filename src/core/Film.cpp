@@ -1,8 +1,8 @@
 ﻿#include "Film.h"
 
-namespace fishy
+namespace Fishy
 {
-	bool fishy::Film::store_image() const
+	bool Fishy::Film::store_image() const
 	{
 		return renderImage->save(filename);
 	}

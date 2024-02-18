@@ -2,7 +2,7 @@
 #include "Geometry.h"
 
 
-namespace fishy
+namespace Fishy
 {
 	class Frame
 	{

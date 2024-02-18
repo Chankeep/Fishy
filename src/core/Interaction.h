@@ -2,18 +2,18 @@
 
 #include <complex>
 
-#include "common.h"
+#include "Fishy.h"
 #include "BSDF.h"
 
-namespace fishy
+namespace Fishy
 {
     class Interaction
     {
     public:
         Interaction() = default;
 
-        Interaction(const vector3 &position, const vector3 &normal, const vector3 &w_o)
-                : position(position), normal(normal), w_o(w_o)
+        Interaction(const vector3 &position, const vector3 &normal, const vector3 &w_o, float distance = Infinity)
+                : position(position), normal(normal), w_o(w_o), distance(distance)
         {
         }
 
@@ -21,6 +21,7 @@ namespace fishy
         vector3 position;
         vector3 normal;
         vector3 w_o;
+        float distance = Infinity;
 
         const BSDF *GetBsdf()
         {

@@ -3,7 +3,7 @@
 #include "Frame.h"
 
 
-namespace fishy
+namespace Fishy
 {
     struct BSDFSample
     {
@@ -44,9 +44,9 @@ namespace fishy
         LambertionReflection() = default;
         LambertionReflection(const Frame& shadingFrame, const vector3& albedo) : BSDF(shadingFrame), albedo(albedo){}
 
-        vector3 f_(const fishy::vector3 &wo, const fishy::vector3 &wi) const override;
+        vector3 f_(const Fishy::vector3 &wo, const Fishy::vector3 &wi) const override;
         double pdf_(const vector3 &wo, const vector3 &wi) const override;
-        BSDFSample sample_(const fishy::vector3 &wo, const fishy::vector2 &random) const override;
+        BSDFSample sample_(const Fishy::vector3 &wo, const Fishy::vector2 &random) const override;
 
     private:
         vector3 albedo;

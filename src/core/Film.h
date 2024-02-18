@@ -1,8 +1,8 @@
 ﻿#pragma once
 
-#include "common.h"
+#include "Fishy.h"
 
-namespace fishy
+namespace Fishy
 {
     class Film final
     {

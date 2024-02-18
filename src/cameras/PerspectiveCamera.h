@@ -1,7 +1,7 @@
 ﻿#pragma once
 #include "../core/Camera.h"
 
-namespace fishy
+namespace Fishy
 {
     class PerspectiveCamera : public Camera
     {
@@ -9,7 +9,7 @@ namespace fishy
         PerspectiveCamera(const vector3 &position, const vector3 &direction, const vector3 &up, float fov, vector2 resolution)
                 : position(position), direction(direction), up(up), resolution(resolution)
         {
-	        const float tan_fov = qTan(qDegreesToRadians(fov) / 2);
+            const float tan_fov = qTan(qDegreesToRadians(fov) / 2);
 
             right = cross(this->up, direction).normalized() * tan_fov * Aspect_ratio();
             this->up = cross(direction, right).normalized() * tan_fov;
@@ -17,9 +17,9 @@ namespace fishy
 
         virtual Ray GenerateRay(const CameraSample &sample) const override
         {
-	        const vector3 rayDirection = direction
-                                   + right * (sample.pFilm.x() / resolution.x() - 0.5)
-                                   + up * (0.5 - sample.pFilm.y() / resolution.y());
+            const vector3 rayDirection = direction
+                                         + right * (sample.pFilm.x() / resolution.x() - 0.5)
+                                         + up * (0.5 - sample.pFilm.y() / resolution.y());
 
             return {position, rayDirection.normalized()};
         }

@@ -1,7 +1,7 @@
 ﻿#pragma once
 #include "../core/Sampler.h"
 
-namespace fishy
+namespace Fishy
 {
 	class RandomSampler : public Sampler
 	{

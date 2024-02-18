@@ -1,36 +1,39 @@
 ﻿#include "Sphere.h"
 
-namespace fishy
+namespace Fishy
 {
 
-    bool Sphere::Intersect(Ray &r, Interaction &isect) const
+    bool Sphere::Intersect(const Ray &ray, Interaction &isect) const
     {
-        const vector3 oc = center - r.origin;
-        const double neg_b = dot(oc, r.direction);
-        double det = neg_b * neg_b - dot(oc, oc) + radius * radius;
+        vector3 oc = center - ray.origin;
+        float neg_b = dot(oc, ray.direction);
+        float det = neg_b * neg_b - dot(oc, oc) + radius * radius;
 
-        if (det < 0)
-            return false;
-
-        det = qSqrt(det);
-        bool isHit = false;
-        double t = 0.0;
-        constexpr double epsilon = 1e-4;
-
-        if (t = neg_b - det; t > epsilon && t < r.distance)
-            isHit = true;
-        else if (t = neg_b + det; t > epsilon && t < r.distance)
-            isHit = true;
-
-        if (isHit)
+        bool hit = false;
+        float distance = 0;
+        if (det >= 0)
         {
-            r.distance = t;
+            float sqrtDet = qSqrt(det);
 
-            vector3 hitPoint = r(t);
-            isect = Interaction(hitPoint, (hitPoint - center).normalized(), -r.direction);
-            isect.bsdf = std::make_unique<LambertionReflection>(Frame(isect.normal), vector3(0.3 / t, 0.3 / t, 0.3 / t));
+            float epsilon = 1e-4;
+            if (distance = neg_b - sqrtDet; distance > epsilon && distance < isect.distance)
+            {
+                hit = true;
+            }
+            else if (distance = neg_b + sqrtDet; distance > epsilon && distance < isect.distance)
+            {
+                hit = true;
+            }
         }
 
-        return isHit;
+        if (hit)
+        {
+
+            Point3 hit_point = ray(distance);
+            isect = Interaction(hit_point, (hit_point - center).normalized(), -ray.direction, distance);
+
+        }
+
+        return hit;
     }
 }

@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.25)
+cmake_minimum_required(VERSION 3.26)
 project(Fishy)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -8,18 +8,24 @@ set(CMAKE_AUTOUIC ON)
 
 set(CMAKE_PREFIX_PATH "E:/Qt/Qt6/6.6.0/msvc2019_64")
 
+find_package(assimp CONFIG REQUIRED)
+find_package(OpenMP REQUIRED)
+
 find_package(Qt6 COMPONENTS
         Core
         Gui
         Widgets
+        3DCore
         REQUIRED)
 
 file(GLOB_RECURSE HEADERS
         "src/cameras/*.h"
         "src/core/*.h"
+        "src/materials/*.h"
+        "src/lights/*.h"
         "src/samplers/*.h"
         "src/shapes/*.h"
-        "src/Fishy.h"
+        "src/FishyRenderer.h"
 )
 
 add_executable(Fishy
@@ -27,26 +33,23 @@ add_executable(Fishy
         src/Fishy.ui
         ${HEADERS}
         main.cpp
-        src/Fishy.cpp
+        src/FishyRenderer.cpp
         src/shapes/Sphere.cpp
-        src/samplers/RandomSampler.cpp
-        src/core/Transform.cpp
-        src/core/Shape.cpp
-        src/core/Scene.cpp
-        src/core/Sampler.cpp
-        src/core/Ray.cpp
         src/core/Integrator.cpp
-        src/core/Frame.cpp
         src/core/Film.cpp
-        src/core/Camera.cpp
         src/core/BSDF.cpp
-        src/cameras/PerspectiveCamera.cpp
+        src/shapes/Triangle.cpp
+        src/shapes/Triangle.h
+        src/shapes/ModelLoader.h
 )
 
 target_link_libraries(Fishy
         Qt::Core
         Qt::Gui
         Qt::Widgets
+        Qt::3DCore
+        assimp::assimp
+        OpenMP::OpenMP_CXX
 )
 
 if (WIN32 AND NOT DEFINED CMAKE_TOOLCHAIN_FILE)
