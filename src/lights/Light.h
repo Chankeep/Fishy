@@ -6,27 +6,30 @@
 #define FISHY_LIGHT_H
 
 #include "../core/Fishy.h"
-#include "../core/Shape.h"
+#include "../core/FishyShape.h"
 
 namespace Fishy
 {
-    class Light
+    class Light : public Qt3DRender::QPointLight
     {
     public:
         Light() = default;
-        Light(Color radiance, const Shape *shape) : radiance(radiance), shape(shape)
+
+        Light(Color radiance, const FishyShape *shape)
+        : radiance(radiance), shape(shape)
         {
         }
+
         virtual ~Light() = default;
 
-        Color Le(const Interaction& lightIsect, const vector3& wo) const
+        Color Le(const Interaction &lightIsect, const vector3 &wo) const
         {
             return dot(lightIsect.normal, wo) > 0 ? radiance : Color();
         }
 
     private:
         Color radiance;
-        const Shape *shape;
+        const FishyShape *shape;
     };
 }
 #endif //FISHY_LIGHT_H

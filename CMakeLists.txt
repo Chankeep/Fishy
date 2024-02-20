@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.26)
+cmake_minimum_required(VERSION 3.25)
 project(Fishy)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -11,12 +11,15 @@ set(CMAKE_PREFIX_PATH "E:/Qt/Qt6/6.6.0/msvc2019_64")
 find_package(assimp CONFIG REQUIRED)
 find_package(OpenMP REQUIRED)
 
-find_package(Qt6 COMPONENTS
+find_package(Qt6 COMPONENTS REQUIRED
         Core
         Gui
         Widgets
         3DCore
-        REQUIRED)
+        3dextras
+        3drender
+        3DInput
+        )
 
 file(GLOB_RECURSE HEADERS
         "src/cameras/*.h"
@@ -39,8 +42,7 @@ add_executable(Fishy
         src/core/Film.cpp
         src/core/BSDF.cpp
         src/shapes/Triangle.cpp
-        src/shapes/Triangle.h
-        src/shapes/ModelLoader.h
+        src/shapes/ModelLoader.cpp
 )
 
 target_link_libraries(Fishy
@@ -48,6 +50,9 @@ target_link_libraries(Fishy
         Qt::Gui
         Qt::Widgets
         Qt::3DCore
+        Qt::3DInput
+        Qt::3DExtras
+        Qt::3DRender
         assimp::assimp
         OpenMP::OpenMP_CXX
 )

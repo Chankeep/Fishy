@@ -36,4 +36,9 @@ namespace Fishy
 
         return hit;
     }
+
+    void Sphere::setTransform(Qt3DCore::QTransform* transform)
+    {
+//        center = transform->matrix() * center;
+    }
 }

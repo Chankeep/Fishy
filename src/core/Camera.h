@@ -21,6 +21,12 @@ namespace Fishy
         virtual Ray GenerateRay(const CameraSample &sample) const = 0;
 
         Film *film{};
+        vector3 position;
+        vector3 center;
+        vector3 right;
+        vector3 up;
+        vector2 resolution;
+        float fov;
     };
 
 

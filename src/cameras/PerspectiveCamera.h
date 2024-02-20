@@ -3,21 +3,27 @@
 
 namespace Fishy
 {
-    class PerspectiveCamera : public Camera
+class PerspectiveCamera : public Camera
     {
     public:
-        PerspectiveCamera(const vector3 &position, const vector3 &direction, const vector3 &up, float fov, vector2 resolution)
-                : position(position), direction(direction), up(up), resolution(resolution)
+        PerspectiveCamera(const vector3 &position, const vector3 &center, const vector3 &up, float fov, vector2 resolution)
         {
+            //ray tracing initialize
+            this->position = position;
+            this->center = center;
+            this->up = up;
+            this->resolution = resolution;
+            this->fov = fov;
             const float tan_fov = qTan(qDegreesToRadians(fov) / 2);
 
-            right = cross(this->up, direction).normalized() * tan_fov * Aspect_ratio();
-            this->up = cross(direction, right).normalized() * tan_fov;
+            right = cross(this->up, center).normalized() * tan_fov * Aspect_ratio();
+            this->up = cross(center, right).normalized() * tan_fov;
+
         }
 
         virtual Ray GenerateRay(const CameraSample &sample) const override
         {
-            const vector3 rayDirection = direction
+            const vector3 rayDirection = center
                                          + right * (sample.pFilm.x() / resolution.x() - 0.5)
                                          + up * (0.5 - sample.pFilm.y() / resolution.y());
 
@@ -29,11 +35,7 @@ namespace Fishy
             return resolution.x() / resolution.y();
         }
 
-        vector3 position;
-        vector3 direction;
-        vector3 right;
-        vector3 up;
-        vector2 resolution;
+
     };
 
 }

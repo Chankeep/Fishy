@@ -11,11 +11,10 @@
 
 namespace Fishy
 {
-    class Material
+    class Material : public Qt3DExtras::QPhongMaterial
     {
     public:
         Material() = default;
-
         virtual ~Material() = default;
 
         virtual std::unique_ptr<BSDF> Scattering(const Interaction &isect) const = 0;
@@ -26,12 +25,18 @@ namespace Fishy
     {
     public:
         MatteMaterial() = default;
-        explicit MatteMaterial(const Color& Kd) : Kd(Kd) {}
+
+        explicit MatteMaterial(const Color &Kd) : Kd(Kd)
+        {
+            setDiffuse(QColor(Clamp(Kd)));
+            setShininess(0.1);
+        }
 
         std::unique_ptr<BSDF> Scattering(const Interaction &isect) const override
         {
             return std::make_unique<LambertionReflection>(Frame(isect.normal), Kd);
         }
+
     private:
         Color Kd;
 

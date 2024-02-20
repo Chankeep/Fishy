@@ -4,16 +4,21 @@
 #pragma once
 
 #include "Fishy.h"
-#include "Shape.h"
+#include "FishyShape.h"
 #include "Interaction.h"
 #include "../materials/Material.h"
 #include "../lights/Light.h"
 
 namespace Fishy
 {
-    class Primitive
+    class Primitive : public Qt3DCore::QEntity
     {
     public:
+        Primitive(Qt3DCore::QNode *parent = nullptr)
+                : Qt3DCore::QEntity(parent)
+        {
+        }
+
         virtual ~Primitive() = default;
         virtual bool Intersect(Ray &r, Interaction &isect) const = 0;
     };
@@ -21,15 +26,23 @@ namespace Fishy
     class GeometricPrimitive : public Primitive
     {
     public:
-        std::shared_ptr<Shape> shape;
+        std::shared_ptr<FishyShape> shape;
         std::shared_ptr<Material> material;
         std::shared_ptr<Light> light;
 
-        GeometricPrimitive(const std::shared_ptr<Shape> &shape,
+        GeometricPrimitive(const std::shared_ptr<FishyShape> &shape,
                 const std::shared_ptr<Material> &material,
-                const std::shared_ptr<Light> &light)
-                : shape(shape), material(material), light(light)
+                const std::shared_ptr<Light> &light,
+                Qt3DCore::QNode *parent = nullptr,
+                vector3 translation = vector3(0,0,0))
+                : Primitive(parent), shape(shape), material(material), light(light)
         {
+            auto *transform = new Qt3DCore::QTransform();
+            transform->setTranslation(translation);
+            shape->setTransform(transform);
+            addComponent(transform);
+            addComponent(shape.get());
+            addComponent(material.get());
         }
 
         ~GeometricPrimitive() override = default;

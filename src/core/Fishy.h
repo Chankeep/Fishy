@@ -1,8 +1,14 @@
 #pragma once
 
 #include "Geometry.h"
+#include "omp.h"
 
 #include <QImage>
+#include <Qt3DCore>
+#include <Qt3DExtras/Qt3DExtras>
+#include <Qt3DRender/Qt3DRender>
+#include <Qt3DCore/QEntity>
+#include <Qt3DCore/QTransform>
 
 #include <algorithm>
 #include <cmath>
@@ -17,7 +23,7 @@ namespace Fishy
     class Ray;
     class Transform;
     struct Interaction;
-    class Shape;
+    class FishyShape;
     class Sphere;
     class Primitive;
     class GeometricPrimitive;
@@ -31,4 +37,5 @@ namespace Fishy
     class Material;
     class MatteMaterial;
     class Light;
+    class ModelLoader;
 }

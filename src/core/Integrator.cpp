@@ -1,12 +1,11 @@
 ﻿#include "Integrator.h"
-#include "omp.h"
 
 namespace Fishy
 {
     inline std::atomic renderSignal = 0;
-    void Integrator::Render(Scene &scene, Camera &camera, Sampler &originalSampler, Film &film)
+    void Integrator::Render(Scene *scene, Camera &camera, Sampler &originalSampler, Film *film)
     {
-        auto resolution = film.Resolution();
+        auto resolution = film->Resolution();
         int height = resolution.y();
         int weight = resolution.x();
         auto TotalPixels = resolution.x() * resolution.y();
@@ -28,16 +27,16 @@ namespace Fishy
 
                     L = L + Li(ray, scene, *sampler) * (1. / sampler->SamplesPerPixel());
                 } while (sampler->StartNextSample());
-                film.setPixelColor(x, y, Clamp(L));
+                film->setPixelColor(x, y, Clamp(L));
                 renderSignal++;
             }
         }
     }
 
-    Fishy::vector3 Fishy::PathIntegrator::Li(Fishy::Ray &ray, Fishy::Scene &scene, Fishy::Sampler &sampler, int depth)
+    vector3 PathIntegrator::Li(Ray &ray, Scene *scene, Sampler &sampler, int depth)
     {
         Interaction isect;
-        if (!scene.Intersect(ray, isect))
+        if (!scene->Intersect(ray, isect))
             return {};
 
         if (depth > maxDepth)
