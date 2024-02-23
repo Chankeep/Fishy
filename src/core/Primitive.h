@@ -11,6 +11,8 @@
 
 namespace Fishy
 {
+    static int objectIndex = 1;
+
     class Primitive : public Qt3DCore::QEntity
     {
     public:
@@ -21,6 +23,7 @@ namespace Fishy
 
         virtual ~Primitive() = default;
         virtual bool Intersect(Ray &r, Interaction &isect) const = 0;
+        virtual void updateRenderData() const = 0;
     };
 
     class GeometricPrimitive : public Primitive
@@ -29,20 +32,22 @@ namespace Fishy
         std::shared_ptr<FishyShape> shape;
         std::shared_ptr<Material> material;
         std::shared_ptr<Light> light;
+        Qt3DCore::QTransform *transform;
 
         GeometricPrimitive(const std::shared_ptr<FishyShape> &shape,
                 const std::shared_ptr<Material> &material,
-                const std::shared_ptr<Light> &light,
-                Qt3DCore::QNode *parent = nullptr,
-                vector3 translation = vector3(0,0,0))
-                : Primitive(parent), shape(shape), material(material), light(light)
+                const vector3 &translation,
+                const std::shared_ptr<Light> &light = nullptr
+        )
+                : shape(shape), material(material), light(light)
         {
-            auto *transform = new Qt3DCore::QTransform();
+            transform = new Qt3DCore::QTransform();
             transform->setTranslation(translation);
-            shape->setTransform(transform);
             addComponent(transform);
             addComponent(shape.get());
             addComponent(material.get());
+            qDebug() << material->metaObject()->className();
+            this->setObjectName(QString("Object_%1").arg(QString::number(objectIndex++)));
         }
 
         ~GeometricPrimitive() override = default;
@@ -59,6 +64,13 @@ namespace Fishy
 
             return hit;
         }
+
+        void updateRenderData() const override
+        {
+            shape->setTransform(transform);
+            material->setColor();
+        }
+
 
     };
 

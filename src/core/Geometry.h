@@ -73,6 +73,12 @@ namespace Fishy
         return v.x() == 0.f && v.y() == 0.f && v.z() == 0.f;
     }
 
+    inline QColor color2QColor(const Color& color)
+    {
+        QColor res = {static_cast<int>(color.x() * 255), static_cast<int>(color.y() * 255), static_cast<int>(color.z() * 255)};
+        return res;
+    }
+
     inline QRgb Clamp(const vector3 &v)
     {
         QColor color = {static_cast<int>(Clamp(v.x()) * 255), static_cast<int>(Clamp(v.y()) * 255), static_cast<int>(Clamp(v.z()) * 255)};

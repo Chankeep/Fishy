@@ -2,6 +2,7 @@
 // Created by chankeep on 2/19/2024.
 //
 #include "ModelLoader.h"
+#include <Qt3DRender/QMesh>
 
 namespace Fishy
 {
@@ -19,6 +20,7 @@ namespace Fishy
 
     std::shared_ptr<TriangleMesh> ModelLoader::processMesh(aiMesh *mesh, const aiScene *scene)
     {
+
         long nVertices = mesh->mNumVertices;
         long nTriangles = mesh->mNumFaces;
         int *vertexIndices = new int[nTriangles * 3];
@@ -34,7 +36,6 @@ namespace Fishy
             P[i].setX(mesh->mVertices[i].x);
             P[i].setY(mesh->mVertices[i].y);
             P[i].setZ(mesh->mVertices[i].z);
-            qDebug() << P[i];
             //法向量
             if (mesh->HasNormals())
             {
@@ -89,21 +90,29 @@ namespace Fishy
         }
         //将物体填充到基元
         for (int i = 0; i < trisObj.size(); ++i)
-            prims.emplace_back(std::make_shared<GeometricPrimitive>(trisObj[i], material, nullptr));
-
+        {
+            prims.emplace_back(std::make_shared<GeometricPrimitive>(trisObj[i], material, vector3(0,0,0)));
+        }
         meshes.clear();
-        directory = "";
     }
 
-    void ModelLoader::loadModel(QString path)
+    void ModelLoader::loadModel(const QString& path)
     {
-        Assimp::Importer import;
-        const aiScene *scene = import.ReadFile(path.toStdString(), aiProcess_Triangulate | aiProcess_ConvertToLeftHanded);
-        if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode)
+        Assimp::Importer importer;
+        Assimp::Exporter exporter;
+        const aiScene *scene = importer.ReadFile(path.toStdString(), aiProcess_Triangulate | aiProcess_ConvertToLeftHanded);
+//        auto mesh = new Qt3DRender::QMesh();
+//        mesh->setSource(path);
+        if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode )
             return;
         qDebug() << "successfully loaded model!";
+        if(path.section('.', -1, -1) != QString("obj"))
+        {
+            exporter.Export(scene, "obj", "./temp.obj");
+        }
         directory = path.section('/', -1, -1);
         processNode(scene->mRootNode, scene);
+
     }
 
 }

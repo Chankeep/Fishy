@@ -5,7 +5,7 @@ namespace Fishy
 
     bool Sphere::Intersect(const Ray &ray, Interaction &isect) const
     {
-        vector3 oc = center - ray.origin;
+        vector3 oc = origin - ray.origin;
         float neg_b = dot(oc, ray.direction);
         float det = neg_b * neg_b - dot(oc, oc) + radius * radius;
 
@@ -30,15 +30,18 @@ namespace Fishy
         {
 
             Point3 hit_point = ray(distance);
-            isect = Interaction(hit_point, (hit_point - center).normalized(), -ray.direction, distance);
+            isect = Interaction(hit_point, (hit_point - origin).normalized(), -ray.direction, distance);
 
         }
 
         return hit;
     }
 
-    void Sphere::setTransform(Qt3DCore::QTransform* transform)
+    void Sphere::setTransform(Qt3DCore::QTransform *transform)
     {
-//        center = transform->matrix() * center;
+        auto translation = transform->translation();
+        translation.setX(-translation.x());
+        transform->setTranslation(translation);
+        origin = transform->matrix().map(origin);
     }
 }

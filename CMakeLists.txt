@@ -6,7 +6,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-set(CMAKE_PREFIX_PATH "E:/Qt/Qt6/6.6.0/msvc2019_64")
+set(CMAKE_PREFIX_PATH "E:\\Qt\\QtEdu\\6.6.2\\msvc2019_64")
 
 find_package(assimp CONFIG REQUIRED)
 find_package(OpenMP REQUIRED)
@@ -28,6 +28,7 @@ file(GLOB_RECURSE HEADERS
         "src/lights/*.h"
         "src/samplers/*.h"
         "src/shapes/*.h"
+        "src/fishy/*.h"
         "src/FishyRenderer.h"
 )
 
@@ -43,6 +44,7 @@ add_executable(Fishy
         src/core/BSDF.cpp
         src/shapes/Triangle.cpp
         src/shapes/ModelLoader.cpp
+        src/fishy/SceneManager.cpp
 )
 
 target_link_libraries(Fishy

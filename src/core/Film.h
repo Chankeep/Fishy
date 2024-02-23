@@ -17,6 +17,11 @@ namespace Fishy
             qDebug() << renderImage->colorCount();
         }
 
+        QImage* getImage()
+        {
+            return renderImage.get();
+        }
+
         int width() const
         {
             return static_cast<int>(fullResolution.x());

@@ -18,6 +18,8 @@ namespace Fishy
         Light(Color radiance, const FishyShape *shape)
         : radiance(radiance), shape(shape)
         {
+            setColor(color2QColor(radiance.normalized()));
+            setIntensity(1.8);
         }
 
         virtual ~Light() = default;

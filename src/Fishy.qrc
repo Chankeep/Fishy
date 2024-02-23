@@ -1,4 +1,7 @@
 <RCC>
-    <qresource prefix="FishyRenderer">
+    <qresource prefix="/FishyRenderer"/>
+    <qresource prefix="/">
+        <file>../assets/models/testCube.fbx</file>
+        <file>../assets/models/bunny.obj</file>
     </qresource>
 </RCC>

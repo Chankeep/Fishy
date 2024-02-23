@@ -38,4 +38,5 @@ namespace Fishy
     class MatteMaterial;
     class Light;
     class ModelLoader;
+    class SceneManager;
 }

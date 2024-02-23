@@ -14,9 +14,10 @@ class PerspectiveCamera : public Camera
             this->up = up;
             this->resolution = resolution;
             this->fov = fov;
+            aspectRatio = resolution.x() / resolution.y();
             const float tan_fov = qTan(qDegreesToRadians(fov) / 2);
 
-            right = cross(this->up, center).normalized() * tan_fov * Aspect_ratio();
+            right = cross(this->up, center).normalized() * tan_fov * aspectRatio;
             this->up = cross(center, right).normalized() * tan_fov;
 
         }
@@ -28,11 +29,6 @@ class PerspectiveCamera : public Camera
                                          + up * (0.5 - sample.pFilm.y() / resolution.y());
 
             return {position, rayDirection.normalized()};
-        }
-
-        float Aspect_ratio() const
-        {
-            return resolution.x() / resolution.y();
         }
 
 

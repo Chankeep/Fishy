@@ -26,6 +26,7 @@ namespace Fishy
         vector3 right;
         vector3 up;
         vector2 resolution;
+        float aspectRatio;
         float fov;
     };
 

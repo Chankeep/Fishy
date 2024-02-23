@@ -18,6 +18,7 @@ namespace Fishy
         virtual ~Material() = default;
 
         virtual std::unique_ptr<BSDF> Scattering(const Interaction &isect) const = 0;
+        virtual void setColor() = 0;
 
     };
 
@@ -29,7 +30,8 @@ namespace Fishy
         explicit MatteMaterial(const Color &Kd) : Kd(Kd)
         {
             setDiffuse(QColor(Clamp(Kd)));
-            setShininess(0.1);
+            setAmbient(QColor(qRgb(25,25,25)));
+            setShininess(0.2);
         }
 
         std::unique_ptr<BSDF> Scattering(const Interaction &isect) const override
@@ -37,9 +39,21 @@ namespace Fishy
             return std::make_unique<LambertionReflection>(Frame(isect.normal), Kd);
         }
 
+        void setColor() override
+        {
+            auto diffuse = this->diffuse();
+            Kd.setX(diffuse.redF());
+            Kd.setY(diffuse.greenF());
+            Kd.setZ(diffuse.blueF());
+        }
+
+
     private:
         Color Kd;
 
     };
+
+
 }
+
 #endif //FISHY_MATERIAL_H

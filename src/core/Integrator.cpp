@@ -13,7 +13,9 @@ namespace Fishy
         for (int y = 0; y < height; y++)
         {
             std::unique_ptr<Sampler> sampler = originalSampler.Clone();
+            auto msg = QString("\rRendering (%1 spp) %2").arg( sampler->SamplesPerPixel()).arg( 100. * renderSignal / TotalPixels);
             qDebug("\rRendering (%d spp) %5.2f%%", sampler->SamplesPerPixel(), 100. * renderSignal / TotalPixels);
+            emit(sentMessage(msg));
             for (int x = 0; x < weight; x++)
             {
                 vector3 L{};
