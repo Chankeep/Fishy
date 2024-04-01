@@ -18,16 +18,34 @@
 
 namespace Fishy
 {
+    enum FMaterialType
+    {
+        Matte,
+        Mirror,
+        Glass,
+        Glossy
+    };
+
+    enum FShapeType
+    {
+        FPlane,
+        FSphere,
+        FTriangle
+    };
+
     class Scene;
     class Integrator;
     class Ray;
     class Transform;
     struct Interaction;
     class FishyShape;
+    class Plane;
     class Sphere;
+    class Triangle;
     class Primitive;
     class GeometricPrimitive;
     class Camera;
+    class PerspectiveCamera;
     struct CameraSample;
     class Sampler;
     class RandomSamper;
@@ -36,7 +54,12 @@ namespace Fishy
     class BSDF;
     class Material;
     class MatteMaterial;
+    class MirrorMaterial;
+    class GlassMaterial;
     class Light;
+    class PointLight;
+    class AreaLight;
     class ModelLoader;
     class SceneManager;
+
 }

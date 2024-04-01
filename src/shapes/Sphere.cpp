@@ -25,7 +25,6 @@ namespace Fishy
                 hit = true;
             }
         }
-
         if (hit)
         {
 
@@ -33,7 +32,6 @@ namespace Fishy
             isect = Interaction(hit_point, (hit_point - origin).normalized(), -ray.direction, distance);
 
         }
-
         return hit;
     }
 

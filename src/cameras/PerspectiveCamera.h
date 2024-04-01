@@ -1,30 +1,32 @@
 ﻿#pragma once
+
 #include "../core/Camera.h"
 
 namespace Fishy
 {
-class PerspectiveCamera : public Camera
+    class PerspectiveCamera : public Camera
     {
     public:
-        PerspectiveCamera(const vector3 &position, const vector3 &center, const vector3 &up, float fov, vector2 resolution)
+        PerspectiveCamera(const vector3 &position, const vector3 &direction, const vector3 &up, float fov, const vector2& resolution)
         {
             //ray tracing initialize
             this->position = position;
-            this->center = center;
+            this->front = direction;
             this->up = up;
+
             this->resolution = resolution;
-            this->fov = fov;
             aspectRatio = resolution.x() / resolution.y();
+            this->fov = fov;
             const float tan_fov = qTan(qDegreesToRadians(fov) / 2);
 
-            right = cross(this->up, center).normalized() * tan_fov * aspectRatio;
-            this->up = cross(center, right).normalized() * tan_fov;
+            right = cross(this->up, front).normalized() * tan_fov * aspectRatio;
+            this->up = cross(front, right).normalized() * tan_fov;
 
         }
 
         virtual Ray GenerateRay(const CameraSample &sample) const override
         {
-            const vector3 rayDirection = center
+            const vector3 rayDirection = front
                                          + right * (sample.pFilm.x() / resolution.x() - 0.5)
                                          + up * (0.5 - sample.pFilm.y() / resolution.y());
 
@@ -33,5 +35,11 @@ class PerspectiveCamera : public Camera
 
 
     };
+
+    static std::shared_ptr<Camera> createPerspectiveCamera(const vector3 &position, const vector3 &center, const vector3 &up,
+            const int &fov, const vector2 &resolution)
+    {
+        return std::make_shared<PerspectiveCamera>(position, center, up, fov, resolution);
+    }
 
 }

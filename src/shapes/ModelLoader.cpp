@@ -20,7 +20,6 @@ namespace Fishy
 
     std::shared_ptr<TriangleMesh> ModelLoader::processMesh(aiMesh *mesh, const aiScene *scene)
     {
-
         long nVertices = mesh->mNumVertices;
         long nTriangles = mesh->mNumFaces;
         int *vertexIndices = new int[nTriangles * 3];
@@ -101,8 +100,6 @@ namespace Fishy
         Assimp::Importer importer;
         Assimp::Exporter exporter;
         const aiScene *scene = importer.ReadFile(path.toStdString(), aiProcess_Triangulate | aiProcess_ConvertToLeftHanded);
-//        auto mesh = new Qt3DRender::QMesh();
-//        mesh->setSource(path);
         if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode )
             return;
         qDebug() << "successfully loaded model!";
@@ -112,7 +109,8 @@ namespace Fishy
         }
         directory = path.section('/', -1, -1);
         processNode(scene->mRootNode, scene);
-
+//        auto mesh = new Qt3DRender::QMesh();
+//        mesh->setSource(path);
     }
 
 }

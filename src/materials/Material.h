@@ -11,18 +11,28 @@
 
 namespace Fishy
 {
-    class Material : public Qt3DExtras::QPhongMaterial
+    static std::shared_ptr<Material> white;
+    static std::shared_ptr<Material> red;
+    static std::shared_ptr<Material> blue;
+    static std::shared_ptr<Material> grey;
+    static std::shared_ptr<Material> mirrorMat;
+    static std::shared_ptr<Material> glassMat;
+
+
+    class Material : public Qt3DRender::QMaterial
     {
     public:
         Material() = default;
         virtual ~Material() = default;
 
         virtual std::unique_ptr<BSDF> Scattering(const Interaction &isect) const = 0;
-        virtual void setColor() = 0;
+        virtual void setParameters() = 0;
+
+        FMaterialType type;
 
     };
 
-    class MatteMaterial : public Material
+    class MatteMaterial : public Material, public Qt3DExtras::QPhongMaterial
     {
     public:
         MatteMaterial() = default;
@@ -30,8 +40,9 @@ namespace Fishy
         explicit MatteMaterial(const Color &Kd) : Kd(Kd)
         {
             setDiffuse(QColor(Clamp(Kd)));
-            setAmbient(QColor(qRgb(25,25,25)));
+            setAmbient(QColor(qRgb(25, 25, 25)));
             setShininess(0.2);
+            type = FMaterialType::Matte;
         }
 
         std::unique_ptr<BSDF> Scattering(const Interaction &isect) const override
@@ -39,12 +50,12 @@ namespace Fishy
             return std::make_unique<LambertionReflection>(Frame(isect.normal), Kd);
         }
 
-        void setColor() override
+        void setParameters() override
         {
-            auto diffuse = this->diffuse();
-            Kd.setX(diffuse.redF());
-            Kd.setY(diffuse.greenF());
-            Kd.setZ(diffuse.blueF());
+            auto d = diffuse();
+            Kd.setX(d.redF());
+            Kd.setY(d.greenF());
+            Kd.setZ(d.blueF());
         }
 
 
@@ -53,7 +64,67 @@ namespace Fishy
 
     };
 
+    class MirrorMaterial : public Material, public Qt3DExtras::QMetalRoughMaterial
+    {
+    public:
+        MirrorMaterial(const Color &Kr) :
+                Kr{Kr}
+        {
+            setBaseColor(QColor(Clamp(Kr)));
+            setRoughness(0.10);
+            setMetalness(0.90);
+            type = FMaterialType::Mirror;
+        }
 
+        std::unique_ptr<BSDF> Scattering(const Interaction &isect) const override
+        {
+            return std::make_unique<SpecularReflection>(Frame(isect.normal), Kr);
+        }
+
+        void setParameters() override
+        {
+            auto v = this->baseColor();
+            auto diffuse = v.value<QColor>();
+            Kr.setX(diffuse.redF());
+            Kr.setY(diffuse.greenF());
+            Kr.setZ(diffuse.blueF());
+        }
+
+    private:
+        Color Kr;
+    };
+
+    class GlassMaterial : public Material, public Qt3DExtras::QDiffuseSpecularMaterial
+    {
+    public:
+        GlassMaterial(const Color &Kr, const Color &Kt, double eta) :
+                Kr{Kr}, Kt{Kt}, eta{eta}
+        {
+            setDiffuse(QColor(Clamp(Kr, 0.5)));
+            setShininess(0.05);
+            setAlphaBlendingEnabled(true);
+            type = FMaterialType::Glass;
+        }
+
+        std::unique_ptr<BSDF> Scattering(const Interaction &isect) const override
+        {
+            return std::make_unique<FresnelSpecular>(Frame(isect.normal), Kr, Kt, 1, eta);
+        }
+
+        void setParameters() override
+        {
+            auto v = this->diffuse();
+            auto diffuse = v.value<QColor>();
+            Kr.setX(diffuse.redF());
+            Kr.setY(diffuse.greenF());
+            Kr.setZ(diffuse.blueF());
+        }
+
+    private:
+        Color Kr;
+        Color Kt;
+        double eta;
+    };
 }
 
 #endif //FISHY_MATERIAL_H

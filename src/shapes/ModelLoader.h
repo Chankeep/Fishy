@@ -21,6 +21,7 @@ namespace Fishy
         QString directory;
         std::vector<std::shared_ptr<TriangleMesh>> meshes;
     public:
+
         void loadModel(const QString& path);
         void processNode(aiNode *node, const aiScene *scene);
         std::shared_ptr<TriangleMesh> processMesh(aiMesh *mesh, const aiScene *scene);

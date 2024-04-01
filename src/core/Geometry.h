@@ -79,6 +79,18 @@ namespace Fishy
         return res;
     }
 
+    inline float linearToGamma(float x)
+    {
+        return qSqrt(x);
+    }
+
+    inline QRgb Gamma(const vector3& c)
+    {
+        QColor color = {static_cast<int>(Clamp(linearToGamma(c.x())) * 255), static_cast<int>(Clamp((linearToGamma(c.y()))) * 255), static_cast<int>(Clamp((linearToGamma(c.z()))) * 255)};
+        auto rgb = color.rgb();
+        return rgb;
+    }
+
     inline QRgb Clamp(const vector3 &v)
     {
         QColor color = {static_cast<int>(Clamp(v.x()) * 255), static_cast<int>(Clamp(v.y()) * 255), static_cast<int>(Clamp(v.z()) * 255)};
@@ -86,11 +98,18 @@ namespace Fishy
         return rgb;
     }
 
+    inline QRgba64 Clamp(const vector3 &v, float a)
+    {
+        QColor color = {static_cast<int>(Clamp(v.x()) * 255), static_cast<int>(Clamp(v.y()) * 255), static_cast<int>(Clamp(v.z()) * 255), static_cast<int>(Clamp(a) * 255)};
+        auto rgba = color.rgba64();
+        return rgba;
+    }
+
     inline vector2 UniformSampleDisk(const vector2 &random)
     {
         float radius = qSqrt(random[0]);
         float theta = 2 * Pi * random[1];
-        return {radius * qCos(theta), radius * sin(theta)};
+        return {radius * qCos(theta), radius * qSin(theta)};
     }
 
     inline vector3 CosineSampleHemisphere(const vector2 &random)

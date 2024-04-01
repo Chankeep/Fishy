@@ -8,13 +8,15 @@
 
 namespace Fishy
 {
+
+
     FishyRenderer::FishyRenderer(QWidget *parent)
             : QMainWindow(parent)
     {
         ui.setupUi(this);
-        initRender();
+        initRendering();
         renderQ3D();
-//        renderRT();
+//        renderRTSlot();
 
         connect(ui.positionX, SIGNAL(valueChanged(double)), this, SLOT(setTranslationX(double)));
         connect(ui.positionY, SIGNAL(valueChanged(double)), this, SLOT(setTranslationY(double)));
@@ -37,38 +39,19 @@ namespace Fishy
         connect(sceneManager.get(), SIGNAL(currentEntityChanged(Qt3DCore::QEntity * )),
                 this, SLOT(updatePropertiesWidget(Qt3DCore::QEntity * )));
 
-        connect(ui.renderButton, SIGNAL(clicked()), this, SLOT(renderRT()));
+        connect(ui.renderButton, SIGNAL(clicked()), this, SLOT(renderRTSlot()));
 
+        connect(ui.actionSphere, SIGNAL(triggered(bool)), sceneManager.get(), SLOT(addNewSphere()));
+        connect(ui.actionPlane, SIGNAL(triggered(bool)), sceneManager.get(), SLOT(addNewPlane()));
     }
 
     FishyRenderer::~FishyRenderer()
     {
     }
 
-    void FishyRenderer::resizeEvent(QResizeEvent *event)
+    void FishyRenderer::renderRTSlot()
     {
-        QWidget::resizeEvent(event);
-    }
-
-    void FishyRenderer::renderRT()
-    {
-        samplersPerPixel = ui.sppEdit->text().toInt();
-        std::unique_ptr<Sampler> originalSampler = std::make_unique<TrapezoidalSampler>(samplersPerPixel);
-        printMessage("sampler successfully initialized!");
-
-        std::unique_ptr<Integrator> integrator = std::make_unique<PathIntegrator>();
-        printMessage("integrator successfully initialized!");
-
-        connect(integrator.get(), SIGNAL(sentMessage(QString)), this, SLOT(printMessage(const QString &)));
-
-        scene->updateRenderData();
-        printMessage("update rendering data successful!");
-        film = sceneManager->getFilm();
-        printMessage("begin rendering");
-        integrator->Render(scene, *scene->getCamera(), *originalSampler, film);
-        film->store_image();
-
-        ui.renderImage->setPixmap(QPixmap::fromImage(*(film->getImage())));
+        renderRT();
     }
 
     bool FishyRenderer::renderQ3D()
@@ -77,10 +60,22 @@ namespace Fishy
         return true;
     }
 
-    bool FishyRenderer::initRender()
+    bool FishyRenderer::initRendering()
     {
+        film = sceneManager->getFilm();
+
         sceneManager = std::make_unique<SceneManager>(ui.previewWidget, ui.sceneTreeWidget);
         scene = sceneManager->getScene();
+
+        originalSampler = std::make_unique<TrapezoidalSampler>(samplesPerPixel);
+        printMessage("sampler successfully initialized!");
+
+        integrator = std::make_unique<PathIntegrator>();
+        printMessage("integrator successfully initialized!");
+
+        connect(integrator.get(), SIGNAL(sentMessage(QString)), this, SLOT(printMessage(const QString &)));
+
+
         return true;
     }
 
@@ -218,4 +213,39 @@ namespace Fishy
         currentEntity->setObjectName(tempName);
         curItem->setText(0, tempName);
     }
+
+    void FishyRenderer::updateCurEntityName()
+    {
+    }
+
+    bool FishyRenderer::renderRT()
+    {
+        samplesPerPixel = ui.sppEdit->text().toInt();
+        originalSampler->setSpp(samplesPerPixel);
+
+        scene->updateRenderData();
+        printMessage("update rendering data successful!");
+        printMessage("begin rendering");
+
+        timer.begin();
+
+        integrator->Render(scene.get(), *scene->getCamera(), *originalSampler, film.get());
+
+        timer.end();
+        printMessage(QString("The time used to rendering is: %1s").arg(QString::number(timer.elapsedTime())));
+
+        film->store_image();
+
+        auto image = QPixmap::fromImage(*(film->getImage()));
+        auto scale = 800 / image.size().width();
+        auto h = int(image.size().height() * scale);
+        image.scaled(QSize(800, h));
+        ui.renderImage->setPixmap(image);
+        ui.renderImage->setScaledContents(false);
+        return true;
+    }
+
+
+
+
 }

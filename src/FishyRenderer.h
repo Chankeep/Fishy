@@ -6,6 +6,7 @@
 #include "core/Fishy.h"
 #include "core/Scene.h"
 #include "core/Film.h"
+#include "utilities/FishyTimer.h"
 #include "fishy/SceneManager.h"
 
 namespace Fishy
@@ -18,9 +19,9 @@ namespace Fishy
         FishyRenderer(QWidget *parent = nullptr);
         ~FishyRenderer();
 
-        bool initRender();
+        bool initRendering();
         bool renderQ3D();
-        void resizeEvent(QResizeEvent *event) override;
+        bool renderRT();
 
     public slots:
         void setScaleX(double value);
@@ -38,9 +39,9 @@ namespace Fishy
 
         void updateTempName(const QString&);
         void setEntityName();
+        void updateCurEntityName();
 
-        void renderRT();
-
+        void renderRTSlot();
         void updatePropertiesWidget(Qt3DCore::QEntity *entity);
 
         void printMessage(const QString&);
@@ -48,15 +49,19 @@ namespace Fishy
     private:
         Ui::FishyClass ui;
 
-        Scene *scene;
-        Film *film;
-        Qt3DExtras::Qt3DWindow *view;
+        std::shared_ptr<Scene> scene;
+        std::shared_ptr<Film> film;
         Qt3DCore::QEntity* currentEntity = nullptr;
 
         std::unique_ptr<SceneManager> sceneManager;
-
-        int samplersPerPixel = 2;
+        std::unique_ptr<Integrator> integrator;
+        std::unique_ptr<Sampler> originalSampler;
 
         QString tempName;
+
+        int samplesPerPixel;
+        int width = 1000, height = 800;
+
+        FishyTimer timer;
     };
 }

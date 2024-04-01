@@ -6,6 +6,9 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
+# 设置FBX SDK路径
+#set(FBXSDK_DIR "${PROJECT_SOURCE_DIR}/x64/fbxsdk")
+# 设置Qt路径
 set(CMAKE_PREFIX_PATH "E:\\Qt\\QtEdu\\6.6.2\\msvc2019_64")
 
 find_package(assimp CONFIG REQUIRED)
@@ -29,7 +32,8 @@ file(GLOB_RECURSE HEADERS
         "src/samplers/*.h"
         "src/shapes/*.h"
         "src/fishy/*.h"
-        "src/FishyRenderer.h"
+        "src/utilities/*.h"
+        "src/Accelerator/*.h"
 )
 
 add_executable(Fishy
@@ -45,7 +49,12 @@ add_executable(Fishy
         src/shapes/Triangle.cpp
         src/shapes/ModelLoader.cpp
         src/fishy/SceneManager.cpp
+        src/shapes/Plane.cpp
+        src/Accelerator/BVHAccel.cpp
 )
+
+#target_include_directories(Fishy PRIVATE "${FBXSDK_DIR}/include")
+#link_directories("${FBXSDK_DIR}/debug")
 
 target_link_libraries(Fishy
         Qt::Core
@@ -58,6 +67,7 @@ target_link_libraries(Fishy
         assimp::assimp
         OpenMP::OpenMP_CXX
 )
+
 
 if (WIN32 AND NOT DEFINED CMAKE_TOOLCHAIN_FILE)
     set(DEBUG_SUFFIX)

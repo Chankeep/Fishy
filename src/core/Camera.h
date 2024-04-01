@@ -22,7 +22,7 @@ namespace Fishy
 
         Film *film{};
         vector3 position;
-        vector3 center;
+        vector3 front;
         vector3 right;
         vector3 up;
         vector2 resolution;

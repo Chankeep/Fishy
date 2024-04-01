@@ -44,9 +44,9 @@ namespace Fishy
         LambertionReflection() = default;
         LambertionReflection(const Frame& shadingFrame, const vector3& albedo) : BSDF(shadingFrame), albedo(albedo){}
 
-        vector3 f_(const Fishy::vector3 &wo, const Fishy::vector3 &wi) const override;
+        vector3 f_(const vector3 &wo, const vector3 &wi) const override;
         double pdf_(const vector3 &wo, const vector3 &wi) const override;
-        BSDFSample sample_(const Fishy::vector3 &wo, const Fishy::vector2 &random) const override;
+        BSDFSample sample_(const vector3 &wo, const vector2 &random) const override;
 
     private:
         vector3 albedo;
@@ -54,6 +54,39 @@ namespace Fishy
 
     class SpecularReflection : public BSDF
     {
+    public:
+        SpecularReflection(const Frame& shadingFrame, const Color& R) :
+                BSDF(shadingFrame), R{ R }
+        {
+        }
 
+        vector3 f_(const vector3& wo, const vector3& wi) const override;
+        double pdf_(const vector3& wo, const vector3& wi) const override;
+
+        BSDFSample sample_(const vector3 &wo, const vector2 &random) const override;
+
+    private:
+        Color R;
     };
+
+    class FresnelSpecular : public BSDF
+    {
+    public:
+        FresnelSpecular(const Frame& shadingFrame, const Color& R, const Color& T, double etaI, double etaT) :
+                BSDF(shadingFrame), R{ R }, T{ T }, etaI{ etaI }, etaT{ etaT }
+        {
+        }
+
+        vector3 f_(const vector3& wo, const vector3& wi) const override;
+        double pdf_(const vector3& wo, const vector3& wi) const override;
+
+        BSDFSample sample_(const vector3& wo, const vector2& random) const override;
+
+    private:
+        Color R;
+        Color T;
+        double etaI;
+        double etaT;
+    };
+
 }

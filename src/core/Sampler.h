@@ -52,6 +52,11 @@ namespace Fishy
             return currentSampleIndex < samplesPerPixel;
         }
 
+        virtual void setSpp(int spp)
+        {
+            samplesPerPixel = spp;
+        }
+
         virtual float Get1D() = 0;
         virtual vector2 Get2D() = 0;
         virtual CameraSample GetCameraSample(vector2 pFilm) = 0;

@@ -69,9 +69,8 @@ namespace Fishy
             float random1 = 2 * rng.UniformFloat();
             float random2 = 2 * rng.UniformFloat();
 
-            // uniform dist [0, 1) => triangle dist [-1, 1)
-            float deltaX = random1 < 1 ? sqrt(random1) - 1 : 1 - sqrt(2 - random1);
-            float deltaY = random2 < 1 ? sqrt(random2) - 1 : 1 - sqrt(2 - random2);
+            float deltaX = random1 < 1 ? qSqrt(random1) - 1 : 1 - qSqrt(2 - random1);
+            float deltaY = random2 < 1 ? qSqrt(random2) - 1 : 1 - qSqrt(2 - random2);
 
             vector2 samplePoint
                     {

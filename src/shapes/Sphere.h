@@ -1,20 +1,24 @@
 ﻿#pragma once
+
+#include "../core/Fishy.h"
 #include "../core/FishyShape.h"
 
 namespace Fishy
 {
-    class Sphere : public FishyShape
+    class Sphere : public Qt3DExtras::QSphereMesh, public FishyShape
 	{
 	public:
-		Sphere() : radius(0.) {
-            this->setRadius(radius);
-            this->setSlices(100);
-            this->setRings(100);
+		Sphere() : radius(5) {
+            setRadius(5);
+            setSlices(100);
+            setRings(100);
+            this->type = FShapeType::FSphere;
         }
 		Sphere(float radius, vector3 origin = vector3(0,0,0)) : radius(radius), origin(origin) {
-            this->setRadius(radius);
-            this->setSlices(100);
-            this->setRings(100);
+            setRadius(radius);
+            setSlices(100);
+            setRings(100);
+            this->type = FShapeType::FSphere;
         }
 
 		bool Intersect(const Ray &r, Interaction& isect) const override;
