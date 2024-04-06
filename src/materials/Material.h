@@ -83,11 +83,11 @@ namespace Fishy
 
         void setParameters() override
         {
-            auto v = this->baseColor();
-            auto diffuse = v.value<QColor>();
-            Kr.setX(diffuse.redF());
-            Kr.setY(diffuse.greenF());
-            Kr.setZ(diffuse.blueF());
+            auto vColor = this->baseColor();
+            auto baseColor = vColor.value<QColor>();
+            Kr.setX(baseColor.redF());
+            Kr.setY(baseColor.greenF());
+            Kr.setZ(baseColor.blueF());
         }
 
     private:

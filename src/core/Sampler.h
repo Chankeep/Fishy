@@ -3,7 +3,6 @@
 #include "Fishy.h"
 #include "Camera.h"
 
-
 namespace Fishy
 {
 
@@ -39,7 +38,7 @@ namespace Fishy
             return samplesPerPixel;
         }
 
-        virtual std::unique_ptr<Sampler> Clone() = 0;
+        virtual std::shared_ptr<Sampler> Clone() = 0;
 
         virtual void StartPixel()
         {

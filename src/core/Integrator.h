@@ -2,6 +2,7 @@
 
 #include "Scene.h"
 #include "Sampler.h"
+#include "../utilities/FishyThreadPool.h"
 
 namespace Fishy
 {
@@ -12,9 +13,9 @@ namespace Fishy
         Integrator() = default;
         virtual ~Integrator() = default;
 
-        virtual void Render(Scene *scene, Camera &camera, Sampler &originalSampler, Film *film);
+        virtual void Render(const vector2 &begin, const vector2 &end, std::shared_ptr<Scene> scene, std::shared_ptr<Camera> camera, std::shared_ptr<Sampler> originalSampler, std::shared_ptr<Film> film);
 
-        virtual vector3 Li(Ray &ray, Scene *scene, Sampler &sampler) = 0;
+        virtual vector3 Li(const Ray &ray, std::shared_ptr<Scene> scene, std::shared_ptr<Sampler> sampler) = 0;
     signals:
         void sentMessage(QString);
     };
@@ -25,12 +26,12 @@ namespace Fishy
     public:
         using Integrator::Integrator;
 
-        vector3 Li(Ray &ray, Scene *scene, Sampler &sampler) override
+        vector3 Li(const Ray &ray, std::shared_ptr<Scene> scene, std::shared_ptr<Sampler> sampler) override
         {
             return Li(ray, scene, sampler, 0);
         }
 
-        vector3 Li(Ray &ray, Scene *scene, Sampler &sampler, int depth);
+        vector3 Li(const Ray &ray, std::shared_ptr<Scene> scene, std::shared_ptr<Sampler> sampler, int depth);
 
 
     private:

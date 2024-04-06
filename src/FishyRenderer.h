@@ -6,8 +6,8 @@
 #include "core/Fishy.h"
 #include "core/Scene.h"
 #include "core/Film.h"
-#include "utilities/FishyTimer.h"
 #include "fishy/SceneManager.h"
+#include "utilities/FishyThreadPool.h"
 
 namespace Fishy
 {
@@ -22,6 +22,9 @@ namespace Fishy
         bool initRendering();
         bool renderQ3D();
         bool renderRT();
+
+        void loadTransformData();
+        void loadMaterialData();
 
     public slots:
         void setScaleX(double value);
@@ -51,17 +54,22 @@ namespace Fishy
 
         std::shared_ptr<Scene> scene;
         std::shared_ptr<Film> film;
-        Qt3DCore::QEntity* currentEntity = nullptr;
+        Qt3DCore::QEntity* curEntity = nullptr;
+        Qt3DCore::QTransform* curTransform = nullptr;
+        Qt3DRender::QMaterial* curMaterial = nullptr;
+        FMaterialType curMaterialType;
 
-        std::unique_ptr<SceneManager> sceneManager;
-        std::unique_ptr<Integrator> integrator;
-        std::unique_ptr<Sampler> originalSampler;
+        std::shared_ptr<SceneManager> sceneManager;
+        std::shared_ptr<Integrator> integrator;
+        std::shared_ptr<Sampler> originalSampler;
 
         QString tempName;
 
-        int samplesPerPixel;
-        int width = 1000, height = 800;
+        size_t samplesPerPixel;
+        size_t width = 1000, height = 800;
 
-        FishyTimer timer;
+        std::shared_ptr<FishyTimer> timer;
+
+        QThreadPool* pool;
     };
 }

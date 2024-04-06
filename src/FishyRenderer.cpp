@@ -5,6 +5,7 @@
 #include "cameras/PerspectiveCamera.h"
 #include "core/Integrator.h"
 #include "samplers/TrapezoidalSampler.h"
+#include "utilities/FishyTimer.h"
 
 namespace Fishy
 {
@@ -17,6 +18,7 @@ namespace Fishy
         initRendering();
         renderQ3D();
 //        renderRTSlot();
+        timer = make_shared<FishyTimer>();
 
         connect(ui.positionX, SIGNAL(valueChanged(double)), this, SLOT(setTranslationX(double)));
         connect(ui.positionY, SIGNAL(valueChanged(double)), this, SLOT(setTranslationY(double)));
@@ -62,10 +64,9 @@ namespace Fishy
 
     bool FishyRenderer::initRendering()
     {
-        film = sceneManager->getFilm();
-
         sceneManager = std::make_unique<SceneManager>(ui.previewWidget, ui.sceneTreeWidget);
         scene = sceneManager->getScene();
+        film = sceneManager->getFilm();
 
         originalSampler = std::make_unique<TrapezoidalSampler>(samplesPerPixel);
         printMessage("sampler successfully initialized!");
@@ -75,13 +76,14 @@ namespace Fishy
 
         connect(integrator.get(), SIGNAL(sentMessage(QString)), this, SLOT(printMessage(const QString &)));
 
+        pool = QThreadPool::globalInstance();
 
         return true;
     }
 
     void FishyRenderer::setScaleX(double value)
     {
-        auto transform = currentEntity->componentsOfType<Qt3DCore::QTransform>()[0];
+        auto transform = curEntity->componentsOfType<Qt3DCore::QTransform>()[0];
         auto scale = transform->scale3D();
         scale.setX(value);
         transform->setScale3D(scale);
@@ -89,7 +91,7 @@ namespace Fishy
 
     void FishyRenderer::setScaleY(double value)
     {
-        auto transform = currentEntity->componentsOfType<Qt3DCore::QTransform>()[0];
+        auto transform = curEntity->componentsOfType<Qt3DCore::QTransform>()[0];
         auto scale = transform->scale3D();
         scale.setY(value);
         transform->setScale3D(scale);
@@ -97,7 +99,7 @@ namespace Fishy
 
     void FishyRenderer::setScaleZ(double value)
     {
-        auto transform = currentEntity->componentsOfType<Qt3DCore::QTransform>()[0];
+        auto transform = curEntity->componentsOfType<Qt3DCore::QTransform>()[0];
         auto scale = transform->scale3D();
         scale.setZ(value);
         transform->setScale3D(scale);
@@ -105,7 +107,7 @@ namespace Fishy
 
     void FishyRenderer::setTranslationX(double value)
     {
-        auto transform = currentEntity->componentsOfType<Qt3DCore::QTransform>()[0];
+        auto transform = curEntity->componentsOfType<Qt3DCore::QTransform>()[0];
         auto position = transform->translation();
         position.setX(value);
         transform->setTranslation(position);
@@ -113,7 +115,7 @@ namespace Fishy
 
     void FishyRenderer::setTranslationY(double value)
     {
-        auto transform = currentEntity->componentsOfType<Qt3DCore::QTransform>()[0];
+        auto transform = curEntity->componentsOfType<Qt3DCore::QTransform>()[0];
         auto position = transform->translation();
         position.setY(value);
         transform->setTranslation(position);
@@ -121,7 +123,7 @@ namespace Fishy
 
     void FishyRenderer::setTranslationZ(double value)
     {
-        auto transform = currentEntity->componentsOfType<Qt3DCore::QTransform>()[0];
+        auto transform = curEntity->componentsOfType<Qt3DCore::QTransform>()[0];
         auto position = transform->translation();
         position.setZ(value);
         transform->setTranslation(position);
@@ -129,48 +131,84 @@ namespace Fishy
 
     void FishyRenderer::setRotationX(double value)
     {
-        auto transform = currentEntity->componentsOfType<Qt3DCore::QTransform>()[0];
+        auto transform = curEntity->componentsOfType<Qt3DCore::QTransform>()[0];
         transform->setRotationX(value);
     }
 
     void FishyRenderer::setRotationY(double value)
     {
-        auto transform = currentEntity->componentsOfType<Qt3DCore::QTransform>()[0];
+        auto transform = curEntity->componentsOfType<Qt3DCore::QTransform>()[0];
         transform->setRotationY(value);
     }
 
     void FishyRenderer::setRotationZ(double value)
     {
-        auto transform = currentEntity->componentsOfType<Qt3DCore::QTransform>()[0];
+        auto transform = curEntity->componentsOfType<Qt3DCore::QTransform>()[0];
         transform->setRotationZ(value);
     }
 
     void FishyRenderer::updatePropertiesWidget(Qt3DCore::QEntity *entity)
     {
-        currentEntity = entity;
-        auto transform = entity->componentsOfType<Qt3DCore::QTransform>()[0];
+        curEntity = entity;
+        curTransform = entity->componentsOfType<Qt3DCore::QTransform>()[0];
+        curMaterial = entity->componentsOfType<Qt3DRender::QMaterial>()[0];
+        loadTransformData();
+        loadMaterialData();
 
-        auto position = transform->translation();
+        ui.nameEdit->setText(entity->objectName());
+    }
+
+    void FishyRenderer::loadTransformData()
+    {
+        auto position = curTransform->translation();
         ui.positionX->setValue(position.x());
         ui.positionY->setValue(position.y());
         ui.positionZ->setValue(position.z());
 
-        auto scale = transform->scale3D();
+        auto scale = curTransform->scale3D();
         ui.scaleX->setValue(scale.x());
         ui.scaleY->setValue(scale.y());
         ui.scaleZ->setValue(scale.z());
 
-        ui.rotationX->setValue(transform->rotationX());
-        ui.rotationY->setValue(transform->rotationY());
-        ui.rotationZ->setValue(transform->rotationZ());
+        ui.rotationX->setValue(curTransform->rotationX());
+        ui.rotationY->setValue(curTransform->rotationY());
+        ui.rotationZ->setValue(curTransform->rotationZ());
+    }
 
-        auto material = entity->componentsOfType<Qt3DExtras::QPhongMaterial>()[0];
-        auto diffuse = material->diffuse();
-        ui.colorR->setValue(diffuse.red());
-        ui.colorG->setValue(diffuse.green());
-        ui.colorB->setValue(diffuse.blue());
+    void FishyRenderer::loadMaterialData()
+    {
+        auto FishyMat = dynamic_cast<Material*>(curMaterial);
+        curMaterialType = FishyMat->type;
+        if(FishyMat->type == FMaterialType::Matte)
+        {
+            auto* mat = dynamic_cast<MatteMaterial*>(FishyMat);
+            auto diffuse = mat->diffuse();
+            ui.colorR->setValue(diffuse.red());
+            ui.colorG->setValue(diffuse.green());
+            ui.colorB->setValue(diffuse.blue());
+        }
+        else if(FishyMat->type == FMaterialType::Mirror)
+        {
+            auto* mat = dynamic_cast<MirrorMaterial*>(FishyMat);
 
-        ui.nameEdit->setText(entity->objectName());
+            auto vColor = mat->baseColor();
+            auto baseColor = vColor.value<QColor>();
+            ui.colorR->setValue(baseColor.red());
+            ui.colorG->setValue(baseColor.green());
+            ui.colorB->setValue(baseColor.blue());
+
+            auto vRough = mat->roughness();
+            auto roughness = vRough.value<double>();
+
+            auto vMetal = mat->metalness();
+            auto metalness = vMetal.value<double>();
+
+
+        }
+        else if(FishyMat->type == FMaterialType::Glass)
+        {
+
+        }
     }
 
     void FishyRenderer::printMessage(const QString& msg)
@@ -180,7 +218,7 @@ namespace Fishy
 
     void FishyRenderer::setColorR(int value)
     {
-        auto material = currentEntity->componentsOfType<Qt3DExtras::QPhongMaterial>()[0];
+        auto material = curEntity->componentsOfType<Qt3DExtras::QPhongMaterial>()[0];
         auto diffuse = material->diffuse();
         diffuse.setRed(value);
         material->setDiffuse(diffuse);
@@ -188,7 +226,7 @@ namespace Fishy
 
     void FishyRenderer::setColorG(int value)
     {
-        auto material = currentEntity->componentsOfType<Qt3DExtras::QPhongMaterial>()[0];
+        auto material = curEntity->componentsOfType<Qt3DExtras::QPhongMaterial>()[0];
         auto diffuse = material->diffuse();
         diffuse.setGreen(value);
         material->setDiffuse(diffuse);
@@ -196,7 +234,7 @@ namespace Fishy
 
     void FishyRenderer::setColorB(int value)
     {
-        auto material = currentEntity->componentsOfType<Qt3DExtras::QPhongMaterial>()[0];
+        auto material = curEntity->componentsOfType<Qt3DExtras::QPhongMaterial>()[0];
         auto diffuse = material->diffuse();
         diffuse.setBlue(value);
         material->setDiffuse(diffuse);
@@ -210,7 +248,7 @@ namespace Fishy
     void FishyRenderer::setEntityName()
     {
         auto curItem = sceneManager->getCurItem();
-        currentEntity->setObjectName(tempName);
+        curEntity->setObjectName(tempName);
         curItem->setText(0, tempName);
     }
 
@@ -227,12 +265,26 @@ namespace Fishy
         printMessage("update rendering data successful!");
         printMessage("begin rendering");
 
-        timer.begin();
+        timer->begin();
 
-        integrator->Render(scene.get(), *scene->getCamera(), *originalSampler, film.get());
+        size_t fragWidth = 4;
+        size_t fragHeight = 4;
 
-        timer.end();
-        printMessage(QString("The time used to rendering is: %1s").arg(QString::number(timer.elapsedTime())));
+        pool->setMaxThreadCount(14);
+        for(size_t x = 0; x < width; x = qMin(width, x+fragWidth))
+        {
+            for(size_t y = 0; y < height; y = qMin(height, y + fragHeight))
+            {
+                auto* task = new FragRenderer(vector2(x, y), vector2(x + fragWidth, y+fragHeight), scene, scene->getCamera(), originalSampler, film);
+                pool->start(task, 0);
+            }
+        }
+//        pool->waitForDone();
+
+//        integrator->Render(vector2(0, 0), vector2(1000, 800), scene, scene->getCamera(), originalSampler, film);
+
+        timer->end();
+        printMessage(QString("The time used to rendering is: %1s").arg(QString::number(timer->elapsedTime())));
 
         film->store_image();
 

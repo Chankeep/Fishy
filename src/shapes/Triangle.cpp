@@ -37,33 +37,54 @@ namespace Fishy
 
     bool Triangle::Intersect(const Ray &ray, Interaction &isect) const
     {
-        vector3 E1 = v2 - v1;
-        vector3 E2 = v3 - v1;
+
+        const float EPSILON = 1e-5f; // 定义一个足够小的常量
+        vector3 E1 = v1 - v0;
+        vector3 E2 = v2 - v0;
+
+        // 计算 P
         const vector3 P = cross(ray.direction, E2);
+        // 计算行列式
         const double det = dot(E1, P);
-        if (fabs(det) < 1e-5) return false;
-        const double invS1E1 = 1. / det;
-        const vector3 T = ray.origin - v1;
-        const double u = invS1E1 * dot(T, P);
+        if (fabs(det) < EPSILON) return false;
+        // 计算交点的参数
+        const double invDet = 1.0 / det;
+        const vector3 T = ray.origin - v0;
+        const double u = invDet * dot(T, P);
         if (u < 0 || u > 1) return false;
+        // 计算 Q
         const vector3 Q = cross(T, E1);
-        const double v = dot(ray.direction, Q) * invS1E1;
+        const double v = dot(ray.direction, Q) * invDet;
         if (v < 0 || u + v > 1) return false;
-        const double t = dot(E2, Q) * invS1E1;
-        if (t < 0)
-            return false;
-        vector3 hit_point = ray(t);
-        if (t > isect.distance)
-            return false;
-        vector3 tempNormal = cross(E2, E1).normalized();
-        if (dot(tempNormal, ray.direction) > 0.0001)
-            tempNormal *= -1;
-        isect = Interaction(hit_point, tempNormal, -ray.direction, t);
-        return true;
+        // 计算 t
+        const double t = dot(E2, Q) * invDet;
+        if (t < EPSILON) return false;
+        if(t < isect.distance)
+        {
+            // 计算法线
+            vector3 tempNormal = cross(E2, E1).normalized();
+            if (dot(tempNormal, ray.direction) > 0) {
+                tempNormal *= -1;
+            }
+            // 更新交点信息
+            isect = Interaction(ray(t), tempNormal, -ray.direction, t);
+            return true;
+        }
+        return false;
+
+
+    }
+
+    AABB Triangle::boundingBox() const
+    {
+        return AABB();
     }
 
     void Triangle::setTransform(Qt3DCore::QTransform *transform)
     {
-
+        auto mat = transform->matrix();
+        v0 = mat.map(v0);
+        v1 = mat.map(v1);
+        v2 = mat.map(v2);
     }
 } // Fishy

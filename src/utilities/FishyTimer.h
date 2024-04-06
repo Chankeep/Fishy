@@ -6,34 +6,35 @@
 #define FISHY_FISHYTIMER_H
 
 #include <chrono>
-
-class FishyTimer
+namespace Fishy
 {
-public:
-    FishyTimer() = default;
-    ~FishyTimer() = default;
-
-    void begin()
+    class FishyTimer
     {
-        startTime = std::chrono::high_resolution_clock::now();
-    }
+    public:
+        FishyTimer() = default;
+        ~FishyTimer() = default;
 
-    void end()
-    {
-        endTime = std::chrono::high_resolution_clock::now();
-        duration = endTime - startTime;
-    }
+        void begin()
+        {
+            startTime = std::chrono::high_resolution_clock::now();
+        }
 
-    float elapsedTime()
-    {
-        return duration.count();
-    }
+        void end()
+        {
+            endTime = std::chrono::high_resolution_clock::now();
+            duration = endTime - startTime;
+        }
+
+        float elapsedTime()
+        {
+            return duration.count();
+        }
 
 
-private:
-    std::chrono::time_point<std::chrono::steady_clock> startTime, endTime;
-    std::chrono::duration<float> duration;
-};
+    private:
+        std::chrono::time_point<std::chrono::steady_clock> startTime, endTime;
+        std::chrono::duration<float> duration{};
+    };
 
-
+}
 #endif //FISHY_FISHYTIMER_H

@@ -22,7 +22,9 @@ namespace Fishy
         }
 
         virtual ~Primitive() = default;
-        virtual bool Intersect(Ray &r, Interaction &isect) const = 0;
+        virtual bool hit(const Ray &ray, double tMin, double tMax, Interaction& isect) const = 0;
+        virtual bool Intersect(const Ray &r, Interaction &isect) const = 0;
+        virtual AABB boundingBox() const = 0;
         virtual void updateRenderData() const = 0;
     };
 
@@ -36,21 +38,20 @@ namespace Fishy
 
         GeometricPrimitive(const std::shared_ptr<FishyShape> &fishyShape,
                 const std::shared_ptr<Material> &material,
-                const vector3 &translation,
+                const std::shared_ptr<Qt3DCore::QTransform>& transform,
                 const std::shared_ptr<Light> &light = nullptr
         )
-                : fishyShape(fishyShape), material(material), light(light)
+                : fishyShape(fishyShape), material(material), transform(transform), light(light)
         {
-            transform = std::make_shared<Qt3DCore::QTransform>();
-            transform->setTranslation(translation);
-
+//            reverseCoordinateSystem();
             addComponent(transform.get());
             setShapeType(fishyShape.get());
             setMaterialType(material.get());
 
             if(objectIndex == 0)
             {
-                this->setObjectName(QString("untitled").arg(QString::number(objectIndex++)));
+                this->setObjectName(QString("untitled"));
+                objectIndex++;
             }
             else
             {
@@ -60,7 +61,16 @@ namespace Fishy
 
         ~GeometricPrimitive() override = default;
 
-        bool Intersect(Ray &ray, Interaction &isect) const override
+        AABB boundingBox() const override{
+            return fishyShape->boundingBox();
+        }
+
+
+        bool hit(const Ray &ray, double tMin, double tMax, Interaction& isect) const override
+        {
+            return Intersect(ray, isect);
+        }
+        bool Intersect(const Ray &ray, Interaction &isect) const override
         {
             bool hit = fishyShape->Intersect(ray, isect);
             if (hit)
@@ -69,6 +79,11 @@ namespace Fishy
                 isect.emission = light ? light->Le(isect, isect.w_o) : Color();
             }
             return hit;
+        }
+
+        void reverseCoordinateSystem()
+        {
+            transform->setTranslation({-transform->translation().x(), transform->translation().y(), transform->translation().z()});
         }
 
         void setShapeType(FishyShape* shape)
@@ -117,6 +132,8 @@ namespace Fishy
 
 
     };
+
+
 
 }
 // FishyRenderer

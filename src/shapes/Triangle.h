@@ -32,8 +32,8 @@ namespace Fishy
     class Triangle : public FishyShape
     {
     public:
-        Triangle(const vector3 &v1 = {}, const vector3 &v2 = {}, const vector3 &v3 = {})
-                : v1(v1), v2(v2), v3(v3)
+        Triangle(const vector3 &v0 = {}, const vector3 &v1 = {}, const vector3 &v2 = {})
+                : v0(v0), v1(v1), v2(v2)
         {
         }
 
@@ -42,13 +42,14 @@ namespace Fishy
         {
             v = &mesh->vertexIndices[3 * nTriangles];
             faceIndex = mesh->faceIndices.size() ? mesh->faceIndices[nTriangles] : 0;
-            v1 = mesh->p[0];
-            v2 = mesh->p[1];
-            v3 = mesh->p[2];
+            v0 = mesh->p[0];
+            v1 = mesh->p[1];
+            v2 = mesh->p[2];
         }
 
 
         bool Intersect(const Ray &ray, Interaction &isect) const override;
+        AABB boundingBox() const override;
         void setTransform(Qt3DCore::QTransform *transform) override;
 
     private:
@@ -56,7 +57,7 @@ namespace Fishy
         const int *v;
         int faceIndex;
 
-        vector3 v1, v2, v3;
+        vector3 v0, v1, v2;
     };
 
 } // Fishy

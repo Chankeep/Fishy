@@ -14,7 +14,6 @@ namespace Fishy
             QSize imageSize = {static_cast<int>(resolution.x()), static_cast<int>(resolution.y())};
             renderImage = std::make_unique<QImage>(imageSize, QImage::Format_ARGB32);
             renderImage->setColorCount(resolution.x() * resolution.y());
-            qDebug() << renderImage->colorCount();
         }
 
         QImage* getImage()

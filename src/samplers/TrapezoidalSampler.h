@@ -5,6 +5,7 @@
 #ifndef FISHY_TRAPEZOIDALSAMPLER_H
 #define FISHY_TRAPEZOIDALSAMPLER_H
 
+#include "../core/Fishy.h"
 #include "../core/Sampler.h"
 namespace Fishy
 {
@@ -18,9 +19,9 @@ namespace Fishy
             return samplesPerPixel * SubPixelNum;
         }
 
-        std::unique_ptr<Sampler> Clone() override
+        std::shared_ptr<Sampler> Clone() override
         {
-            return std::make_unique<TrapezoidalSampler>(samplesPerPixel);
+            return std::make_shared<TrapezoidalSampler>(samplesPerPixel);
         }
 
     public:

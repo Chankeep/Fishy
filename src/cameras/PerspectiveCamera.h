@@ -36,10 +36,10 @@ namespace Fishy
 
     };
 
-    static std::shared_ptr<Camera> createPerspectiveCamera(const vector3 &position, const vector3 &center, const vector3 &up,
+    static std::shared_ptr<Camera> createPerspectiveCamera(const vector3 &position, const vector3 &director, const vector3 &up,
             const int &fov, const vector2 &resolution)
     {
-        return std::make_shared<PerspectiveCamera>(position, center, up, fov, resolution);
+        return std::make_shared<PerspectiveCamera>(position, director, up, fov, resolution);
     }
 
 }

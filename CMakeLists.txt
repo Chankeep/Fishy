@@ -1,20 +1,17 @@
 cmake_minimum_required(VERSION 3.25)
 project(Fishy)
 
+find_package(assimp CONFIG REQUIRED)
+find_package(OpenMP REQUIRED)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-# 设置FBX SDK路径
-#set(FBXSDK_DIR "${PROJECT_SOURCE_DIR}/x64/fbxsdk")
-# 设置Qt路径
-set(CMAKE_PREFIX_PATH "E:\\Qt\\QtEdu\\6.6.2\\msvc2019_64")
+set(CMAKE_PREFIX_PATH "E:/Qt/QtEdu/Tools/CMake_64")
 
-find_package(assimp CONFIG REQUIRED)
-find_package(OpenMP REQUIRED)
-
-find_package(Qt6 COMPONENTS REQUIRED
+find_package(Qt6 COMPONENTS
         Core
         Gui
         Widgets
@@ -22,7 +19,7 @@ find_package(Qt6 COMPONENTS REQUIRED
         3dextras
         3drender
         3DInput
-        )
+        REQUIRED)
 
 file(GLOB_RECURSE HEADERS
         "src/cameras/*.h"
@@ -50,11 +47,12 @@ add_executable(Fishy
         src/shapes/ModelLoader.cpp
         src/fishy/SceneManager.cpp
         src/shapes/Plane.cpp
-        src/Accelerator/BVHAccel.cpp
+        src/Accelerator/AABB.cpp
+        src/Accelerator/BVH.cpp
+        src/core/Scene.cpp
+        src/utilities/FishyThreadPool.cpp
 )
 
-#target_include_directories(Fishy PRIVATE "${FBXSDK_DIR}/include")
-#link_directories("${FBXSDK_DIR}/debug")
 
 target_link_libraries(Fishy
         Qt::Core
@@ -67,7 +65,6 @@ target_link_libraries(Fishy
         assimp::assimp
         OpenMP::OpenMP_CXX
 )
-
 
 if (WIN32 AND NOT DEFINED CMAKE_TOOLCHAIN_FILE)
     set(DEBUG_SUFFIX)

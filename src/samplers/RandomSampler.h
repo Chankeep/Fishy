@@ -1,4 +1,5 @@
 ﻿#pragma once
+#include "../core/Fishy.h"
 #include "../core/Sampler.h"
 
 namespace Fishy
@@ -7,9 +8,9 @@ namespace Fishy
 	{
 	public:
 		using Sampler::Sampler;
-		virtual std::unique_ptr<Sampler> Clone() override
+		virtual std::shared_ptr<Sampler> Clone() override
 		{
-			return std::make_unique<RandomSampler>(samplesPerPixel);
+			return std::make_shared<RandomSampler>(samplesPerPixel);
 		}
 		virtual float Get1D() override
 		{

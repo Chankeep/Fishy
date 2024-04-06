@@ -24,12 +24,12 @@ namespace Fishy
 
         vector3 f(const vector3 &world_wo, const vector3 &world_wi) const;
         double pdf(const vector3 &world_wo, const vector3 &world_wi) const;
-        virtual BSDFSample sample(const vector3 &wo, const vector2 &random) const;
+        virtual BSDFSample sample(const vector3 &wo, const vector3& normal, const vector2 &random) const;
 
     protected:
         virtual vector3 f_(const vector3 &wo, const vector3 &wi) const = 0;
         virtual double pdf_(const vector3 &wo, const vector3 &wi) const = 0;
-        virtual BSDFSample sample_(const vector3 &wo, const vector2 &random) const = 0;
+        virtual BSDFSample sample_(const vector3 &wo, const vector3& normal, const vector2 &random) const = 0;
 
     private:
         vector3 ToLocal(const vector3 &v) const;
@@ -46,7 +46,7 @@ namespace Fishy
 
         vector3 f_(const vector3 &wo, const vector3 &wi) const override;
         double pdf_(const vector3 &wo, const vector3 &wi) const override;
-        BSDFSample sample_(const vector3 &wo, const vector2 &random) const override;
+        BSDFSample sample_(const vector3 &wo, const vector3& normal, const vector2 &random) const override;
 
     private:
         vector3 albedo;
@@ -63,7 +63,7 @@ namespace Fishy
         vector3 f_(const vector3& wo, const vector3& wi) const override;
         double pdf_(const vector3& wo, const vector3& wi) const override;
 
-        BSDFSample sample_(const vector3 &wo, const vector2 &random) const override;
+        BSDFSample sample_(const vector3 &wo, const vector3& normal, const vector2 &random) const override;
 
     private:
         Color R;
@@ -80,7 +80,7 @@ namespace Fishy
         vector3 f_(const vector3& wo, const vector3& wi) const override;
         double pdf_(const vector3& wo, const vector3& wi) const override;
 
-        BSDFSample sample_(const vector3& wo, const vector2& random) const override;
+        BSDFSample sample_(const vector3& wo, const vector3& normal, const vector2& random) const override;
 
     private:
         Color R;

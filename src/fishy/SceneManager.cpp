@@ -43,7 +43,8 @@ namespace Fishy
     void SceneManager::initQt3DView()
     {
         vector2 resolution = {static_cast<float>(width), static_cast<float>(height)};
-        scene = createTestScene(resolution);
+        scene = createPlaneScene(resolution);
+
         film = std::make_shared<Film>(resolution, QString("renderOutput.png"));
 
         qt3DView = std::make_shared<Qt3DExtras::Qt3DWindow>();
@@ -78,15 +79,15 @@ namespace Fishy
     {
         auto *lightEntity = new Qt3DCore::QEntity(scene.get());
         lightEntity->setObjectName("light");
-        std::shared_ptr<FishyShape> lightShape = std::make_shared<Sphere>(8);
-        std::shared_ptr<Light> area_light = std::make_shared<Light>(Color(8, 8, 8), lightShape.get());
+        std::shared_ptr<FishyShape> lightShape = std::make_shared<Plane>(15, 15);
+        std::shared_ptr<Light> area_light = std::make_shared<Light>(Color(13, 13, 13), lightShape.get());
         std::shared_ptr<Material> black = std::make_shared<MatteMaterial>(Color());
-        scene->getPrims().emplace_back(std::make_shared<GeometricPrimitive>(lightShape, black, vector3(0, 28, 0), area_light));
+        auto lightTransform = make_shared<Qt3DCore::QTransform>();
+        lightTransform->setTranslation(vector3(0, 29.5, 0));
+        scene->getPrims().emplace_back(std::make_shared<GeometricPrimitive>(lightShape, black, lightTransform, area_light));
         area_light->setParent(lightEntity);
         lightEntity->addComponent(area_light.get());
-        auto *lightTransform = new Qt3DCore::QTransform(lightEntity);
-        lightTransform->setTranslation(vector3(0, 38, 0));
-        lightEntity->addComponent(lightTransform);
+        lightEntity->addComponent(lightTransform.get());
     }
 
     void SceneManager::changeCurrentEntity(QTreeWidgetItem *item, int col)
@@ -125,7 +126,8 @@ namespace Fishy
     {
 //        qDebug() << "add new Plane";
         auto shape = createNewShape(FShapeType::FPlane);
-        auto newPrim = std::make_shared<GeometricPrimitive>(shape, white, vector3(0,0,0));
+        auto transform = std::make_shared<Qt3DCore::QTransform>();
+        auto newPrim = std::make_shared<GeometricPrimitive>(shape, white, transform);
         scene->bindPrimitiveToScene(newPrim);
         scene->getPrims().emplace_back(newPrim);
         scene->updatePrimProperties(sceneTree, newPrim);
@@ -135,7 +137,8 @@ namespace Fishy
     {
 //        qDebug() << "add new Sphere";
         auto shape = createNewShape(FShapeType::FSphere);
-        auto newPrim = std::make_shared<GeometricPrimitive>(shape, white, vector3(0,0,0));
+        auto transform = std::make_shared<Qt3DCore::QTransform>();
+        auto newPrim = std::make_shared<GeometricPrimitive>(shape, white, transform);
         scene->bindPrimitiveToScene(newPrim);
         scene->getPrims().emplace_back(newPrim);
         scene->updatePrimProperties(sceneTree, newPrim);
