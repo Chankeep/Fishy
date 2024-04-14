@@ -19,14 +19,12 @@ namespace Fishy
     {
     public:
         FragRenderer() = delete;
+        virtual ~FragRenderer() = default;
         FragRenderer(const vector2 &begin, const vector2 &end,
                 std::shared_ptr<Scene> scene,
                 std::shared_ptr<Camera> camera,
                 std::shared_ptr<Sampler> originalSampler,
                 std::shared_ptr<Film> film);
-
-        virtual ~FragRenderer() = default;
-
         void run() override;
         void resetSignal();
 
