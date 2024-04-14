@@ -11,12 +11,13 @@
 
 namespace Fishy
 {
-    static std::shared_ptr<Material> white;
-    static std::shared_ptr<Material> red;
-    static std::shared_ptr<Material> blue;
-    static std::shared_ptr<Material> grey;
-    static std::shared_ptr<Material> mirrorMat;
-    static std::shared_ptr<Material> glassMat;
+    inline std::shared_ptr<Material> white;
+    inline std::shared_ptr<Material> red;
+    inline std::shared_ptr<Material> blue;
+    inline std::shared_ptr<Material> green;
+    inline std::shared_ptr<Material> grey;
+    inline std::shared_ptr<Material> mirrorMat;
+    inline std::shared_ptr<Material> glassMat;
 
 
     class Material : public Qt3DRender::QMaterial
@@ -26,7 +27,7 @@ namespace Fishy
         virtual ~Material() = default;
 
         virtual std::unique_ptr<BSDF> Scattering(const Interaction &isect) const = 0;
-        virtual void setParameters() = 0;
+        // virtual void setParameters() = 0;
 
         FMaterialType type;
 
@@ -50,13 +51,13 @@ namespace Fishy
             return std::make_unique<LambertionReflection>(Frame(isect.normal), Kd);
         }
 
-        void setParameters() override
-        {
-            auto d = diffuse();
-            Kd.setX(d.redF());
-            Kd.setY(d.greenF());
-            Kd.setZ(d.blueF());
-        }
+        // void setParameters() override
+        // {
+        //     auto d = diffuse();
+        //     Kd.setX(d.redF());
+        //     Kd.setY(d.greenF());
+        //     Kd.setZ(d.blueF());
+        // }
 
 
     private:
@@ -81,14 +82,14 @@ namespace Fishy
             return std::make_unique<SpecularReflection>(Frame(isect.normal), Kr);
         }
 
-        void setParameters() override
-        {
-            auto vColor = this->baseColor();
-            auto baseColor = vColor.value<QColor>();
-            Kr.setX(baseColor.redF());
-            Kr.setY(baseColor.greenF());
-            Kr.setZ(baseColor.blueF());
-        }
+        // void setParameters() override
+        // {
+        //     auto vColor = this->baseColor();
+        //     auto baseColor = vColor.value<QColor>();
+        //     Kr.setX(baseColor.redF());
+        //     Kr.setY(baseColor.greenF());
+        //     Kr.setZ(baseColor.blueF());
+        // }
 
     private:
         Color Kr;
@@ -111,14 +112,14 @@ namespace Fishy
             return std::make_unique<FresnelSpecular>(Frame(isect.normal), Kr, Kt, 1, eta);
         }
 
-        void setParameters() override
-        {
-            auto v = this->diffuse();
-            auto diffuse = v.value<QColor>();
-            Kr.setX(diffuse.redF());
-            Kr.setY(diffuse.greenF());
-            Kr.setZ(diffuse.blueF());
-        }
+        // void setParameters() override
+        // {
+        //     auto v = this->diffuse();
+        //     auto diffuse = v.value<QColor>();
+        //     Kr.setX(diffuse.redF());
+        //     Kr.setY(diffuse.greenF());
+        //     Kr.setZ(diffuse.blueF());
+        // }
 
     private:
         Color Kr;

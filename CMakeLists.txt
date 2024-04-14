@@ -51,6 +51,8 @@ add_executable(Fishy
         src/Accelerator/BVH.cpp
         src/core/Scene.cpp
         src/utilities/FishyThreadPool.cpp
+        src/shapes/Model.cpp
+        src/shapes/Cube.cpp
 )
 
 

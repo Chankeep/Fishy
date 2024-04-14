@@ -10,4 +10,5 @@ int main(int argc, char *argv[])
     fish->show();
 
     return QApplication::exec();
+    return 0;
 }

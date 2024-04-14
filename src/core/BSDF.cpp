@@ -41,7 +41,7 @@ namespace Fishy
 
     BSDFSample LambertionReflection::sample_(const vector3 &wo, const vector3 &normal, const vector2 &random) const
     {
-        BSDFSample res;
+        BSDFSample sample;
 
         const double random1 = 2 * Pi * random[0];
         const double random2 = random[1];
@@ -52,11 +52,11 @@ namespace Fishy
         vector3 u = cross((fabs(w.x()) > .1 ? vector3(0, 1, 0) : vector3(1, 0, 0)), w).normalized();
         vector3 v = cross(w, u);
 
-        res.wi = (u * cos(random1) * random2Sqrt + v * sin(random1) * random2Sqrt + w * sqrt(1 - random2)).normalized();
-        res.pdf = dot(res.wi, normal) * InvPi;
-        res.f = albedo * InvPi;
+        sample.wi = (u * cos(random1) * random2Sqrt + v * sin(random1) * random2Sqrt + w * sqrt(1 - random2)).normalized();
+        sample.pdf = qAbs(dot(sample.wi, normal)) / Pi;
+        sample.f = albedo / Pi;
 
-        return res;
+        return sample;
     }
 
     vector3 SpecularReflection::f_(const vector3 &wo, const vector3 &wi) const
@@ -76,9 +76,9 @@ namespace Fishy
         // https://github.com/infancy/pbrt-v3/blob/master/src/core/reflection.cpp#L181-L191
 
         BSDFSample sample;
-        sample.wi = (-wo - 2 * dot(-wo, normal) * normal).normalized();
+        sample.wi = -wo - 2 * dot(-wo, normal) * normal;
         sample.pdf = 1;
-        sample.f = R / qMax(0.01f, qAbs(dot(sample.wi, normal)));
+        sample.f = R / qAbs(dot(sample.wi, normal));
         return sample;
 
 //        const double random1 = 2 * Pi * random[0];
@@ -116,7 +116,7 @@ namespace Fishy
         float eta = into ? etaI / etaT : etaT / etaI;
 
         // compute reflect direction by refection law
-        vector3 reflectDirection = (-wo - 2 * dot(-wo, normal) * normal).normalized();
+        vector3 reflectDirection = -wo - 2 * dot(-wo, normal) * normal;
 
         // compute refract direction by Snell's law
         // https://www.pbr-book.org/3ed-2018/Reflection_Models/Specular_Reflection_and_Transmission#SpecularTransmission see `Refract()`
@@ -128,7 +128,7 @@ namespace Fishy
             return sample;
         }
         float cosThetaT = qSqrt(1 - sinThetaT2);
-        vector3 refractDirection = ((-wo * eta + normal * (cosThetaI * eta - cosThetaT)) * normal).normalized();
+        vector3 refractDirection = (-wo * eta + normal * (cosThetaI * eta - cosThetaT));
 
         // compute the fraction of incoming light that is reflected or transmitted
         // by Schlick Approximation of Fresnel Dielectric 1994 https://en.wikipedia.org/wiki/Schlick%27s_approximation
@@ -150,16 +150,16 @@ namespace Fishy
             // Compute specular reflection for _FresnelSpecular_
 
             sample.wi = reflectDirection;
-            sample.pdf = Re;
-            sample.f = (R * Re) / qMax(0.01f, qAbs(dot(sample.wi, normal)));
+            sample.pdf = 1;
+            sample.f = (R * RP) / qAbs(dot(sample.wi, normal));
         }
         else
         {
             // Compute specular transmission for _FresnelSpecular_
 
             sample.wi = refractDirection;
-            sample.pdf = Tr;
-            sample.f = (T * Tr) / qMax(0.01f, qAbs(dot(sample.wi, normal)));
+            sample.pdf = 1;
+            sample.f = (T * TP) / qAbs(dot(sample.wi, normal));
         }
 
         return sample;

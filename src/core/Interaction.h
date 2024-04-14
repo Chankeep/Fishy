@@ -12,8 +12,8 @@ namespace Fishy
     public:
         Interaction() = default;
 
-        Interaction(const vector3 &position, const vector3 &normal, const vector3 &w_o, float distance = Infinity)
-                : position(position), normal(normal), w_o(w_o), distance(distance)
+        Interaction(const vector3 &position, const vector3 &normal, const vector3 &w_o, double distance = Infinity)
+                : position(position), normal(normal), w_o(w_o), tNear(distance)
         {
         }
 
@@ -21,7 +21,7 @@ namespace Fishy
         vector3 position;
         vector3 normal;
         vector3 w_o;
-        float distance = Infinity;
+        double tNear = Infinity;
 
         const BSDF *GetBsdf()
         {

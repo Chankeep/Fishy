@@ -9,8 +9,6 @@ namespace Fishy
 	{
 	public:
 		Sphere() : radius(5) {
-            auto rvec = vector3(radius, radius, radius);
-            box = AABB(origin - rvec, origin + rvec);
 
             setRadius(5);
             setSlices(100);
@@ -19,8 +17,6 @@ namespace Fishy
 
         }
 		Sphere(float radius, vector3 origin = vector3(0,0,0)) : radius(radius), origin(origin) {
-            auto rvec = vector3(radius, radius, radius);
-            box = AABB(origin - rvec, origin + rvec);
 
             setRadius(radius);
             setSlices(100);
@@ -28,11 +24,11 @@ namespace Fishy
             this->type = FShapeType::FSphere;
         }
 
-		bool Intersect(const Ray &r, Interaction& isect) const override;
-        AABB boundingBox() const {return box;}
+		bool Intersect(const Ray &r, double tNear, double tFar, Interaction &isect) const override;
         void setTransform(Qt3DCore::QTransform* transform) override;
+        double area() const override;
 
-		float radius;
+		double radius;
 		vector3 origin;
 	};
 }

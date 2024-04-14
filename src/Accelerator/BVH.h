@@ -21,9 +21,9 @@ namespace Fishy
 
         BVH(std::vector<std::shared_ptr<Primitive>>& prims, size_t start, size_t end);
 
-        virtual bool hit(const Ray &ray, double tMin, double tMax, Interaction &isect) const;
+        virtual bool hit(const Ray &ray, double tNear, double tFar, Interaction &isect) const;
         virtual AABB boundingBox() const;
-        virtual bool Intersect(const Ray &ray, Interaction &isect) const;
+        virtual bool Intersect(const Ray &ray, double tNear, double tFar, Interaction &isect) const;
         virtual void updateRenderData() const;
 
         std::shared_ptr<Primitive> leftPrim;

@@ -6,10 +6,6 @@
 
 namespace Fishy
 {
-    Plane::Plane() : width(50), height(50)
-    {
-        initialize();
-    }
 
     Plane::Plane(const Point3 &p0, const Point3 &p1, const Point3 &p2, const Point3 &p3)
             : p0(p0), p1(p1), p2(p2), p3(p3)
@@ -30,7 +26,7 @@ namespace Fishy
         this->type = FShapeType::FPlane;
     }
 
-    Plane::Plane(const float &width, const float &height) : width(width), height(height)
+    Plane::Plane(const double &width, const double &height) : width(width), height(height)
     {
         setWidth(width);
         setHeight(height);
@@ -49,65 +45,40 @@ namespace Fishy
         t2 = std::make_unique<Triangle>(p0, p2, p3);
     }
 
-    void Plane::initialize()
+    bool Plane::Intersect(const Ray &ray, double tNear, double tFar, Interaction &isect) const
     {
-        setWidth(50);
-        setHeight(50);
-        setMeshResolution(QSize(10, 10));
-        this->type = FShapeType::FPlane;
-
-        auto x = width / 2;
-        auto z = height / 2;
-        p0 = Point3(-x, 0, -z);
-        p1 = Point3(-x, 0, z);
-        p2 = Point3(x, 0, z);
-        p3 = Point3(x, 0, -z);
-
-        normal = vector3(0, 1, 0);
-        center = (p0 + p1 + p2 + p3) / 4;
-        t1 = std::make_unique<Triangle>(p0, p1, p2);
-        t2 = std::make_unique<Triangle>(p0, p2, p3);
-    }
-
-    bool Plane::Intersect(const Ray &ray, Interaction &isect) const
-    {// 计算点积 (光线方向与平面法向量)
-//        float numerator = dot(center - ray.origin, normal);
-//        float denominator = dot(ray.direction, normal);
-//        float t = numerator / denominator;
-//        // 如果 t 为负数，说明交点在光线起点的后方
-//        if (t < 0) return false;
-//
-//        // 计算交点坐标
-//        vector3 hitPoint = ray(t);
-//
-//        // 设置交点信息
-//        isect = Interaction(hitPoint, normal, -ray.direction, t);
-//
-//        return true;
-
         if(!t1 || !t2)
         {
             return false;
         }
-        return t1->Intersect(ray, isect) || t2->Intersect(ray, isect);
-    }
-
-    AABB Plane::boundingBox() const
-    {
-        return AABB(p0, p2);
+        return t1->Intersect(ray, tNear, tFar, isect) || t2->Intersect(ray, tNear, tFar, isect);
     }
 
     void Plane::setTransform(Qt3DCore::QTransform *transform)
     {
-//        p0 = transform->matrix().map(p0);
-//        p1 = transform->matrix().map(p1);
-//        p2 = transform->matrix().map(p2);
-//        p3 = transform->matrix().map(p3);
-//        center = transform->matrix().map(center);
-//        normal = transform->matrix().mapVector(normal);
+        p0 = transform->matrix().map(p0);
+        p1 = transform->matrix().map(p1);
+        p2 = transform->matrix().map(p2);
+        p3 = transform->matrix().map(p3);
+        center = transform->matrix().map(center);
 
         t1->setTransform(transform);
         t2->setTransform(transform);
+
+        vector3 pMax, pMin;
+        pMax.setX(std::max({p0.x(), p1.x(), p2.x(), p3.x()}));
+        pMax.setY(std::max({p0.y(), p1.y(), p2.y(), p3.y()}));
+        pMax.setZ(std::max({p0.z(), p1.z(), p2.z(), p3.z()}));
+
+        pMin.setX(std::min({p0.x(), p1.x(), p2.x(), p3.x()}));
+        pMin.setY(std::min({p0.y(), p1.y(), p2.y(), p3.y()}));
+        pMin.setZ(std::min({p0.z(), p1.z(), p2.z(), p3.z()}));
+        box = {pMin, pMax};
+    }
+
+    double Plane::area() const
+    {
+        return width * height;
     }
 
 

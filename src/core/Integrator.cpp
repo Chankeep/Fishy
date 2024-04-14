@@ -2,6 +2,7 @@
 
 namespace Fishy
 {
+
     void Integrator::Render(const vector2 &begin, const vector2 &end, std::shared_ptr<Scene> scene, std::shared_ptr<Camera> camera, std::shared_ptr<Sampler> originalSampler, std::shared_ptr<Film> film)
     {
         auto resolution = film->Resolution();
@@ -11,9 +12,6 @@ namespace Fishy
         std::shared_ptr<Sampler> sampler = originalSampler->Clone();
         for (int y = begin.y(); y < end.y(); y++)
         {
-            auto msg = QString("\rRendering (%1 spp) %2%").arg( sampler->SamplesPerPixel()).arg( 100. * renderSignal / TotalPixels);
-            qDebug("\rRendering (%d spp) %5.2f%%", sampler->SamplesPerPixel(), 100. * renderSignal / TotalPixels);
-            emit(sentMessage(msg));
             for (int x = begin.x(); x < end.x(); x++)
             {
                 vector3 L{};
@@ -39,6 +37,8 @@ namespace Fishy
 
         if (!scene->Intersect(ray, isect))
             return {};
+
+//        return {qAbs(isect.normal.x()), isect.normal.y(), qAbs(isect.normal.z())};
 
         if (depth > maxDepth)
             return isect.Le();

@@ -22,9 +22,11 @@ namespace Fishy
         bool initRendering();
         bool renderQ3D();
         bool renderRT();
+        void renderingFinished();
 
         void loadTransformData();
         void loadMaterialData();
+        void loadMaterialName(const QString& name);
 
     public slots:
         void setScaleX(double value);
@@ -39,20 +41,24 @@ namespace Fishy
         void setColorR(int value);
         void setColorG(int value);
         void setColorB(int value);
+        void setMaterial(int index);
 
-        void updateTempName(const QString&);
+        void setImageWidth(int value);
+        void setImageHeight(int value);
+
         void setEntityName();
         void updateCurEntityName();
+        void updateTempName(const QString&);
 
         void renderRTSlot();
         void updatePropertiesWidget(Qt3DCore::QEntity *entity);
 
         void printMessage(const QString&);
+        void onTimeout();
 
     private:
         Ui::FishyClass ui;
 
-        std::shared_ptr<Scene> scene;
         std::shared_ptr<Film> film;
         Qt3DCore::QEntity* curEntity = nullptr;
         Qt3DCore::QTransform* curTransform = nullptr;
@@ -60,16 +66,17 @@ namespace Fishy
         FMaterialType curMaterialType;
 
         std::shared_ptr<SceneManager> sceneManager;
-        std::shared_ptr<Integrator> integrator;
+        std::unique_ptr<Integrator> integrator;
         std::shared_ptr<Sampler> originalSampler;
 
         QString tempName;
 
         size_t samplesPerPixel;
-        size_t width = 1000, height = 800;
 
         std::shared_ptr<FishyTimer> timer;
+        std::shared_ptr<QTimer> paceTimer;
 
         QThreadPool* pool;
+
     };
 }

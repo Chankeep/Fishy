@@ -35,8 +35,8 @@ namespace Fishy
     {
         int axis = dis(gen);
         auto comparator = (axis == 0) ? box_x_compare
-                                      : (axis == 1) ? box_y_compare
-                                                    : box_z_compare;
+                        : (axis == 1) ? box_y_compare
+                        : box_z_compare;
 
         size_t object_span = end - start;
 
@@ -69,18 +69,18 @@ namespace Fishy
         return box;
     }
 
-    bool BVH::hit(const Ray &ray, double tMin, double tMax, Interaction &isect) const
+    bool BVH::hit(const Ray &ray, double tNear, double tFar, Interaction &isect) const
     {
-        if (!box.hit(ray, tMin, tMax))
+        if (!box.hit(ray, tNear, tFar))
             return false;
 
-        bool hitLeft = leftPrim->hit(ray, tMin, tMax, isect);
-        bool hitRight = rightPrim->hit(ray, tMin, hitLeft ? isect.distance : tMax, isect);
+        bool hitLeft = leftPrim->hit(ray, tNear, tFar, isect);
+        bool hitRight = rightPrim->hit(ray, tNear, hitLeft ? isect.tNear : tFar, isect);
 
         return hitLeft || hitRight;
     }
 
-    bool BVH::Intersect(const Ray &ray, Interaction &isect) const{
+    bool BVH::Intersect(const Ray &ray, double tNear, double tFar, Interaction &isect) const{
         return false;
     }
 

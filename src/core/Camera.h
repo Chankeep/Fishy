@@ -12,7 +12,7 @@ namespace Fishy
         vector2 pFilm;
     };
 
-    class Camera
+    class Camera : public Qt3DCore::QEntity
     {
     public:
         Camera() = default;
@@ -23,6 +23,7 @@ namespace Fishy
         Film *film{};
         vector3 position;
         vector3 front;
+        vector3 center;
         vector3 right;
         vector3 up;
         vector2 resolution;

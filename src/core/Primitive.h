@@ -22,8 +22,8 @@ namespace Fishy
         }
 
         virtual ~Primitive() = default;
-        virtual bool hit(const Ray &ray, double tMin, double tMax, Interaction& isect) const = 0;
-        virtual bool Intersect(const Ray &r, Interaction &isect) const = 0;
+        virtual bool hit(const Ray &ray, double tNear, double tFar, Interaction& isect) const = 0;
+        virtual bool Intersect(const Ray &r, double tNear, double tFar, Interaction &isect) const = 0;
         virtual AABB boundingBox() const = 0;
         virtual void updateRenderData() const = 0;
     };
@@ -41,7 +41,7 @@ namespace Fishy
                 const std::shared_ptr<Qt3DCore::QTransform>& transform,
                 const std::shared_ptr<Light> &light = nullptr
         )
-                : fishyShape(fishyShape), material(material), transform(transform), light(light)
+                : fishyShape(fishyShape), material(material), light(light), transform(transform)
         {
 //            reverseCoordinateSystem();
             addComponent(transform.get());
@@ -66,24 +66,19 @@ namespace Fishy
         }
 
 
-        bool hit(const Ray &ray, double tMin, double tMax, Interaction& isect) const override
+        bool hit(const Ray &ray, double tNear, double tFar, Interaction& isect) const override
         {
-            return Intersect(ray, isect);
+            return Intersect(ray, tNear, tFar, isect);
         }
-        bool Intersect(const Ray &ray, Interaction &isect) const override
+        bool Intersect(const Ray &ray, double tNear, double tFar, Interaction &isect) const override
         {
-            bool hit = fishyShape->Intersect(ray, isect);
+            bool hit = fishyShape->Intersect(ray, tNear, tFar, isect);
             if (hit)
             {
                 isect.bsdf = material->Scattering(isect);
                 isect.emission = light ? light->Le(isect, isect.w_o) : Color();
             }
             return hit;
-        }
-
-        void reverseCoordinateSystem()
-        {
-            transform->setTranslation({-transform->translation().x(), transform->translation().y(), transform->translation().z()});
         }
 
         void setShapeType(FishyShape* shape)
@@ -127,7 +122,7 @@ namespace Fishy
         void updateRenderData() const override
         {
             fishyShape->setTransform(transform.get());
-            material->setParameters();
+            // material->setParameters();
         }
 
 

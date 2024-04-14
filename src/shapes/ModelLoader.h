@@ -7,11 +7,12 @@
 
 #include "../core/Fishy.h"
 #include "../core/Primitive.h"
+#include "Model.h"
 #include "Triangle.h"
- #include <assimp/Importer.hpp>
- #include <assimp/Exporter.hpp>
- #include <assimp/postprocess.h>
- #include <assimp/scene.h>
+#include <assimp/Importer.hpp>
+#include <assimp/Exporter.hpp>
+#include <assimp/postprocess.h>
+#include <assimp/scene.h>
 
 namespace Fishy
 {
@@ -22,10 +23,10 @@ namespace Fishy
         std::vector<std::shared_ptr<TriangleMesh>> meshes;
     public:
 
-         void loadModel(const QString& path);
-         void processNode(aiNode *node, const aiScene *scene);
-         std::shared_ptr<TriangleMesh> processMesh(aiMesh *mesh, const aiScene *scene);
-         void buildNoTextureModel(std::vector<std::shared_ptr<Primitive>> &prims, const std::shared_ptr<Material> &material);
+        std::shared_ptr<Model> loadModel(const QString &path, const std::shared_ptr<Material> &material);
+        void processNode(const aiNode *node, const aiScene *scene);
+        std::shared_ptr<TriangleMesh> processMesh(const aiMesh *mesh, const aiScene *scene);
+        void buildNoTextureModel(std::vector<std::shared_ptr<Primitive>> &prims, const std::shared_ptr<Material> &material, const std::shared_ptr<Qt3DCore::QTransform> transform);
     };
 
 } // Fishy

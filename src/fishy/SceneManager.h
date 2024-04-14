@@ -10,6 +10,7 @@
 #include "../core/Camera.h"
 #include "../materials/Material.h"
 #include <QTreeWidget>
+#include <QComboBox>
 
 namespace Fishy
 {
@@ -24,11 +25,6 @@ namespace Fishy
         void initQt3DView();
         void initCamera();
         void initLight();
-
-        std::shared_ptr<FishyShape> createNewShape(FShapeType SType, FMaterialType MType = FMaterialType::Matte);
-
-        void addNewModel();
-
         std::shared_ptr<Qt3DExtras::Qt3DWindow> getQt3DView() const
         {
             return qt3DView;
@@ -49,24 +45,37 @@ namespace Fishy
             return currentTreeItem;
         }
 
-        void initDefaultMaterials()
+        size_t getImageWidth() const
         {
-            white = std::make_shared<MatteMaterial>(vector3(1, 1, 1));
-            red = std::make_shared<MatteMaterial>(vector3(.75, .25, .25));
-            blue = std::make_shared<MatteMaterial>(vector3(.25, .25, .75));
-            grey = std::make_shared<MatteMaterial>(vector3(.75, .75, .75));
-            mirrorMat = std::make_shared<MirrorMaterial>(Color(1,1,1) * 0.999);
-            glassMat = std::make_shared<GlassMaterial>(Color(1,1,1)*0.999,Color(1,1,1)*0.999,1.5);
+            return imageWidth;
         }
+
+        size_t getImageHeight() const
+        {
+            return imageHeight;
+        }
+
+        void initSceneTree();
+        void updateRenderData();
+        void bindPrimitivesToScene();
+        void displayPrimsProperties();
+        void loadModel(const QString& path);
+        void updateModelToTree(const shared_ptr<Model>& model);
+        void setResolution(size_t width, size_t height);
+        void initDefaultMaterials(QComboBox* materialBox);
+        void bindPrimitiveToScene(const shared_ptr<Primitive> &prim);
+        void updatePrimProperties(const shared_ptr<Primitive> &prim);
+        std::shared_ptr<FishyShape> createNewShape(FShapeType SType, FMaterialType MType = FMaterialType::Matte);
 
     public slots:
         void changeCurrentEntity(QTreeWidgetItem*, int);
         void addNewPlane();
         void addNewSphere();
-        void loadModel();
+        void addNewModel();
 
     signals:
         void currentEntityChanged(Qt3DCore::QEntity* );
+        void sendMessage(const QString&);
 
     private:
         std::shared_ptr<Scene> scene;
@@ -77,8 +86,11 @@ namespace Fishy
         std::shared_ptr<QWidget> renderWidget;
         std::shared_ptr<QTreeWidget> sceneTree;
         QTreeWidgetItem* currentTreeItem;
+        QWidget* container;
 
-        uint width, height;
+        std::shared_ptr<ModelLoader> modelLoader;
+
+        size_t imageWidth = 1000, imageHeight = 1000;
     };
 
 } // Fishy

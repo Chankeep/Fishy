@@ -7,77 +7,56 @@
 namespace Fishy
 {
     TriangleMesh::TriangleMesh(int numTriangles, int numVertices,
-            const int* vertexIndices,
-            const Point3 *P, const vector3 *T, const Normal3 *N,
-            const vector2 *UV, const int *faceIndices): nTriangles(numTriangles),
+            const int *vertexIndices,
+            const Point3 *P) :
+            nTriangles(numTriangles),
             nVertices(numVertices),
             vertexIndices(vertexIndices, vertexIndices + 3 * nTriangles)
     {
         p.reset(new Point3[numVertices]);
-        for(int i=0;i<numVertices;i++) p[i] = P[i];
-
-        if(UV)
-        {
-            uv.reset(new vector2[numVertices]);
-            memcpy(uv.get(), UV, numVertices * sizeof(vector2));
-        }
-        if(N)
-        {
-            n.reset(new Normal3[numVertices]);
-            for(int i=0; i<numVertices;i++) n[i] = N[i];
-        }
-        if(T)
-        {
-            n.reset(new vector3[numVertices]);
-            for(int i=0; i<numVertices;i++) t[i] = T[i];
-        }
-        if(faceIndices)
-            this->faceIndices = std::vector<int>(faceIndices, faceIndices + numTriangles);
+        for (int i = 0; i < numVertices; i++) p[i] = P[i];
     }
 
-    bool Triangle::Intersect(const Ray &ray, Interaction &isect) const
+    bool Triangle::Intersect(const Ray &ray, double tNear, double tFar, Interaction &isect) const
     {
-
-        const float EPSILON = 1e-5f; // 定义一个足够小的常量
+        const double EPSILON = 0.001; // 定义一个足够小的常量
         vector3 E1 = v1 - v0;
         vector3 E2 = v2 - v0;
 
-        // 计算 P
-        const vector3 P = cross(ray.direction, E2);
+        // 计算 S1
+        const vector3 S1 = cross(ray.direction, E2);
         // 计算行列式
-        const double det = dot(E1, P);
-        if (fabs(det) < EPSILON) return false;
-        // 计算交点的参数
+        const double det = dot(E1, S1);
+        if (det == 0 || det < 0) return false;
+
         const double invDet = 1.0 / det;
-        const vector3 T = ray.origin - v0;
-        const double u = invDet * dot(T, P);
-        if (u < 0 || u > 1) return false;
-        // 计算 Q
-        const vector3 Q = cross(T, E1);
-        const double v = dot(ray.direction, Q) * invDet;
-        if (v < 0 || u + v > 1) return false;
+        // 计算交点的参数
+        const vector3 S = ray.origin - v0;
+        double b1 = dot(S, S1);
+        if (b1 < 0 || b1 > det) return false;
+
+        // 计算 S2
+        const vector3 S2 = cross(S, E1);
+        double b2 = dot(ray.direction, S2);
+        if (b2 < 0 || b1 + b2 > det) return false;
+
         // 计算 t
-        const double t = dot(E2, Q) * invDet;
-        if (t < EPSILON) return false;
-        if(t < isect.distance)
+        const double t = dot(E2, S2) * invDet;
+//        if (t < EPSILON) return false;
+
+        b1 *= invDet;
+        b2 *= invDet;
+
+        if (t > isect.tNear)
         {
-            // 计算法线
-            vector3 tempNormal = cross(E2, E1).normalized();
-            if (dot(tempNormal, ray.direction) > 0) {
-                tempNormal *= -1;
-            }
-            // 更新交点信息
-            isect = Interaction(ray(t), tempNormal, -ray.direction, t);
-            return true;
+            return false;
         }
-        return false;
-
-
-    }
-
-    AABB Triangle::boundingBox() const
-    {
-        return AABB();
+        // 计算法线
+        vector3 tempNormal = cross(E1, E2).normalized();
+        tempNormal = dot(tempNormal, ray.direction) < 0 ? tempNormal : -tempNormal;
+        //更新交点信息
+        isect = Interaction(ray(t), tempNormal, -ray.direction, t);
+        return true;
     }
 
     void Triangle::setTransform(Qt3DCore::QTransform *transform)
@@ -86,5 +65,20 @@ namespace Fishy
         v0 = mat.map(v0);
         v1 = mat.map(v1);
         v2 = mat.map(v2);
+
+        vector3 pMax, pMin;
+        pMax.setX(std::max({v0.x(), v1.x(), v2.x()}));
+        pMax.setY(std::max({v0.y(), v1.y(), v2.y()}));
+        pMax.setZ(std::max({v0.z(), v1.z(), v2.z()}));
+
+        pMin.setX(std::min({v0.x(), v1.x(), v2.x()}));
+        pMin.setY(std::min({v0.y(), v1.y(), v2.y()}));
+        pMin.setZ(std::min({v0.z(), v1.z(), v2.z()}));
+        box = {pMin, pMax};
+    }
+
+    double Triangle::area() const
+    {
+        return cross(v1 - v0, v2 - v0).length() * 0.5;
     }
 } // Fishy

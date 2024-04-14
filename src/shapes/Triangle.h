@@ -16,17 +16,11 @@ namespace Fishy
     {
         TriangleMesh(int numTriangles, int numVertices,
                 const int *vertexIndices,
-                const Point3 *P, const vector3 *T,
-                const Normal3 *N, const vector2 *uv,
-                const int *faceIndices);
+                const Point3 *P);
 
         const int nTriangles, nVertices;
         std::vector<int> vertexIndices;
         std::unique_ptr<Point3[]> p;
-        std::unique_ptr<Normal3[]> n;
-        std::unique_ptr<vector3[]> t;
-        std::unique_ptr<vector2[]> uv;
-        std::vector<int> faceIndices;
     };
 
     class Triangle : public FishyShape
@@ -41,21 +35,18 @@ namespace Fishy
                 : mesh(mesh)
         {
             v = &mesh->vertexIndices[3 * nTriangles];
-            faceIndex = mesh->faceIndices.size() ? mesh->faceIndices[nTriangles] : 0;
-            v0 = mesh->p[0];
-            v1 = mesh->p[1];
-            v2 = mesh->p[2];
+            v0 = mesh->p[v[0]];
+            v1 = mesh->p[v[1]];
+            v2 = mesh->p[v[2]];
         }
 
-
-        bool Intersect(const Ray &ray, Interaction &isect) const override;
-        AABB boundingBox() const override;
-        void setTransform(Qt3DCore::QTransform *transform) override;
+        virtual bool Intersect(const Ray &ray, double tNear, double tFar, Interaction &isect) const override;
+        virtual void setTransform(Qt3DCore::QTransform *transform) override;
+        virtual double area() const override;
 
     private:
         std::shared_ptr<TriangleMesh> mesh;
         const int *v;
-        int faceIndex;
 
         vector3 v0, v1, v2;
     };
