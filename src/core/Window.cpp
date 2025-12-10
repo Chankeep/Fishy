@@ -4,32 +4,43 @@
 
 namespace Fishy {
 
-Window::Window(const Properties &properties) : _properties(properties) { Init(properties); }
+Window::Window(const Properties &properties, vk::raii::Instance &instance) : _properties(properties) { 
+	Init(properties);
+	createSurface(instance);
+}
 
 Window::~Window() {
 	if (_window) {
 		glfwDestroyWindow(_window);
+		_window = nullptr;
 	}
-	glfwTerminate();
+	// Note: glfwTerminate() should be called in main()
 }
 
 void Window::Init(const Properties &properties) {
-	if (!glfwInit()) {
-		throw std::runtime_error("Failed to initialize GLFW");
-	}
+	// Note: glfwInit() should be called before creating VulkanContext
+	// This allows GLFW to properly provide the required Vulkan extensions
 
 	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 	glfwWindowHint(GLFW_RESIZABLE, properties.resizable ? GLFW_TRUE : GLFW_FALSE);
 
 	_window = glfwCreateWindow(properties.width, properties.height, properties.title.c_str(), nullptr, nullptr);
 	if (!_window) {
-		glfwTerminate();
 		throw std::runtime_error("Failed to create GLFW window");
 	}
 
 	glfwSetWindowUserPointer(_window, this);
 	glfwSetKeyCallback(_window, KeyCallback);
 	glfwSetFramebufferSizeCallback(_window, FramebufferResizeCallback);
+}
+
+void Window::createSurface(vk::raii::Instance &instance) {
+	VkSurfaceKHR cSurface;
+	if ((glfwCreateWindowSurface(*instance, _window, nullptr, &cSurface) != 0)) {
+		throw std::runtime_error("Failed to create window surface!");
+	}
+	// Wrap the C surface handle into RAII wrapper
+	_surface = vk::raii::SurfaceKHR(instance, cSurface);
 }
 
 void Window::Update() { glfwPollEvents(); }

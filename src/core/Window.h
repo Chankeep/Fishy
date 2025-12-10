@@ -1,5 +1,13 @@
 #pragma once
 
+#define VULKAN_HPP_NO_CONSTRUCTORS // 移除Vulkan.hpp的构造函数
+
+#if defined(__INTELLISENSE__) || !defined(USE_CPP20_MODULES)
+#include <vulkan/vulkan_raii.hpp>
+#else
+import vulkan_hpp;
+#endif
+
 #include <GLFW/glfw3.h>
 #include <string>
 
@@ -14,20 +22,25 @@ public:
 		bool resizable = true;
 	};
 
-	Window(const Properties &properties);
+	Window(const Properties &properties, vk::raii::Instance &instance);
 	~Window();
 
 	void Update();
 	bool ShouldClose() const;
-	GLFWwindow *GetNativeWindow() const { return _window; }
+	GLFWwindow *nativeWindow() const { return _window; }
 
-	uint32_t GetWidth() const { return _properties.width; }
-	uint32_t GetHeight() const { return _properties.height; }
+	uint32_t width() const { return _properties.width; }
+	uint32_t height() const { return _properties.height; }
+
+	vk::raii::SurfaceKHR &surface() { return _surface; }
 
 private:
 	void Init(const Properties &properties);
+	void createSurface(vk::raii::Instance &instance);
 	static void KeyCallback(GLFWwindow *window, int key, int scancode, int action, int mods);
 	static void FramebufferResizeCallback(GLFWwindow *window, int width, int height);
+
+	vk::raii::SurfaceKHR _surface = nullptr;
 
 	GLFWwindow *_window = nullptr;
 	Properties _properties;
