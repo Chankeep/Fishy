@@ -22,27 +22,31 @@ public:
 		bool resizable = true;
 	};
 
-	Window(const Properties &properties, vk::raii::Instance &instance);
+	Window(const Properties& properties, vk::raii::Instance& instance);
 	~Window();
 
 	void Update();
 	bool ShouldClose() const;
-	GLFWwindow *nativeWindow() const { return _window; }
+	GLFWwindow* getNativeWindow() const { return _window; }
 
-	uint32_t width() const { return _properties.width; }
-	uint32_t height() const { return _properties.height; }
+	uint32_t getWidth() const { return _properties.width; }
+	uint32_t getHeight() const { return _properties.height; }
+	vk::Extent2D getExtent() const { return {_properties.width, _properties.height}; }
 
-	vk::raii::SurfaceKHR &surface() { return _surface; }
+	bool wasWindowResized() const { return _framebufferResized; }
+	void resetWindowResizedFlag() { _framebufferResized = false; }
+
+	vk::raii::SurfaceKHR& getSurface() { return _surface; }
 
 private:
-	void Init(const Properties &properties);
-	void createSurface(vk::raii::Instance &instance);
-	static void KeyCallback(GLFWwindow *window, int key, int scancode, int action, int mods);
-	static void FramebufferResizeCallback(GLFWwindow *window, int width, int height);
+	void Init(const Properties& properties);
+	void createSurface(vk::raii::Instance& instance);
+	static void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods);
+	static void FramebufferResizeCallback(GLFWwindow* window, int width, int height);
 
 	vk::raii::SurfaceKHR _surface = nullptr;
 
-	GLFWwindow *_window = nullptr;
+	GLFWwindow* _window = nullptr;
 	Properties _properties;
 
 	// Fullscreen state
@@ -51,6 +55,8 @@ private:
 	int _windowedYPos = 0;
 	int _windowedWidth = 0;
 	int _windowedHeight = 0;
+
+	bool _framebufferResized = false;
 };
 
 } // namespace Fishy

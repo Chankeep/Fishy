@@ -14,13 +14,14 @@ class VulkanContext;
 
 class VulkanDevice {
 public:
-	VulkanDevice(vk::raii::Instance &instance, vk::raii::SurfaceKHR &surface);
+	VulkanDevice(vk::raii::Instance& instance, vk::raii::SurfaceKHR& surface);
 	~VulkanDevice();
 
-	vk::raii::Device &device() { return _device; }
-	vk::raii::Queue &graphicsQueue() { return _graphicsQueue; }
-	vk::raii::Queue &presentQueue() { return _presentQueue; }
-	vk::raii::PhysicalDevice &physicalDevice() { return _physicalDevice; }
+	vk::raii::Device& getDevice() { return _device; }
+	vk::raii::Queue& getGraphicsQueue() { return _graphicsQueue; }
+	vk::raii::Queue& getPresentQueue() { return _presentQueue; }
+	vk::raii::PhysicalDevice& getPhysicalDevice() { return _physicalDevice; }
+	uint32_t getGraphicsQueueFamilyIndex() const { return _graphicsQueueFamily; }
 
 private:
 	vk::raii::Instance& _instance;

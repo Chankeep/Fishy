@@ -4,7 +4,7 @@
 
 namespace Fishy {
 
-Window::Window(const Properties &properties, vk::raii::Instance &instance) : _properties(properties) { 
+Window::Window(const Properties& properties, vk::raii::Instance& instance) : _properties(properties) {
 	Init(properties);
 	createSurface(instance);
 }
@@ -17,7 +17,7 @@ Window::~Window() {
 	// Note: glfwTerminate() should be called in main()
 }
 
-void Window::Init(const Properties &properties) {
+void Window::Init(const Properties& properties) {
 	// Note: glfwInit() should be called before creating VulkanContext
 	// This allows GLFW to properly provide the required Vulkan extensions
 
@@ -34,7 +34,7 @@ void Window::Init(const Properties &properties) {
 	glfwSetFramebufferSizeCallback(_window, FramebufferResizeCallback);
 }
 
-void Window::createSurface(vk::raii::Instance &instance) {
+void Window::createSurface(vk::raii::Instance& instance) {
 	VkSurfaceKHR cSurface;
 	if ((glfwCreateWindowSurface(*instance, _window, nullptr, &cSurface) != 0)) {
 		throw std::runtime_error("Failed to create window surface!");
@@ -47,14 +47,16 @@ void Window::Update() { glfwPollEvents(); }
 
 bool Window::ShouldClose() const { return glfwWindowShouldClose(_window); }
 
-void Window::FramebufferResizeCallback(GLFWwindow *window, int width, int height) {
-	auto app = reinterpret_cast<Window *>(glfwGetWindowUserPointer(window));
+void Window::FramebufferResizeCallback(GLFWwindow* window, int width, int height) {
+	auto app = reinterpret_cast<Window*>(glfwGetWindowUserPointer(window));
+	app->_properties.width = width;
 	app->_properties.width = width;
 	app->_properties.height = height;
+	app->_framebufferResized = true;
 }
 
-void Window::KeyCallback(GLFWwindow *window, int key, int scancode, int action, int mods) {
-	Window *win = static_cast<Window *>(glfwGetWindowUserPointer(window));
+void Window::KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
+	Window* win = static_cast<Window*>(glfwGetWindowUserPointer(window));
 
 	if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
 		glfwSetWindowShouldClose(window, GLFW_TRUE);
@@ -70,8 +72,8 @@ void Window::KeyCallback(GLFWwindow *window, int key, int scancode, int action, 
 			glfwGetWindowPos(window, &win->_windowedXPos, &win->_windowedYPos);
 			glfwGetWindowSize(window, &win->_windowedWidth, &win->_windowedHeight);
 
-			GLFWmonitor *primaryMonitor = glfwGetPrimaryMonitor();
-			const GLFWvidmode *mode = glfwGetVideoMode(primaryMonitor);
+			GLFWmonitor* primaryMonitor = glfwGetPrimaryMonitor();
+			const GLFWvidmode* mode = glfwGetVideoMode(primaryMonitor);
 
 			glfwSetWindowMonitor(window, primaryMonitor, 0, 0, mode->width, mode->height, mode->refreshRate);
 			win->_isFullscreen = true;

@@ -32,7 +32,6 @@ cmake_install.cmake
 *.vcxproj.user
 *.vcxproj.filters
 .vs/
-docs/
 .agent/
 .cache/
 

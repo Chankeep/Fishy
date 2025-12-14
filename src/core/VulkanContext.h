@@ -1,6 +1,7 @@
 #pragma once
 #include <optional>
 #include <vector>
+
 #define VULKAN_HPP_NO_CONSTRUCTORS // 移除Vulkan.hpp的构造函数
 
 #if defined(__INTELLISENSE__) || !defined(USE_CPP20_MODULES)
@@ -17,7 +18,7 @@ public:
 	VulkanContext();
 	~VulkanContext();
 
-	vk::raii::Instance &instance() { return _instance; }
+	vk::raii::Instance &getInstance() { return _instance; }
 	
 private:
 	void Init();

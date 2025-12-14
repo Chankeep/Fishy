@@ -1,0 +1,28 @@
+#pragma once
+
+#define VULKAN_HPP_NO_CONSTRUCTORS // 移除Vulkan.hpp的构造函数
+
+#if defined(__INTELLISENSE__) || !defined(USE_CPP20_MODULES)
+#include <vulkan/vulkan_raii.hpp>
+#else
+import vulkan_hpp;
+#endif
+
+namespace Fishy {
+
+class VulkanDevice;
+
+class CommandPool {
+public:
+	CommandPool(VulkanDevice &device, uint32_t queueFamilyIndex);
+	~CommandPool();
+
+	vk::raii::CommandBuffer allocateBuffer(bool isPrimary = true);
+
+	vk::raii::CommandPool &getCommandPool() { return _pool; }
+
+private:
+	VulkanDevice &_device;
+	vk::raii::CommandPool _pool = nullptr;
+};
+} // namespace Fishy

@@ -7,3 +7,4 @@ ColumnLimit: 120
 Standard: c++20
 AccessModifierOffset: -4
 SortIncludes: true
+PointerAlignment: Left

@@ -8,13 +8,13 @@
 import vulkan_hpp;
 #endif
 
-#include <vector>
 #include <limits>
+#include <vector>
 
 namespace Fishy {
 class SwapChain {
 public:
-	SwapChain(vk::raii::Device &device, vk::raii::PhysicalDevice &physicalDeivce, vk::raii::SurfaceKHR &surface,
+	SwapChain(vk::raii::Device& device, vk::raii::PhysicalDevice& physicalDevice, vk::raii::SurfaceKHR& surface,
 			  int width, int height);
 	~SwapChain();
 
@@ -22,12 +22,12 @@ public:
 	void recreate(int width, int height);
 
 	// 访问接口
-	vk::raii::SwapchainKHR &swapChain() { return _swapChain; }
-	const std::vector<vk::raii::ImageView>& imageViews() const { return _imageViews; }
-	const std::vector<vk::Image>& images() const { return _images; }
-	vk::Format format() const { return _swapChainSurfaceFormat.format; }
-	vk::Extent2D extent() const { return _swapChainExtent; }
-	uint32_t imageCount() const { return static_cast<uint32_t>(_imageViews.size()); }
+	vk::raii::SwapchainKHR& getSwapChain() { return _swapChain; }
+	const std::vector<vk::raii::ImageView>& getImageViews() const { return _imageViews; }
+	const std::vector<vk::Image>& getImages() const { return _images; }
+	vk::Format getFormat() const { return _swapChainSurfaceFormat.format; }
+	vk::Extent2D getExtent() const { return _swapChainExtent; }
+	uint32_t getImageCount() const { return static_cast<uint32_t>(_imageViews.size()); }
 
 private:
 	// 创建与销毁辅助
@@ -36,8 +36,8 @@ private:
 	void cleanup();
 
 private:
-	vk::raii::Device &_device;
-	vk::raii::SurfaceKHR &_surface;
+	vk::raii::Device& _device;
+	vk::raii::SurfaceKHR& _surface;
 	vk::raii::PhysicalDevice _physicalDevice;
 
 	vk::raii::SwapchainKHR _swapChain = nullptr;
