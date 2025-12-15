@@ -16,6 +16,7 @@ namespace Fishy {
 
 Renderer::Renderer(VulkanDevice& device, Window& window, ResourceManager& resourceManager)
 	: _device(device), _window(window), _resourceManager(resourceManager) {
+	_frames.resize(MAX_FRAMES_IN_FLIGHT);
 	recreateSwapChain();
 	createCommandBuffers();
 	createDescriptorSetLayout();
@@ -61,28 +62,32 @@ void Renderer::createCommandBuffers() {
 											.level = vk::CommandBufferLevel::ePrimary,
 											.commandBufferCount = MAX_FRAMES_IN_FLIGHT};
 
-	_commandBuffers = vk::raii::CommandBuffers(_device.getDevice(), allocInfo);
+	auto commandBuffers = vk::raii::CommandBuffers(_device.getDevice(), allocInfo);
+	for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+		_frames[i].commandBuffer = std::move(commandBuffers[i]);
+	}
 }
 
 void Renderer::freeCommandBuffers() {
-	_commandBuffers.clear();
+	for (auto& frame : _frames) {
+		frame.commandBuffer = nullptr;
+	}
 	_commandPool = nullptr;
 }
 
 void Renderer::createSyncObjects() {
-	_imageAvailableSemaphores.clear();
-	_renderFinishedSemaphores.clear();
-	_inFlightFences.clear();
-
-	size_t imageCount = _swapChain->getImageCount();
-
+	// Frame-in-flight sync objects
 	for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-		_inFlightFences.emplace_back(_device.getDevice(),
-									 vk::FenceCreateInfo{.flags = vk::FenceCreateFlagBits::eSignaled});
+		_frames[i].imageAvailableSemaphore = vk::raii::Semaphore(_device.getDevice(), vk::SemaphoreCreateInfo{});
+		_frames[i].inFlightFence =
+			vk::raii::Fence(_device.getDevice(), vk::FenceCreateInfo{.flags = vk::FenceCreateFlagBits::eSignaled});
 	}
 
+	// Per-swapchain-image sync objects
+	// We need these to be 1:1 with images because the presentation engine holds them
+	_renderFinishedSemaphores.clear();
+	size_t imageCount = _swapChain->getImageCount();
 	for (size_t i = 0; i < imageCount; i++) {
-		_imageAvailableSemaphores.emplace_back(_device.getDevice(), vk::SemaphoreCreateInfo{});
 		_renderFinishedSemaphores.emplace_back(_device.getDevice(), vk::SemaphoreCreateInfo{});
 	}
 }
@@ -163,10 +168,6 @@ void Renderer::createIndexBuffer() {
 void Renderer::createUniformBuffers() {
 	vk::DeviceSize bufferSize = sizeof(UniformBufferObject);
 
-	_uniformBuffers.clear();
-	_uniformBuffersMemory.clear();
-	_uniformBuffersMapped.clear();
-
 	for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
 		vk::raii::Buffer buffer(nullptr);
 		vk::raii::DeviceMemory bufferMem(nullptr);
@@ -175,9 +176,9 @@ void Renderer::createUniformBuffers() {
 					 vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, buffer,
 					 bufferMem);
 
-		_uniformBuffers.emplace_back(std::move(buffer));
-		_uniformBuffersMemory.emplace_back(std::move(bufferMem));
-		_uniformBuffersMapped.emplace_back(_uniformBuffersMemory[i].mapMemory(0, bufferSize));
+		_frames[i].uniformBuffer = std::move(buffer);
+		_frames[i].uniformBufferMemory = std::move(bufferMem);
+		_frames[i].uniformBufferMapped = _frames[i].uniformBufferMemory.mapMemory(0, bufferSize);
 	}
 }
 
@@ -200,14 +201,15 @@ void Renderer::createDescriptorSets() {
 											.descriptorSetCount = static_cast<uint32_t>(layouts.size()),
 											.pSetLayouts = layouts.data()};
 
-	_descriptorSets.clear();
-	_descriptorSets = _device.getDevice().allocateDescriptorSets(allocInfo);
+	auto descriptorSets = _device.getDevice().allocateDescriptorSets(allocInfo);
 
-	for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+	for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+		_frames[i].descriptorSet = std::move(descriptorSets[i]);
+
 		vk::DescriptorBufferInfo bufferInfo{
-			.buffer = *_uniformBuffers[i], .offset = 0, .range = sizeof(UniformBufferObject)};
+			.buffer = *_frames[i].uniformBuffer, .offset = 0, .range = sizeof(UniformBufferObject)};
 
-		vk::WriteDescriptorSet descriptorWrite{.dstSet = *_descriptorSets[i],
+		vk::WriteDescriptorSet descriptorWrite{.dstSet = *_frames[i].descriptorSet,
 											   .dstBinding = 0,
 											   .dstArrayElement = 0,
 											   .descriptorCount = 1,
@@ -275,7 +277,7 @@ void Renderer::updateUniformBuffer(uint32_t frameIndex) {
 								static_cast<float>(extent.width) / static_cast<float>(extent.height), 0.1f, 10.0f);
 	ubo.proj[1][1] *= -1; // Invert Y for Vulkan
 
-	memcpy(_uniformBuffersMapped[frameIndex], &ubo, sizeof(ubo));
+	memcpy(_frames[frameIndex].uniformBufferMapped, &ubo, sizeof(ubo));
 }
 
 void Renderer::transitionImageLayout(uint32_t imageIndex, vk::ImageLayout oldLayout, vk::ImageLayout newLayout,
@@ -298,7 +300,7 @@ void Renderer::transitionImageLayout(uint32_t imageIndex, vk::ImageLayout oldLay
 
 	vk::DependencyInfo dependencyInfo{.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier};
 
-	_commandBuffers[_currentFrameIndex].pipelineBarrier2(dependencyInfo);
+	_frames[_currentFrameIndex].commandBuffer.pipelineBarrier2(dependencyInfo);
 }
 
 const vk::raii::CommandBuffer& Renderer::BeginFrame() {
@@ -306,7 +308,7 @@ const vk::raii::CommandBuffer& Renderer::BeginFrame() {
 		throw std::runtime_error("Can't call BeginFrame while already in progress");
 	}
 
-	auto result = _device.getDevice().waitForFences(*_inFlightFences[_currentFrameIndex], vk::True, UINT64_MAX);
+	auto result = _device.getDevice().waitForFences(*_frames[_currentFrameIndex].inFlightFence, vk::True, UINT64_MAX);
 	if (result != vk::Result::eSuccess) {
 		throw std::runtime_error("WaitForFences failed");
 	}
@@ -315,7 +317,7 @@ const vk::raii::CommandBuffer& Renderer::BeginFrame() {
 	uint32_t imageIndex;
 	try {
 		auto [result, idx] = _swapChain->getSwapChain().acquireNextImage(
-			UINT64_MAX, *_imageAvailableSemaphores[_currentFrameIndex], nullptr);
+			UINT64_MAX, *_frames[_currentFrameIndex].imageAvailableSemaphore, nullptr);
 		acquireResult = result;
 		imageIndex = idx;
 	} catch (const vk::OutOfDateKHRError&) {
@@ -331,15 +333,15 @@ const vk::raii::CommandBuffer& Renderer::BeginFrame() {
 		throw std::runtime_error("failed to acquire swap chain image!");
 	}
 
-	_device.getDevice().resetFences(*_inFlightFences[_currentFrameIndex]);
+	_device.getDevice().resetFences(*_frames[_currentFrameIndex].inFlightFence);
 
 	_isFrameStarted = true;
 
-	_commandBuffers[_currentFrameIndex].reset();
+	_frames[_currentFrameIndex].commandBuffer.reset();
 	vk::CommandBufferBeginInfo beginInfo{};
-	_commandBuffers[_currentFrameIndex].begin(beginInfo);
+	_frames[_currentFrameIndex].commandBuffer.begin(beginInfo);
 
-	return _commandBuffers[_currentFrameIndex];
+	return _frames[_currentFrameIndex].commandBuffer;
 }
 
 void Renderer::EndFrame() {
@@ -347,20 +349,20 @@ void Renderer::EndFrame() {
 		throw std::runtime_error("Can't call EndFrame if frame not started");
 	}
 
-	_commandBuffers[_currentFrameIndex].end();
+	_frames[_currentFrameIndex].commandBuffer.end();
 
 	vk::PipelineStageFlags waitStages[] = {vk::PipelineStageFlagBits::eColorAttachmentOutput};
-	vk::CommandBuffer rawCmd = *_commandBuffers[_currentFrameIndex];
+	vk::CommandBuffer rawCmd = *_frames[_currentFrameIndex].commandBuffer;
 
 	vk::SubmitInfo submitInfo{.waitSemaphoreCount = 1,
-							  .pWaitSemaphores = &*_imageAvailableSemaphores[_currentFrameIndex],
+							  .pWaitSemaphores = &*_frames[_currentFrameIndex].imageAvailableSemaphore,
 							  .pWaitDstStageMask = waitStages,
 							  .commandBufferCount = 1,
 							  .pCommandBuffers = &rawCmd,
 							  .signalSemaphoreCount = 1,
 							  .pSignalSemaphores = &*_renderFinishedSemaphores[_currentImageIndex]};
 
-	_device.getGraphicsQueue().submit(submitInfo, *_inFlightFences[_currentFrameIndex]);
+	_device.getGraphicsQueue().submit(submitInfo, *_frames[_currentFrameIndex].inFlightFence);
 
 	vk::PresentInfoKHR presentInfo{.waitSemaphoreCount = 1,
 								   .pWaitSemaphores = &*_renderFinishedSemaphores[_currentImageIndex],

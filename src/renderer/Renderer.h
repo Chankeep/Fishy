@@ -41,13 +41,13 @@ public:
 	// Accessors
 	float getAspectRatio() const;
 	bool isFrameInProgress() const { return _isFrameStarted; }
-	const vk::raii::CommandBuffer& getCurrentCommandBuffer() const { return _commandBuffers[_currentFrameIndex]; }
+	const vk::raii::CommandBuffer& getCurrentCommandBuffer() const { return _frames[_currentFrameIndex].commandBuffer; }
 	int getFrameIndex() const { return _currentFrameIndex; }
 	uint32_t getCurrentImageIndex() const { return _currentImageIndex; }
 
 	// Resource accessors for Application rendering
 	const GraphicsPipeline& getPipeline() const { return *_graphicsPipeline; }
-	const vk::raii::DescriptorSet& getDescriptorSet(int frame) const { return _descriptorSets[frame]; }
+	const vk::raii::DescriptorSet& getDescriptorSet(int frame) const { return _frames[frame].descriptorSet; }
 	const vk::raii::Buffer& getVertexBuffer() const { return _vertexBuffer; }
 	const vk::raii::Buffer& getIndexBuffer() const { return _indexBuffer; }
 	const std::vector<vk::raii::ImageView>& getSwapChainImageViews() const;
@@ -76,6 +76,16 @@ private:
 	void copyBuffer(vk::raii::Buffer& srcBuffer, vk::raii::Buffer& dstBuffer, vk::DeviceSize size);
 	uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties);
 
+	struct FrameData {
+		vk::raii::CommandBuffer commandBuffer = nullptr;
+		vk::raii::Semaphore imageAvailableSemaphore = nullptr;
+		vk::raii::Fence inFlightFence = nullptr;
+		vk::raii::Buffer uniformBuffer = nullptr;
+		vk::raii::DeviceMemory uniformBufferMemory = nullptr;
+		void* uniformBufferMapped = nullptr;
+		vk::raii::DescriptorSet descriptorSet = nullptr;
+	};
+
 private:
 	VulkanDevice& _device;
 	Window& _window;
@@ -83,14 +93,10 @@ private:
 
 	std::unique_ptr<SwapChain> _swapChain;
 
+	std::vector<vk::raii::Semaphore> _renderFinishedSemaphores;
+
 	// Command Buffers
 	vk::raii::CommandPool _commandPool = nullptr;
-	std::vector<vk::raii::CommandBuffer> _commandBuffers;
-
-	// Synchronization
-	std::vector<vk::raii::Semaphore> _imageAvailableSemaphores;
-	std::vector<vk::raii::Semaphore> _renderFinishedSemaphores;
-	std::vector<vk::raii::Fence> _inFlightFences;
 
 	// Graphics Pipeline
 	std::unique_ptr<GraphicsPipeline> _graphicsPipeline;
@@ -102,13 +108,11 @@ private:
 	vk::raii::Buffer _indexBuffer = nullptr;
 	vk::raii::DeviceMemory _indexBufferMemory = nullptr;
 
-	std::vector<vk::raii::Buffer> _uniformBuffers;
-	std::vector<vk::raii::DeviceMemory> _uniformBuffersMemory;
-	std::vector<void*> _uniformBuffersMapped;
-
 	// Descriptors
 	vk::raii::DescriptorPool _descriptorPool = nullptr;
-	std::vector<vk::raii::DescriptorSet> _descriptorSets;
+
+	// Frame Data (Must be declared after pools to ensure correct destruction order)
+	std::vector<FrameData> _frames;
 
 	// Geometry data
 	const std::vector<Vertex> _vertices = {{{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
