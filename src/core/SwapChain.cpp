@@ -1,12 +1,13 @@
 #include "SwapChain.h"
+#include "VulkanDevice.h"
 
 namespace Fishy {
 
 // ============ 辅助函数（成员函数） ============
 
-vk::SurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<vk::SurfaceFormatKHR> &availableFormats) {
+vk::SurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<vk::SurfaceFormatKHR>& availableFormats) {
 	// 优先选择 SRGB + Linear colorspace（推荐）
-	for (const auto &format : availableFormats) {
+	for (const auto& format : availableFormats) {
 		if (format.format == vk::Format::eB8G8R8A8Srgb && format.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear) {
 			return format;
 		}
@@ -16,9 +17,9 @@ vk::SurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<vk::SurfaceFormat
 	return availableFormats.front();
 }
 
-vk::PresentModeKHR chooseSwapPresentMode(const std::vector<vk::PresentModeKHR> &availablePresentModes) {
+vk::PresentModeKHR chooseSwapPresentMode(const std::vector<vk::PresentModeKHR>& availablePresentModes) {
 	// 优先选择 Mailbox（低延迟、三缓冲）
-	for (const auto &mode : availablePresentModes) {
+	for (const auto& mode : availablePresentModes) {
 		if (mode == vk::PresentModeKHR::eMailbox) {
 			return mode;
 		}
@@ -28,7 +29,7 @@ vk::PresentModeKHR chooseSwapPresentMode(const std::vector<vk::PresentModeKHR> &
 	return vk::PresentModeKHR::eFifo;
 }
 
-vk::Extent2D chooseSwapExtent(const vk::SurfaceCapabilitiesKHR &capabilities, int width, int height) {
+vk::Extent2D chooseSwapExtent(const vk::SurfaceCapabilitiesKHR& capabilities, int width, int height) {
 	// 如果 currentExtent 不是 uint32_t 最大值，使用当前值
 	if (capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max()) {
 		return capabilities.currentExtent;
@@ -45,7 +46,7 @@ vk::Extent2D chooseSwapExtent(const vk::SurfaceCapabilitiesKHR &capabilities, in
 	return extent;
 }
 
-uint32_t chooseSwapMinImageCount(const vk::SurfaceCapabilitiesKHR &capabilities) {
+uint32_t chooseSwapMinImageCount(const vk::SurfaceCapabilitiesKHR& capabilities) {
 	// 通常选择 minImageCount + 1（三缓冲）
 	uint32_t imageCount = capabilities.minImageCount + 1;
 
@@ -57,42 +58,42 @@ uint32_t chooseSwapMinImageCount(const vk::SurfaceCapabilitiesKHR &capabilities)
 	return imageCount;
 }
 
-SwapChain::SwapChain(vk::raii::Device &device, vk::raii::PhysicalDevice &physicalDevice, vk::raii::SurfaceKHR &surface,
-					 int width, int height)
-	: _device(device), _physicalDevice(physicalDevice), _surface(surface), _cachedWidth(width), _cachedHeight(height) {
-	create(width, height);
-}
-
-SwapChain::~SwapChain() { cleanup(); }
-
-void SwapChain::create(int width, int height) {
-	_cachedWidth = width;
-	_cachedHeight = height;
+SwapChain::SwapChain(const VulkanDevice& device, const vk::raii::SurfaceKHR& surface, int width, int height)
+	: _device(device), _surface(surface) {
 	createSwapChain(width, height);
 	createImageViews();
 }
 
 void SwapChain::recreate(int width, int height) {
-	// 如果尺寸未改变，则不需要重建
-	if (width == _cachedWidth && height == _cachedHeight) {
+	// 1. 处理最小化 (宽高为0)
+	if (width == 0 || height == 0) {
 		return;
 	}
+	
+	// 我们让 createSwapChain 内部处理“旧换新”逻辑，或者直接覆盖成员变量。
+	// vk::raii 的赋值操作符会自动销毁旧对象。
 
-	// 等待当前操作完成
-	_device.waitIdle();
-
-	// 清理旧资源
-	cleanup();
-
-	// 创建新的 swapchain
-	create(width, height);
+	createSwapChain(width, height);
+	createImageViews();
 }
 
 void SwapChain::createSwapChain(int width, int height) {
-	auto surfaceCapabilities = _physicalDevice.getSurfaceCapabilitiesKHR(*_surface);
+	auto surfaceCapabilities = _device.getPhysicalDevice().getSurfaceCapabilitiesKHR(*_surface);
 	_swapChainExtent = chooseSwapExtent(surfaceCapabilities, width, height);
-	_swapChainSurfaceFormat = chooseSwapSurfaceFormat(_physicalDevice.getSurfaceFormatsKHR(*_surface));
+	_swapChainSurfaceFormat = chooseSwapSurfaceFormat(_device.getPhysicalDevice().getSurfaceFormatsKHR(*_surface));
 
+	vk::SharingMode sharingMode = vk::SharingMode::eExclusive;
+	std::vector<uint32_t> queueFamilyIndices;
+
+	uint32_t graphicsFamily = _device.getGraphicsQueueFamilyIndex();
+	// 假设 VulkanDevice 提供了 getPresentQueueFamilyIndex()，如果没有，需要加上
+	// uint32_t presentFamily = _device.getPresentQueueFamilyIndex();
+	uint32_t presentFamily = graphicsFamily; // 临时假设相同，请根据实际 Device 类修改
+
+	if (graphicsFamily != presentFamily) {
+		sharingMode = vk::SharingMode::eConcurrent;
+		queueFamilyIndices = {graphicsFamily, presentFamily};
+	}
 	vk::SwapchainCreateInfoKHR swapChainCreateInfo{
 		.surface = *_surface,
 		.minImageCount = chooseSwapMinImageCount(surfaceCapabilities),
@@ -102,32 +103,33 @@ void SwapChain::createSwapChain(int width, int height) {
 		.imageArrayLayers = 1,
 		.imageUsage = vk::ImageUsageFlagBits::eColorAttachment,
 		.imageSharingMode = vk::SharingMode::eExclusive,
+		.queueFamilyIndexCount = static_cast<uint32_t>(queueFamilyIndices.size()),
+		.pQueueFamilyIndices = queueFamilyIndices.data(),
 		.preTransform = surfaceCapabilities.currentTransform,
 		.compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque,
-		.presentMode = chooseSwapPresentMode(_physicalDevice.getSurfacePresentModesKHR(*_surface)),
-		.clipped = true};
+		.presentMode = chooseSwapPresentMode(_device.getPhysicalDevice().getSurfacePresentModesKHR(*_surface)),
+		.clipped = true,
+		.oldSwapchain = *_swapChain};
 
-	_swapChain = vk::raii::SwapchainKHR(_device, swapChainCreateInfo);
+	_swapChain = vk::raii::SwapchainKHR(*_device, swapChainCreateInfo);
 	_images = _swapChain.getImages();
 }
 
 void SwapChain::createImageViews() {
 	_imageViews.clear();
+	_imageViews.reserve(_images.size());
 
 	vk::ImageViewCreateInfo imageViewCreateInfo{.viewType = vk::ImageViewType::e2D,
 												.format = _swapChainSurfaceFormat.format,
-												.subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
+												.subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor,
+																	 .baseMipLevel = 0,
+																	 .levelCount = 1,
+																	 .baseArrayLayer = 0,
+																	 .layerCount = 1}};
 	for (auto image : _images) {
 		imageViewCreateInfo.image = image;
-		_imageViews.emplace_back(_device, imageViewCreateInfo);
+		_imageViews.emplace_back(*_device, imageViewCreateInfo);
 	}
-}
-
-void SwapChain::cleanup() {
-	// 销毁 image views（swapchain 销毁时会自动释放 images）
-	_imageViews.clear();
-	// swapchain 由 vk::raii::SwapchainKHR 自动管理，赋值 nullptr 即可销毁
-	_swapChain = nullptr;
 }
 
 } // namespace Fishy

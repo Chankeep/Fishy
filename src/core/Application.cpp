@@ -89,7 +89,7 @@ void Application::Run() {
 		}
 	}
 
-	_device.getDevice().waitIdle();
+	_device->waitIdle();
 }
 
 } // namespace Fishy

@@ -3,10 +3,10 @@
 
 namespace Fishy {
 
-CommandPool::CommandPool(VulkanDevice& device, uint32_t queueFamilyIndex) : _device(device) {
+CommandPool::CommandPool(const VulkanDevice& device, uint32_t queueFamilyIndex) : _device(device) {
 	vk::CommandPoolCreateInfo poolInfo{.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
 									   .queueFamilyIndex = queueFamilyIndex};
-	_pool = vk::raii::CommandPool(_device.getDevice(), poolInfo);
+	_pool = vk::raii::CommandPool(*_device, poolInfo);
 }
 
 CommandPool::~CommandPool() {}
@@ -16,7 +16,7 @@ vk::raii::CommandBuffer CommandPool::allocateBuffer(bool isPrimary) {
 											.level = isPrimary ? vk::CommandBufferLevel::ePrimary
 															   : vk::CommandBufferLevel::eSecondary,
 											.commandBufferCount = 1};
-	vk::raii::CommandBuffer commandBuffer = std::move(_device.getDevice().allocateCommandBuffers(allocInfo).front());
+	vk::raii::CommandBuffer commandBuffer = std::move(_device->allocateCommandBuffers(allocInfo).front());
 
 	return commandBuffer;
 }

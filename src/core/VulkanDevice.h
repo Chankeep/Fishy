@@ -14,18 +14,20 @@ class VulkanContext;
 
 class VulkanDevice {
 public:
-	VulkanDevice(vk::raii::Instance& instance, vk::raii::SurfaceKHR& surface);
+	VulkanDevice(const vk::raii::Instance& instance, const vk::raii::SurfaceKHR& surface);
 	~VulkanDevice();
 
-	vk::raii::Device& getDevice() { return _device; }
-	vk::raii::Queue& getGraphicsQueue() { return _graphicsQueue; }
-	vk::raii::Queue& getPresentQueue() { return _presentQueue; }
-	vk::raii::PhysicalDevice& getPhysicalDevice() { return _physicalDevice; }
-	uint32_t getGraphicsQueueFamilyIndex() const { return _graphicsQueueFamily; }
+	const vk::raii::Device& operator*() const { return _device; }
+	const vk::raii::Device* operator->() const { return &_device; }
+
+	const vk::raii::Queue& getGraphicsQueue() const { return _graphicsQueue; }
+	const vk::raii::Queue& getPresentQueue() const { return _presentQueue; }
+	const vk::raii::PhysicalDevice& getPhysicalDevice() const { return _physicalDevice; }
+	const uint32_t getGraphicsQueueFamilyIndex() const { return _graphicsQueueFamily; }
 
 private:
-	vk::raii::Instance& _instance;
-	vk::raii::SurfaceKHR& _surface;
+	const vk::raii::Instance& _instance;
+	const vk::raii::SurfaceKHR& _surface;
 	vk::raii::Device _device = nullptr;
 	vk::raii::Queue _graphicsQueue = nullptr;
 	vk::raii::Queue _presentQueue = nullptr;

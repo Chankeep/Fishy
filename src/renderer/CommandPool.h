@@ -14,7 +14,7 @@ class VulkanDevice;
 
 class CommandPool {
 public:
-	CommandPool(VulkanDevice &device, uint32_t queueFamilyIndex);
+	CommandPool(const VulkanDevice &device, uint32_t queueFamilyIndex);
 	~CommandPool();
 
 	vk::raii::CommandBuffer allocateBuffer(bool isPrimary = true);
@@ -22,7 +22,7 @@ public:
 	vk::raii::CommandPool &getCommandPool() { return _pool; }
 
 private:
-	VulkanDevice &_device;
+	const VulkanDevice &_device;
 	vk::raii::CommandPool _pool = nullptr;
 };
 } // namespace Fishy

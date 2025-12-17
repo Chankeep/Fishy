@@ -22,7 +22,7 @@ public:
 		bool resizable = true;
 	};
 
-	Window(const Properties& properties, vk::raii::Instance& instance);
+	Window(const Properties& properties, const vk::raii::Instance& instance);
 	~Window();
 
 	void Update();
@@ -40,7 +40,7 @@ public:
 
 private:
 	void Init(const Properties& properties);
-	void createSurface(vk::raii::Instance& instance);
+	void createSurface(const vk::raii::Instance& instance);
 	static void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods);
 	static void FramebufferResizeCallback(GLFWwindow* window, int width, int height);
 

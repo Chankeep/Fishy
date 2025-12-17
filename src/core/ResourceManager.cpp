@@ -58,7 +58,7 @@ vk::raii::ShaderModule ResourceManager::createShaderModule(const std::vector<cha
 										  .pCode = reinterpret_cast<const uint32_t*>(code.data())};
 
 	// We access the raw vk::raii::Device from our VulkanDevice wrapper
-	return vk::raii::ShaderModule(_device.getDevice(), createInfo);
+	return vk::raii::ShaderModule(*_device, createInfo);
 }
 
 } // namespace Fishy

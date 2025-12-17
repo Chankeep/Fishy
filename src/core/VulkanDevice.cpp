@@ -2,7 +2,7 @@
 
 namespace Fishy {
 
-VulkanDevice::VulkanDevice(vk::raii::Instance& instance, vk::raii::SurfaceKHR& surface)
+VulkanDevice::VulkanDevice(const vk::raii::Instance& instance, const vk::raii::SurfaceKHR& surface)
 	: _instance(instance), _surface(surface) {
 	pickPhysicalDevice();
 	createLogicalDevice();

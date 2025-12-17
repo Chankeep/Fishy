@@ -4,7 +4,7 @@
 
 namespace Fishy {
 
-Window::Window(const Properties& properties, vk::raii::Instance& instance) : _properties(properties) {
+Window::Window(const Properties& properties, const vk::raii::Instance& instance) : _properties(properties) {
 	Init(properties);
 	createSurface(instance);
 }
@@ -34,7 +34,7 @@ void Window::Init(const Properties& properties) {
 	glfwSetFramebufferSizeCallback(_window, FramebufferResizeCallback);
 }
 
-void Window::createSurface(vk::raii::Instance& instance) {
+void Window::createSurface(const vk::raii::Instance& instance) {
 	VkSurfaceKHR cSurface;
 	if ((glfwCreateWindowSurface(*instance, _window, nullptr, &cSurface) != 0)) {
 		throw std::runtime_error("Failed to create window surface!");

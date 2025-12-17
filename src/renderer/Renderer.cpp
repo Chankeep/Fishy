@@ -26,10 +26,11 @@ Renderer::Renderer(VulkanDevice& device, Window& window, ResourceManager& resour
 	createUniformBuffers();
 	createDescriptorPool();
 	createDescriptorSets();
+	createSyncObjects();
 }
 
 Renderer::~Renderer() {
-	_device.getDevice().waitIdle();
+	_device->waitIdle();
 	freeCommandBuffers();
 	_swapChain.reset();
 }
@@ -41,28 +42,25 @@ void Renderer::recreateSwapChain() {
 		glfwWaitEvents();
 	}
 
-	_device.getDevice().waitIdle();
+	_device->waitIdle();
 
 	if (_swapChain == nullptr) {
-		_swapChain = std::make_unique<SwapChain>(_device.getDevice(), _device.getPhysicalDevice(), _window.getSurface(),
-												 extent.width, extent.height);
+		_swapChain = std::make_unique<SwapChain>(_device, _window.getSurface(), extent.width, extent.height);
 	} else {
 		_swapChain->recreate(extent.width, extent.height);
 	}
-
-	createSyncObjects();
 }
 
 void Renderer::createCommandBuffers() {
 	vk::CommandPoolCreateInfo poolInfo{.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
 									   .queueFamilyIndex = _device.getGraphicsQueueFamilyIndex()};
-	_commandPool = vk::raii::CommandPool(_device.getDevice(), poolInfo);
+	_commandPool = vk::raii::CommandPool(*_device, poolInfo);
 
 	vk::CommandBufferAllocateInfo allocInfo{.commandPool = *_commandPool,
 											.level = vk::CommandBufferLevel::ePrimary,
 											.commandBufferCount = MAX_FRAMES_IN_FLIGHT};
 
-	auto commandBuffers = vk::raii::CommandBuffers(_device.getDevice(), allocInfo);
+	auto commandBuffers = vk::raii::CommandBuffers(*_device, allocInfo);
 	for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
 		_frames[i].commandBuffer = std::move(commandBuffers[i]);
 	}
@@ -78,9 +76,9 @@ void Renderer::freeCommandBuffers() {
 void Renderer::createSyncObjects() {
 	// Frame-in-flight sync objects
 	for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-		_frames[i].imageAvailableSemaphore = vk::raii::Semaphore(_device.getDevice(), vk::SemaphoreCreateInfo{});
+		_frames[i].imageAvailableSemaphore = vk::raii::Semaphore(*_device, vk::SemaphoreCreateInfo{});
 		_frames[i].inFlightFence =
-			vk::raii::Fence(_device.getDevice(), vk::FenceCreateInfo{.flags = vk::FenceCreateFlagBits::eSignaled});
+			vk::raii::Fence(*_device, vk::FenceCreateInfo{.flags = vk::FenceCreateFlagBits::eSignaled});
 	}
 
 	// Per-swapchain-image sync objects
@@ -88,7 +86,7 @@ void Renderer::createSyncObjects() {
 	_renderFinishedSemaphores.clear();
 	size_t imageCount = _swapChain->getImageCount();
 	for (size_t i = 0; i < imageCount; i++) {
-		_renderFinishedSemaphores.emplace_back(_device.getDevice(), vk::SemaphoreCreateInfo{});
+		_renderFinishedSemaphores.emplace_back(*_device, vk::SemaphoreCreateInfo{});
 	}
 }
 
@@ -100,7 +98,7 @@ void Renderer::createDescriptorSetLayout() {
 
 	vk::DescriptorSetLayoutCreateInfo layoutInfo{.bindingCount = 1, .pBindings = &uboLayoutBinding};
 
-	_descriptorSetLayout = vk::raii::DescriptorSetLayout(_device.getDevice(), layoutInfo);
+	_descriptorSetLayout = vk::raii::DescriptorSetLayout(*_device, layoutInfo);
 }
 
 void Renderer::createGraphicsPipeline() {
@@ -115,7 +113,7 @@ void Renderer::createGraphicsPipeline() {
 		.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size()),
 		.pVertexAttributeDescriptions = attributeDescriptions.data()};
 
-	PipelineBuilder builder(*_device.getDevice());
+	PipelineBuilder builder(**_device);
 
 	builder.setShaders(shaderModule, shaderModule, "vertMain", "fragMain")
 		.setVertexInput(vertexInputInfo)
@@ -124,7 +122,7 @@ void Renderer::createGraphicsPipeline() {
 		.setLayout({*_descriptorSetLayout}, {})
 		.setRenderingFormats({_swapChain->getFormat()}, vk::Format::eUndefined);
 
-	_graphicsPipeline = builder.build(_device.getDevice());
+	_graphicsPipeline = builder.build(*_device);
 }
 
 void Renderer::createVertexBuffer() {
@@ -191,7 +189,7 @@ void Renderer::createDescriptorPool() {
 										  .poolSizeCount = 1,
 										  .pPoolSizes = &poolSize};
 
-	_descriptorPool = vk::raii::DescriptorPool(_device.getDevice(), poolInfo);
+	_descriptorPool = vk::raii::DescriptorPool(*_device, poolInfo);
 }
 
 void Renderer::createDescriptorSets() {
@@ -201,7 +199,7 @@ void Renderer::createDescriptorSets() {
 											.descriptorSetCount = static_cast<uint32_t>(layouts.size()),
 											.pSetLayouts = layouts.data()};
 
-	auto descriptorSets = _device.getDevice().allocateDescriptorSets(allocInfo);
+	auto descriptorSets = _device->allocateDescriptorSets(allocInfo);
 
 	for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
 		_frames[i].descriptorSet = std::move(descriptorSets[i]);
@@ -216,7 +214,7 @@ void Renderer::createDescriptorSets() {
 											   .descriptorType = vk::DescriptorType::eUniformBuffer,
 											   .pBufferInfo = &bufferInfo};
 
-		_device.getDevice().updateDescriptorSets(descriptorWrite, {});
+		_device->updateDescriptorSets(descriptorWrite, {});
 	}
 }
 
@@ -224,13 +222,13 @@ void Renderer::createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk:
 							vk::raii::Buffer& buffer, vk::raii::DeviceMemory& bufferMemory) {
 	vk::BufferCreateInfo bufferInfo{.size = size, .usage = usage, .sharingMode = vk::SharingMode::eExclusive};
 
-	buffer = vk::raii::Buffer(_device.getDevice(), bufferInfo);
+	buffer = vk::raii::Buffer(*_device, bufferInfo);
 
 	vk::MemoryRequirements memRequirements = buffer.getMemoryRequirements();
 	vk::MemoryAllocateInfo allocInfo{.allocationSize = memRequirements.size,
 									 .memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties)};
 
-	bufferMemory = vk::raii::DeviceMemory(_device.getDevice(), allocInfo);
+	bufferMemory = vk::raii::DeviceMemory(*_device, allocInfo);
 	buffer.bindMemory(*bufferMemory, 0);
 }
 
@@ -238,7 +236,7 @@ void Renderer::copyBuffer(vk::raii::Buffer& srcBuffer, vk::raii::Buffer& dstBuff
 	vk::CommandBufferAllocateInfo allocInfo{
 		.commandPool = *_commandPool, .level = vk::CommandBufferLevel::ePrimary, .commandBufferCount = 1};
 
-	auto commandBuffers = _device.getDevice().allocateCommandBuffers(allocInfo);
+	auto commandBuffers = _device->allocateCommandBuffers(allocInfo);
 	auto& commandBuffer = commandBuffers.front();
 
 	vk::CommandBufferBeginInfo beginInfo{.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit};
@@ -308,7 +306,7 @@ const vk::raii::CommandBuffer& Renderer::BeginFrame() {
 		throw std::runtime_error("Can't call BeginFrame while already in progress");
 	}
 
-	auto result = _device.getDevice().waitForFences(*_frames[_currentFrameIndex].inFlightFence, vk::True, UINT64_MAX);
+	auto result = _device->waitForFences(*_frames[_currentFrameIndex].inFlightFence, vk::True, UINT64_MAX);
 	if (result != vk::Result::eSuccess) {
 		throw std::runtime_error("WaitForFences failed");
 	}
@@ -316,7 +314,7 @@ const vk::raii::CommandBuffer& Renderer::BeginFrame() {
 	vk::Result acquireResult;
 	uint32_t imageIndex;
 	try {
-		auto [result, idx] = _swapChain->getSwapChain().acquireNextImage(
+		auto [result, idx] = _swapChain->get().acquireNextImage(
 			UINT64_MAX, *_frames[_currentFrameIndex].imageAvailableSemaphore, nullptr);
 		acquireResult = result;
 		imageIndex = idx;
@@ -333,7 +331,7 @@ const vk::raii::CommandBuffer& Renderer::BeginFrame() {
 		throw std::runtime_error("failed to acquire swap chain image!");
 	}
 
-	_device.getDevice().resetFences(*_frames[_currentFrameIndex].inFlightFence);
+	_device->resetFences(*_frames[_currentFrameIndex].inFlightFence);
 
 	_isFrameStarted = true;
 
@@ -367,7 +365,7 @@ void Renderer::EndFrame() {
 	vk::PresentInfoKHR presentInfo{.waitSemaphoreCount = 1,
 								   .pWaitSemaphores = &*_renderFinishedSemaphores[_currentImageIndex],
 								   .swapchainCount = 1,
-								   .pSwapchains = &*_swapChain->getSwapChain(),
+								   .pSwapchains = &*_swapChain->get(),
 								   .pImageIndices = &_currentImageIndex};
 
 	try {

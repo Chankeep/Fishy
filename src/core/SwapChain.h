@@ -12,17 +12,23 @@ import vulkan_hpp;
 #include <vector>
 
 namespace Fishy {
+
+class VulkanDevice;
+
 class SwapChain {
 public:
-	SwapChain(vk::raii::Device& device, vk::raii::PhysicalDevice& physicalDevice, vk::raii::SurfaceKHR& surface,
-			  int width, int height);
-	~SwapChain();
+	SwapChain(const VulkanDevice& device, const vk::raii::SurfaceKHR& surface, int width, int height);
+	~SwapChain() = default;
 
-	void create(int width, int height);
+	// 禁止拷贝，允许移动 (因为内部持有引用，移动也比较麻烦，通常建议直接禁用拷贝)
+	SwapChain(const SwapChain&) = delete;
+	SwapChain& operator=(const SwapChain&) = delete;
+
 	void recreate(int width, int height);
 
 	// 访问接口
-	vk::raii::SwapchainKHR& getSwapChain() { return _swapChain; }
+	const vk::raii::SwapchainKHR& get() const { return _swapChain; }
+	const vk::raii::SwapchainKHR& operator*() const { return _swapChain; }
 	const std::vector<vk::raii::ImageView>& getImageViews() const { return _imageViews; }
 	const std::vector<vk::Image>& getImages() const { return _images; }
 	vk::Format getFormat() const { return _swapChainSurfaceFormat.format; }
@@ -33,12 +39,10 @@ private:
 	// 创建与销毁辅助
 	void createSwapChain(int width, int height);
 	void createImageViews();
-	void cleanup();
 
 private:
-	vk::raii::Device& _device;
-	vk::raii::SurfaceKHR& _surface;
-	vk::raii::PhysicalDevice _physicalDevice;
+	const VulkanDevice& _device;
+	const vk::raii::SurfaceKHR& _surface;
 
 	vk::raii::SwapchainKHR _swapChain = nullptr;
 	vk::SurfaceFormatKHR _swapChainSurfaceFormat;
@@ -46,8 +50,5 @@ private:
 	std::vector<vk::Image> _images;
 	std::vector<vk::raii::ImageView> _imageViews;
 
-	// 窗口尺寸缓存
-	int _cachedWidth = 0;
-	int _cachedHeight = 0;
 };
 } // namespace Fishy
