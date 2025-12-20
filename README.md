@@ -16,13 +16,15 @@
 - **Vulkan 1.4** - 现代图形 API，支持 Dynamic Rendering
 - **C++20** - 利用最新语言特性
 - **vulkan-hpp RAII** - 自动资源管理，代码更安全
+- **vk-bootstrap** - 简化的 Vulkan 初始化与设备选择
+- **volk** - Meta loader，动态加载函数指针，提升扩展兼容性与调用性能
 - **Slang** - 现代着色器语言
 - **GLFW** - 跨平台窗口管理
 - **GLM** - 数学计算库
 
 **已完成:**
 - ✅ 窗口化 (GLFW 集成)
-- ✅ Vulkan 初始化 (Instance/Device/Validation Layers)
+- ✅ Vulkan 初始化 (vk-bootstrap + volk)
 - ✅ 交换链管理 (创建/重建/窗口 Resize)
 - ✅ 多帧并行架构 (Frames in Flight)
 - ✅ 动态状态 (Viewport/Scissor)
@@ -65,6 +67,8 @@ Fishy/
 - GLFW 3.3+
 - GLM
 - Slang 编译器
+- vk-bootstrap (FetchContent)
+- volk (FetchContent)
 
 ## 📄 License
 
