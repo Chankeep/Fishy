@@ -39,23 +39,23 @@ VulkanDevice::VulkanDevice(const vk::raii::Instance& instance, const vk::raii::S
 		throw std::runtime_error("Failed to build device: " + dev_ret.error().message());
 	}
 
-	vkb::Device vkb_device = dev_ret.value();
+	_vkbDevice = dev_ret.value();
 
 	// Initialize volk for this device
-	volkLoadDevice(vkb_device.device);
+	volkLoadDevice(_vkbDevice.device);
 
-	_physicalDevice = vk::raii::PhysicalDevice(instance, vkb_device.physical_device);
+	_physicalDevice = vk::raii::PhysicalDevice(instance, _vkbDevice.physical_device);
 
 	// Create RAII Device wrapper around existing device
 	// Note: We need to be careful here. vk::raii::Device usually destroys the device on destruction.
 	// Since vkb created it, we pass it to RAII and RAII will destroy it.
-	_device = vk::raii::Device(_physicalDevice, vkb_device.device);
+	_device = vk::raii::Device(_physicalDevice, _vkbDevice.device);
 
 	VULKAN_HPP_DEFAULT_DISPATCHER.init(*_device);
 
 	// Retrieve queues
-	auto graphics_queue_idx_ret = vkb_device.get_queue_index(vkb::QueueType::graphics);
-	auto present_queue_idx_ret = vkb_device.get_queue_index(vkb::QueueType::present);
+	auto graphics_queue_idx_ret = _vkbDevice.get_queue_index(vkb::QueueType::graphics);
+	auto present_queue_idx_ret = _vkbDevice.get_queue_index(vkb::QueueType::present);
 
 	if (!graphics_queue_idx_ret || !present_queue_idx_ret) {
 		throw std::runtime_error("Failed to get queues after device creation");

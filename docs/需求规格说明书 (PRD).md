@@ -24,7 +24,7 @@
 
 ### **2.2 渲染管线 (Render Pipeline)**
 
-- [ ] **REQ-R-01 (前向渲染 Pass):** 实现一个标准的 Forward Render Pass。  
+- [x] **REQ-R-01 (前向渲染 Pass):** 实现一个标准的 Forward Render Pass。  
   * 包含深度测试 (Depth Test) 和 深度写入 (Depth Write)。  
   * 清除值配置：Color (黑色), Depth (1.0)。  
 - [x] **REQ-R-02 (动态状态):** 使用 Dynamic State (Viewport, Scissor) 以避免因窗口 Resize 导致的管线重建。  

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <VkBootstrap.h>
 #include <volk.h>
 
 #if defined(__INTELLISENSE__) || !defined(USE_CPP20_MODULES)
@@ -30,6 +31,7 @@ public:
 	const vk::raii::Queue& getPresentQueue() const { return _presentQueue; }
 	const vk::raii::PhysicalDevice& getPhysicalDevice() const { return _physicalDevice; }
 	const uint32_t getGraphicsQueueFamilyIndex() const { return _graphicsQueueFamily; }
+	const vkb::Device& getVkbDevice() const { return _vkbDevice; }
 
 	uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties) const;
 
@@ -40,6 +42,7 @@ private:
 	vk::raii::Queue _graphicsQueue = nullptr;
 	vk::raii::Queue _presentQueue = nullptr;
 	vk::raii::PhysicalDevice _physicalDevice = nullptr;
+	vkb::Device _vkbDevice;
 
 	uint32_t _graphicsQueueFamily;
 };
