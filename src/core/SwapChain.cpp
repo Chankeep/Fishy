@@ -61,7 +61,6 @@ uint32_t chooseSwapMinImageCount(const vk::SurfaceCapabilitiesKHR& capabilities)
 SwapChain::SwapChain(const VulkanDevice& device, const vk::raii::SurfaceKHR& surface, int width, int height)
 	: _device(device), _surface(surface) {
 	createSwapChain(width, height);
-	createImageViews();
 }
 
 void SwapChain::recreate(int width, int height) {
@@ -74,7 +73,6 @@ void SwapChain::recreate(int width, int height) {
 	// vk::raii assignment operator will automatically destroy the old object.
 
 	createSwapChain(width, height);
-	createImageViews();
 }
 
 void SwapChain::createSwapChain(int width, int height) {
@@ -115,23 +113,6 @@ void SwapChain::createSwapChain(int width, int height) {
 
 	_swapChain = vk::raii::SwapchainKHR(*_device, swapChainCreateInfo);
 	_images = _swapChain.getImages();
-}
-
-void SwapChain::createImageViews() {
-	_imageViews.clear();
-	_imageViews.reserve(_images.size());
-
-	vk::ImageViewCreateInfo imageViewCreateInfo{.viewType = vk::ImageViewType::e2D,
-												.format = _swapChainSurfaceFormat.format,
-												.subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor,
-																	 .baseMipLevel = 0,
-																	 .levelCount = 1,
-																	 .baseArrayLayer = 0,
-																	 .layerCount = 1}};
-	for (auto image : _images) {
-		imageViewCreateInfo.image = image;
-		_imageViews.emplace_back(*_device, imageViewCreateInfo);
-	}
 }
 
 } // namespace Fishy

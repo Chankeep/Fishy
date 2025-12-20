@@ -38,11 +38,11 @@ void Application::Run() {
 			_renderer.transitionImageLayout(
 				imageIndex, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal, {},
 				vk::AccessFlagBits2::eColorAttachmentWrite, vk::PipelineStageFlagBits2::eTopOfPipe,
-				vk::PipelineStageFlagBits2::eColorAttachmentOutput);
+				vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::ImageAspectFlagBits::eColor);
 
 			// Begin dynamic rendering
-			vk::ClearValue clearColor =
-				vk::ClearValue(vk::ClearColorValue(std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f}));
+			vk::ClearValue clearColor{.color = {.float32 = {{0.0f, 0.0f, 0.0f, 1.0f}}}};
+			vk::ClearValue clearDepth{.depthStencil = {1.0f, 0}};
 			const auto& imageViews = _renderer.getSwapChainImageViews();
 			vk::Extent2D extent = _renderer.getSwapChainExtent();
 
@@ -52,10 +52,17 @@ void Application::Run() {
 													   .storeOp = vk::AttachmentStoreOp::eStore,
 													   .clearValue = clearColor};
 
+			vk::RenderingAttachmentInfo depthAttachmentInfo{.imageView = *_renderer.getDepthImageView(),
+															.imageLayout = vk::ImageLayout::eDepthAttachmentOptimal,
+															.loadOp = vk::AttachmentLoadOp::eClear,
+															.storeOp = vk::AttachmentStoreOp::eDontCare,
+															.clearValue = clearDepth};
+
 			vk::RenderingInfo renderingInfo{.renderArea = vk::Rect2D{{0, 0}, extent},
 											.layerCount = 1,
 											.colorAttachmentCount = 1,
-											.pColorAttachments = &attachmentInfo};
+											.pColorAttachments = &attachmentInfo,
+											.pDepthAttachment = &depthAttachmentInfo};
 
 			cmd.beginRendering(renderingInfo);
 
@@ -84,7 +91,7 @@ void Application::Run() {
 			_renderer.transitionImageLayout(imageIndex, vk::ImageLayout::eColorAttachmentOptimal,
 											vk::ImageLayout::ePresentSrcKHR, vk::AccessFlagBits2::eColorAttachmentWrite,
 											{}, vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-											vk::PipelineStageFlagBits2::eBottomOfPipe);
+											vk::PipelineStageFlagBits2::eBottomOfPipe, vk::ImageAspectFlagBits::eColor);
 
 			_renderer.EndFrame();
 		}

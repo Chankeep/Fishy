@@ -3,9 +3,9 @@
 
 #include "PipelineBuilder.h"
 #include "core/ResourceManager.h"
-#include "core/SwapChain.h"
 #include "core/VulkanDevice.h"
 #include "core/Window.h"
+#include "vulkan/vulkan.hpp"
 
 #include <array>
 #include <chrono>
@@ -50,6 +50,9 @@ void Renderer::recreateSwapChain() {
 	} else {
 		_swapChain->recreate(extent.width, extent.height);
 	}
+
+	createSwapChainImageViews();
+	createDepthResources();
 }
 
 void Renderer::createCommandBuffers() {
@@ -129,7 +132,8 @@ void Renderer::createGraphicsPipeline() {
 		.setInputTopology(vk::PrimitiveTopology::eTriangleList)
 		.setCullMode(vk::CullModeFlagBits::eBack, vk::FrontFace::eCounterClockwise)
 		.setLayout({*_descriptorSetLayout}, {})
-		.setRenderingFormats({_swapChain->getFormat()}, vk::Format::eUndefined);
+		.setRenderingFormats({_swapChain->getFormat()}, _depthFormat)
+		.setDepthStencilTest(true, true, vk::CompareOp::eLess, false, vk::CompareOp::eAlways);
 
 	_graphicsPipeline = builder.build(*_device);
 }
@@ -244,27 +248,34 @@ void Renderer::updateUniformBuffer(uint32_t frameIndex) {
 	_frames[frameIndex].uniformBuffer->upload(&ubo, sizeof(ubo));
 }
 
-void Renderer::transitionImageLayout(uint32_t imageIndex, vk::ImageLayout oldLayout, vk::ImageLayout newLayout,
-									 vk::AccessFlags2 srcAccessMask, vk::AccessFlags2 dstAccessMask,
-									 vk::PipelineStageFlags2 srcStageMask, vk::PipelineStageFlags2 dstStageMask) {
-	vk::ImageMemoryBarrier2 barrier{.srcStageMask = srcStageMask,
-									.srcAccessMask = srcAccessMask,
-									.dstStageMask = dstStageMask,
-									.dstAccessMask = dstAccessMask,
-									.oldLayout = oldLayout,
-									.newLayout = newLayout,
-									.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-									.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-									.image = _swapChain->getImages()[imageIndex],
-									.subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor,
-														 .baseMipLevel = 0,
-														 .levelCount = 1,
-														 .baseArrayLayer = 0,
-														 .layerCount = 1}};
+void Renderer::transitionImage(vk::CommandBuffer cmd, vk::Image image, vk::ImageLayout oldLayout,
+							   vk::ImageLayout newLayout, vk::AccessFlags2 srcAccessMask,
+							   vk::AccessFlags2 dstAccessMask, vk::PipelineStageFlags2 srcStageMask,
+							   vk::PipelineStageFlags2 dstStageMask, vk::ImageAspectFlags aspectMask) {
+	vk::ImageMemoryBarrier2 barrier{
+		.srcStageMask = srcStageMask,
+		.srcAccessMask = srcAccessMask,
+		.dstStageMask = dstStageMask,
+		.dstAccessMask = dstAccessMask,
+		.oldLayout = oldLayout,
+		.newLayout = newLayout,
+		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.image = image,
+		.subresourceRange = {
+			.aspectMask = aspectMask, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1}};
 
 	vk::DependencyInfo dependencyInfo{.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier};
 
-	_frames[_currentFrameIndex].commandBuffer.pipelineBarrier2(dependencyInfo);
+	cmd.pipelineBarrier2(dependencyInfo);
+}
+
+void Renderer::transitionImageLayout(uint32_t imageIndex, vk::ImageLayout oldLayout, vk::ImageLayout newLayout,
+									 vk::AccessFlags2 srcAccessMask, vk::AccessFlags2 dstAccessMask,
+									 vk::PipelineStageFlags2 srcStageMask, vk::PipelineStageFlags2 dstStageMask,
+									 vk::ImageAspectFlags aspectMask) {
+	transitionImage(*_frames[_currentFrameIndex].commandBuffer, _swapChain->getImages()[imageIndex], oldLayout,
+					newLayout, srcAccessMask, dstAccessMask, srcStageMask, dstStageMask, aspectMask);
 }
 
 const vk::raii::CommandBuffer& Renderer::BeginFrame() {
@@ -351,10 +362,113 @@ void Renderer::EndFrame() {
 
 float Renderer::getAspectRatio() const { return _swapChain->getExtent().width / (float)_swapChain->getExtent().height; }
 
-const std::vector<vk::raii::ImageView>& Renderer::getSwapChainImageViews() const { return _swapChain->getImageViews(); }
+vk::Format Renderer::findDepthFormat() {
+	std::vector<vk::Format> candidates = {vk::Format::eD32Sfloat, vk::Format::eD32SfloatS8Uint,
+										  vk::Format::eD24UnormS8Uint};
+	vk::ImageTiling tiling = vk::ImageTiling::eOptimal;
+	vk::FormatFeatureFlags features = vk::FormatFeatureFlagBits::eDepthStencilAttachment;
 
-vk::Extent2D Renderer::getSwapChainExtent() const { return _swapChain->getExtent(); }
+	for (vk::Format format : candidates) {
+		vk::FormatProperties props = _device.getPhysicalDevice().getFormatProperties(format);
 
-vk::Format Renderer::getSwapChainFormat() const { return _swapChain->getFormat(); }
+		if (tiling == vk::ImageTiling::eLinear && (props.linearTilingFeatures & features) == features) {
+			return format;
+		} else if (tiling == vk::ImageTiling::eOptimal && (props.optimalTilingFeatures & features) == features) {
+			return format;
+		}
+	}
+
+	throw std::runtime_error("failed to find supported depth format!");
+}
+
+void Renderer::createDepthResources() {
+	_depthFormat = findDepthFormat();
+	vk::Extent2D extent = getSwapChainExtent();
+
+	vk::ImageCreateInfo imageInfo{.imageType = vk::ImageType::e2D,
+								  .format = _depthFormat,
+								  .extent = {extent.width, extent.height, 1},
+								  .mipLevels = 1,
+								  .arrayLayers = 1,
+								  .samples = vk::SampleCountFlagBits::e1,
+								  .tiling = vk::ImageTiling::eOptimal,
+								  .usage = vk::ImageUsageFlagBits::eDepthStencilAttachment,
+								  .sharingMode = vk::SharingMode::eExclusive,
+								  .initialLayout = vk::ImageLayout::eUndefined};
+
+	_depthImage = vk::raii::Image(*_device, imageInfo);
+
+	vk::MemoryRequirements memRequirements = _depthImage.getMemoryRequirements();
+
+	vk::MemoryAllocateInfo allocInfo{.allocationSize = memRequirements.size,
+									 .memoryTypeIndex = _device.findMemoryType(
+										 memRequirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal)};
+
+	_depthImageMemory = vk::raii::DeviceMemory(*_device, allocInfo);
+	_depthImage.bindMemory(*_depthImageMemory, 0);
+
+	vk::ImageViewCreateInfo viewInfo{.image = *_depthImage,
+									 .viewType = vk::ImageViewType::e2D,
+									 .format = _depthFormat,
+									 .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eDepth,
+														  .baseMipLevel = 0,
+														  .levelCount = 1,
+														  .baseArrayLayer = 0,
+														  .layerCount = 1}};
+	// Stencil aspect?
+	if (_depthFormat == vk::Format::eD32SfloatS8Uint || _depthFormat == vk::Format::eD24UnormS8Uint) {
+		viewInfo.subresourceRange.aspectMask |= vk::ImageAspectFlagBits::eStencil;
+	}
+
+	_depthImageView = vk::raii::ImageView(*_device, viewInfo);
+
+	// Perform explicit layout transition Undefined -> DepthStencilAttachmentOptimal
+	// This is required for Dynamic Rendering as we don't have implicit subpass transitions on first use.
+	{
+		vk::CommandPoolCreateInfo poolInfo{.flags = vk::CommandPoolCreateFlagBits::eTransient,
+										   .queueFamilyIndex = _device.getGraphicsQueueFamilyIndex()};
+		vk::raii::CommandPool commandPool(*_device, poolInfo);
+
+		vk::CommandBufferAllocateInfo allocInfo{
+			.commandPool = *commandPool, .level = vk::CommandBufferLevel::ePrimary, .commandBufferCount = 1};
+		auto commandBuffers = vk::raii::CommandBuffers(*_device, allocInfo);
+		vk::raii::CommandBuffer& cmd = commandBuffers[0];
+
+		vk::CommandBufferBeginInfo beginInfo{.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit};
+		cmd.begin(beginInfo);
+
+		transitionImage(
+			*cmd, *_depthImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal,
+			vk::AccessFlagBits2::eNone,
+			vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+			vk::PipelineStageFlagBits2::eTopOfPipe,
+			vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
+			viewInfo.subresourceRange.aspectMask);
+
+		cmd.end();
+
+		vk::SubmitInfo submitInfo{.commandBufferCount = 1, .pCommandBuffers = &*cmd};
+		_device.getGraphicsQueue().submit(submitInfo, nullptr);
+		_device.getGraphicsQueue().waitIdle();
+	}
+}
+
+void Renderer::createSwapChainImageViews() {
+	auto images = _swapChain->getImages();
+	_swapChainImageViews.clear();
+	_swapChainImageViews.reserve(images.size());
+
+	vk::ImageViewCreateInfo imageViewCreateInfo{.viewType = vk::ImageViewType::e2D,
+												.format = _swapChain->getFormat(),
+												.subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor,
+																	 .baseMipLevel = 0,
+																	 .levelCount = 1,
+																	 .baseArrayLayer = 0,
+																	 .layerCount = 1}};
+	for (auto image : images) {
+		imageViewCreateInfo.image = image;
+		_swapChainImageViews.emplace_back(*_device, imageViewCreateInfo);
+	}
+}
 
 } // namespace Fishy

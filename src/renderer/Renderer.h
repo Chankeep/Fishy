@@ -11,6 +11,7 @@ import vulkan_hpp;
 #include "GraphicsPipeline.h"
 #include "Texture.h"
 #include "Vertex.h"
+#include "core/SwapChain.h"
 #include "core/VulkanBuffer.h"
 
 #include <memory>
@@ -36,9 +37,17 @@ public:
 
 	// Helpers for rendering
 	void updateUniformBuffer(uint32_t frameIndex);
+	static void transitionImage(vk::CommandBuffer cmd, vk::Image image, vk::ImageLayout oldLayout,
+								vk::ImageLayout newLayout, vk::AccessFlags2 srcAccessMask,
+								vk::AccessFlags2 dstAccessMask, vk::PipelineStageFlags2 srcStageMask,
+								vk::PipelineStageFlags2 dstStageMask, vk::ImageAspectFlags aspectMask);
 	void transitionImageLayout(uint32_t imageIndex, vk::ImageLayout oldLayout, vk::ImageLayout newLayout,
 							   vk::AccessFlags2 srcAccessMask, vk::AccessFlags2 dstAccessMask,
-							   vk::PipelineStageFlags2 srcStageMask, vk::PipelineStageFlags2 dstStageMask);
+							   vk::PipelineStageFlags2 srcStageMask, vk::PipelineStageFlags2 dstStageMask,
+							   vk::ImageAspectFlags aspectMask);
+	void createDepthResources();
+	vk::Format findDepthFormat();
+	void createSwapChainImageViews();
 
 	// Accessors
 	float getAspectRatio() const;
@@ -52,9 +61,10 @@ public:
 	const vk::raii::DescriptorSet& getDescriptorSet(int frame) const { return _frames[frame].descriptorSet; }
 	const vk::raii::Buffer& getVertexBuffer() const { return _vertexBuffer->getBuffer(); }
 	const vk::raii::Buffer& getIndexBuffer() const { return _indexBuffer->getBuffer(); }
-	const std::vector<vk::raii::ImageView>& getSwapChainImageViews() const;
-	vk::Extent2D getSwapChainExtent() const;
-	vk::Format getSwapChainFormat() const;
+	const std::vector<vk::raii::ImageView>& getSwapChainImageViews() const { return _swapChainImageViews; }
+	const vk::raii::ImageView& getDepthImageView() const { return _depthImageView; }
+	vk::Extent2D getSwapChainExtent() const { return _swapChain->getExtent(); }
+	vk::Format getSwapChainFormat() const { return _swapChain->getFormat(); }
 	uint32_t getIndexCount() const { return static_cast<uint32_t>(_indices.size()); }
 
 private:
@@ -87,6 +97,14 @@ private:
 
 	std::unique_ptr<SwapChain> _swapChain;
 
+	vk::raii::Image _depthImage = nullptr;
+	vk::raii::DeviceMemory _depthImageMemory = nullptr;
+	vk::raii::ImageView _depthImageView = nullptr;
+
+	vk::Format _depthFormat = vk::Format::eUndefined;
+
+	std::vector<vk::raii::ImageView> _swapChainImageViews;
+
 	std::vector<vk::raii::Semaphore> _renderFinishedSemaphores;
 
 	// Command Buffers
@@ -112,10 +130,10 @@ private:
 										   {{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
 										   {{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
 
-										   {{-0.5f, -0.5f, 0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
-										   {{0.5f, -0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
-										   {{0.5f, 0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
-										   {{-0.5f, 0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}};
+										   {{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+										   {{0.5f, -0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+										   {{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+										   {{-0.5f, 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}};
 	const std::vector<uint16_t> _indices = {0, 1, 2, 2, 3, 0, 4, 5, 6, 6, 7, 4};
 
 	uint32_t _currentImageIndex = 0;

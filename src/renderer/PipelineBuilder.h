@@ -22,7 +22,8 @@ public:
 	PipelineBuilder& setInputTopology(vk::PrimitiveTopology topology);
 	PipelineBuilder& setPolygonMode(vk::PolygonMode mode);
 	PipelineBuilder& setCullMode(vk::CullModeFlags cullMode, vk::FrontFace frontFace);
-	PipelineBuilder& setDepthTest(bool depthWriteEnable, bool depthTestEnable, vk::CompareOp compareOp);
+	PipelineBuilder& setDepthStencilTest(bool depthWriteEnable, bool depthTestEnable, vk::CompareOp compareOp,
+										 bool stencilTestEnable, vk::CompareOp stencilCompareOp);
 	PipelineBuilder& enableAlphaBlending();
 	PipelineBuilder& setLayout(const std::vector<vk::DescriptorSetLayout>& layouts,
 							   const std::vector<vk::PushConstantRange>& pushConstants);

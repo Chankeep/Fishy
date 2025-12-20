@@ -6,31 +6,31 @@ PipelineBuilder::PipelineBuilder(vk::Device /*device*/) { clear(); }
 
 void PipelineBuilder::clear() {
 	_shaderStages.clear();
-	_inputAssembly = {.topology = vk::PrimitiveTopology::eTriangleList, .primitiveRestartEnable = VK_FALSE};
+	_inputAssembly = {.topology = vk::PrimitiveTopology::eTriangleList, .primitiveRestartEnable = vk::False};
 
-	_rasterizer = {.depthClampEnable = VK_FALSE,
-				   .rasterizerDiscardEnable = VK_FALSE,
+	_rasterizer = {.depthClampEnable = vk::False,
+				   .rasterizerDiscardEnable = vk::False,
 				   .polygonMode = vk::PolygonMode::eFill,
 				   .cullMode = vk::CullModeFlagBits::eBack,
 				   .frontFace = vk::FrontFace::eCounterClockwise,
-				   .depthBiasEnable = VK_FALSE,
+				   .depthBiasEnable = vk::False,
 				   .depthBiasConstantFactor = 0.0f,
 				   .depthBiasClamp = 0.0f,
 				   .depthBiasSlopeFactor = 0.0f,
 				   .lineWidth = 1.0f};
 
 	_multisampling = {.rasterizationSamples = vk::SampleCountFlagBits::e1,
-					  .sampleShadingEnable = VK_FALSE,
+					  .sampleShadingEnable = vk::False,
 					  .minSampleShading = 1.0f,
 					  .pSampleMask = nullptr,
-					  .alphaToCoverageEnable = VK_FALSE,
-					  .alphaToOneEnable = VK_FALSE};
+					  .alphaToCoverageEnable = vk::False,
+					  .alphaToOneEnable = vk::False};
 
 	_depthStencil = {};
 
 	_colorBlendAttachment = vk::PipelineColorBlendAttachmentState{}; // Not a CreateInfo, no sType
 	// Default blending disabled
-	_colorBlendAttachment.blendEnable = VK_FALSE;
+	_colorBlendAttachment.blendEnable = vk::False;
 	_colorBlendAttachment.colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
 										   vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
 
@@ -78,19 +78,19 @@ PipelineBuilder& PipelineBuilder::setCullMode(vk::CullModeFlags cullMode, vk::Fr
 }
 
 // Depth Test Configuration
-PipelineBuilder& PipelineBuilder::setDepthTest(bool depthWriteEnable, bool depthTestEnable, vk::CompareOp compareOp) {
-	_depthStencil.depthTestEnable = depthTestEnable ? VK_TRUE : VK_FALSE;
-	_depthStencil.depthWriteEnable = depthWriteEnable ? VK_TRUE : VK_FALSE;
+PipelineBuilder& PipelineBuilder::setDepthStencilTest(bool depthWriteEnable, bool depthTestEnable,
+													  vk::CompareOp compareOp, bool stencilTestEnable,
+													  vk::CompareOp stencilCompareOp) {
+	_depthStencil.depthTestEnable = depthTestEnable ? vk::True : vk::False;
+	_depthStencil.depthWriteEnable = depthWriteEnable ? vk::True : vk::False;
 	_depthStencil.depthCompareOp = compareOp;
-	_depthStencil.minDepthBounds = 0.0f;
-	_depthStencil.maxDepthBounds = 1.0f;
-	_depthStencil.stencilTestEnable = VK_FALSE;
+	_depthStencil.stencilTestEnable = stencilTestEnable ? vk::True : vk::False;
 	return *this;
 }
 
 // Simple Alpha Blending Configuration
 PipelineBuilder& PipelineBuilder::enableAlphaBlending() {
-	_colorBlendAttachment.blendEnable = VK_TRUE;
+	_colorBlendAttachment.blendEnable = vk::True;
 	_colorBlendAttachment.srcColorBlendFactor = vk::BlendFactor::eSrcAlpha;
 	_colorBlendAttachment.dstColorBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha;
 	_colorBlendAttachment.colorBlendOp = vk::BlendOp::eAdd;
@@ -138,7 +138,7 @@ std::unique_ptr<GraphicsPipeline> PipelineBuilder::build(const vk::raii::Device&
 	vk::PipelineViewportStateCreateInfo viewportState{.viewportCount = 1, .scissorCount = 1};
 
 	vk::PipelineColorBlendStateCreateInfo colorBlending{
-		.logicOpEnable = VK_FALSE, .attachmentCount = 1, .pAttachments = &_colorBlendAttachment};
+		.logicOpEnable = vk::False, .attachmentCount = 1, .pAttachments = &_colorBlendAttachment};
 
 	vk::PipelineDynamicStateCreateInfo dynamicStateInfo{
 		.dynamicStateCount = static_cast<uint32_t>(_dynamicStates.size()), .pDynamicStates = _dynamicStates.data()};
