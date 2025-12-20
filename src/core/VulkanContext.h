@@ -2,8 +2,6 @@
 #include <optional>
 #include <vector>
 
-#define VULKAN_HPP_NO_CONSTRUCTORS // Disable constructors for Vulkan.hpp
-
 #include <volk.h>
 
 #if defined(__INTELLISENSE__) || !defined(USE_CPP20_MODULES)

@@ -1,7 +1,5 @@
 #pragma once
 
-#define VULKAN_HPP_NO_CONSTRUCTORS // Disable constructors for Vulkan.hpp
-
 #if defined(__INTELLISENSE__) || !defined(USE_CPP20_MODULES)
 #include <vulkan/vulkan_raii.hpp>
 #else

@@ -8,10 +8,7 @@ VulkanBuffer::VulkanBuffer(const VulkanDevice& device, vk::DeviceSize size, vk::
 	: _device(&device), _size(size) {
 
 	// 1. Create Buffer
-	vk::BufferCreateInfo bufferInfo{};
-	bufferInfo.size = size;
-	bufferInfo.usage = usage;
-	bufferInfo.sharingMode = vk::SharingMode::eExclusive;
+	vk::BufferCreateInfo bufferInfo{.size = size, .usage = usage, .sharingMode = vk::SharingMode::eExclusive};
 
 	_buffer = vk::raii::Buffer(**_device, bufferInfo);
 
@@ -19,9 +16,8 @@ VulkanBuffer::VulkanBuffer(const VulkanDevice& device, vk::DeviceSize size, vk::
 	vk::MemoryRequirements memRequirements = _buffer.getMemoryRequirements();
 
 	// 3. Allocate Memory
-	vk::MemoryAllocateInfo allocInfo{};
-	allocInfo.allocationSize = memRequirements.size;
-	allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
+	vk::MemoryAllocateInfo allocInfo{.allocationSize = memRequirements.size,
+									 .memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties)};
 
 	try {
 		_memory = vk::raii::DeviceMemory(**_device, allocInfo);
@@ -74,17 +70,14 @@ void VulkanBuffer::uploadStaged(const vk::raii::CommandPool& commandPool, const 
 	stagingBuffer.upload(data, size);
 
 	// 3. Allocate Temporary Command Buffer
-	vk::CommandBufferAllocateInfo allocInfo{};
-	allocInfo.level = vk::CommandBufferLevel::ePrimary;
-	allocInfo.commandPool = *commandPool;
-	allocInfo.commandBufferCount = 1;
+	vk::CommandBufferAllocateInfo allocInfo{
+		.commandPool = *commandPool, .level = vk::CommandBufferLevel::ePrimary, .commandBufferCount = 1};
 
 	vk::raii::CommandBuffers cmdbuffers(**_device, allocInfo);
 	vk::raii::CommandBuffer& cmd = cmdbuffers[0];
 
 	// 4. Record Copy Command
-	vk::CommandBufferBeginInfo beginInfo{};
-	beginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+	vk::CommandBufferBeginInfo beginInfo{.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit};
 	cmd.begin(beginInfo);
 
 	copyBuffer(*_device, cmd, stagingBuffer, *this, size);
@@ -92,9 +85,7 @@ void VulkanBuffer::uploadStaged(const vk::raii::CommandPool& commandPool, const 
 	cmd.end();
 
 	// 5. Submit and Wait
-	vk::SubmitInfo submitInfo{};
-	submitInfo.commandBufferCount = 1;
-	submitInfo.pCommandBuffers = &(*cmd);
+	vk::SubmitInfo submitInfo{.commandBufferCount = 1, .pCommandBuffers = &(*cmd)};
 
 	queue.submit(submitInfo, nullptr); // No fence, simply wait idle
 	queue.waitIdle();

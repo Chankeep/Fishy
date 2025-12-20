@@ -10,6 +10,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 add_compile_definitions(VK_NO_PROTOTYPES)
 add_compile_definitions(VULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1)
+add_compile_definitions(VULKAN_HPP_NO_CONSTRUCTORS)
 
 # ==============================================================================
 # 1. 寻找依赖库 (Linux 环境)
