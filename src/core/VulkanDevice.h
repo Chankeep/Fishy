@@ -31,6 +31,8 @@ public:
 	const vk::raii::PhysicalDevice& getPhysicalDevice() const { return _physicalDevice; }
 	const uint32_t getGraphicsQueueFamilyIndex() const { return _graphicsQueueFamily; }
 
+	uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties) const;
+
 private:
 	const vk::raii::Instance& _instance;
 	const vk::raii::SurfaceKHR& _surface;

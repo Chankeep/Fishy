@@ -26,11 +26,14 @@ VulkanDevice::VulkanDevice(const vk::raii::Instance& instance, const vk::raii::S
 	vk::PhysicalDeviceVulkan11Features features11;
 	features11.shaderDrawParameters = true;
 
+	vk::PhysicalDeviceFeatures2 features2;
+	features2.features.samplerAnisotropy = true;
+
 	vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT featuresExt;
 	featuresExt.extendedDynamicState = true;
 
 	vkb::DeviceBuilder device_builder{vkb_phys};
-	device_builder.add_pNext(&features13).add_pNext(&features11).add_pNext(&featuresExt);
+	device_builder.add_pNext(&features13).add_pNext(&features11).add_pNext(&features2).add_pNext(&featuresExt);
 	auto dev_ret = device_builder.build();
 	if (!dev_ret) {
 		throw std::runtime_error("Failed to build device: " + dev_ret.error().message());
@@ -65,5 +68,17 @@ VulkanDevice::VulkanDevice(const vk::raii::Instance& instance, const vk::raii::S
 }
 
 VulkanDevice::~VulkanDevice() {}
+
+uint32_t VulkanDevice::findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties) const {
+	vk::PhysicalDeviceMemoryProperties memProperties = _physicalDevice.getMemoryProperties();
+
+	for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
+		if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
+			return i;
+		}
+	}
+
+	throw std::runtime_error("failed to find suitable memory type!");
+}
 
 } // namespace Fishy

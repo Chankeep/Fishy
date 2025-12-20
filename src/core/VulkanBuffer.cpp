@@ -17,7 +17,8 @@ VulkanBuffer::VulkanBuffer(const VulkanDevice& device, vk::DeviceSize size, vk::
 
 	// 3. Allocate Memory
 	vk::MemoryAllocateInfo allocInfo{.allocationSize = memRequirements.size,
-									 .memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties)};
+									 .memoryTypeIndex =
+										 _device->findMemoryType(memRequirements.memoryTypeBits, properties)};
 
 	try {
 		_memory = vk::raii::DeviceMemory(**_device, allocInfo);
@@ -100,18 +101,6 @@ void VulkanBuffer::copyBuffer(const VulkanDevice& device, const vk::raii::Comman
 	copyRegion.dstOffset = 0;
 	copyRegion.size = size;
 	cmd.copyBuffer(*srcBuffer.getBuffer(), *dstBuffer.getBuffer(), copyRegion);
-}
-
-uint32_t VulkanBuffer::findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties) {
-	vk::PhysicalDeviceMemoryProperties memProperties = _device->getPhysicalDevice().getMemoryProperties();
-
-	for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
-		if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
-			return i;
-		}
-	}
-
-	throw std::runtime_error("failed to find suitable memory type!");
 }
 
 } // namespace Fishy

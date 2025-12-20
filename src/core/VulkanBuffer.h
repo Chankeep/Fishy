@@ -43,8 +43,6 @@ public:
 						   const VulkanBuffer& srcBuffer, VulkanBuffer& dstBuffer, vk::DeviceSize size);
 
 private:
-	uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties);
-
 	const VulkanDevice* _device;
 	vk::DeviceSize _size;
 	vk::raii::Buffer _buffer = nullptr;

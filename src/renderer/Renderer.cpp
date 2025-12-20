@@ -19,6 +19,7 @@ Renderer::Renderer(VulkanDevice& device, Window& window, ResourceManager& resour
 	_frames.resize(MAX_FRAMES_IN_FLIGHT);
 	recreateSwapChain();
 	createCommandBuffers();
+	_texture = std::make_unique<Texture>(_device, "assets/texture.jpg");
 	createDescriptorSetLayout();
 	createGraphicsPipeline();
 	createVertexBuffer();
@@ -96,7 +97,15 @@ void Renderer::createDescriptorSetLayout() {
 													.descriptorCount = 1,
 													.stageFlags = vk::ShaderStageFlagBits::eVertex};
 
-	vk::DescriptorSetLayoutCreateInfo layoutInfo{.bindingCount = 1, .pBindings = &uboLayoutBinding};
+	vk::DescriptorSetLayoutBinding samplerLayoutBinding{.binding = 1,
+														.descriptorType = vk::DescriptorType::eCombinedImageSampler,
+														.descriptorCount = 1,
+														.stageFlags = vk::ShaderStageFlagBits::eFragment};
+
+	std::array<vk::DescriptorSetLayoutBinding, 2> bindings = {uboLayoutBinding, samplerLayoutBinding};
+
+	vk::DescriptorSetLayoutCreateInfo layoutInfo{.bindingCount = static_cast<uint32_t>(bindings.size()),
+												 .pBindings = bindings.data()};
 
 	_descriptorSetLayout = vk::raii::DescriptorSetLayout(*_device, layoutInfo);
 }
@@ -163,13 +172,16 @@ void Renderer::createUniformBuffers() {
 }
 
 void Renderer::createDescriptorPool() {
-	vk::DescriptorPoolSize poolSize{.type = vk::DescriptorType::eUniformBuffer,
-									.descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT)};
+	std::array<vk::DescriptorPoolSize, 2> poolSizes{
+		vk::DescriptorPoolSize{.type = vk::DescriptorType::eUniformBuffer,
+							   .descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT)},
+		vk::DescriptorPoolSize{.type = vk::DescriptorType::eCombinedImageSampler,
+							   .descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT)}};
 
 	vk::DescriptorPoolCreateInfo poolInfo{.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
 										  .maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT),
-										  .poolSizeCount = 1,
-										  .pPoolSizes = &poolSize};
+										  .poolSizeCount = static_cast<uint32_t>(poolSizes.size()),
+										  .pPoolSizes = poolSizes.data()};
 
 	_descriptorPool = vk::raii::DescriptorPool(*_device, poolInfo);
 }
@@ -181,7 +193,7 @@ void Renderer::createDescriptorSets() {
 											.descriptorSetCount = static_cast<uint32_t>(layouts.size()),
 											.pSetLayouts = layouts.data()};
 
-	auto descriptorSets = _device->allocateDescriptorSets(allocInfo);
+	auto descriptorSets = vk::raii::DescriptorSets(*_device, allocInfo);
 
 	for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
 		_frames[i].descriptorSet = std::move(descriptorSets[i]);
@@ -189,14 +201,29 @@ void Renderer::createDescriptorSets() {
 		vk::DescriptorBufferInfo bufferInfo{
 			.buffer = *_frames[i].uniformBuffer->getBuffer(), .offset = 0, .range = sizeof(UniformBufferObject)};
 
-		vk::WriteDescriptorSet descriptorWrite{.dstSet = *_frames[i].descriptorSet,
-											   .dstBinding = 0,
-											   .dstArrayElement = 0,
-											   .descriptorCount = 1,
-											   .descriptorType = vk::DescriptorType::eUniformBuffer,
-											   .pBufferInfo = &bufferInfo};
+		vk::DescriptorImageInfo imageInfo{.sampler = *_texture->getSampler(),
+										  .imageView = *_texture->getImageView(),
+										  .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal};
 
-		_device->updateDescriptorSets(descriptorWrite, {});
+		std::array<vk::WriteDescriptorSet, 2> descriptorWrites{};
+
+		// Uniform Buffer
+		descriptorWrites[0].dstSet = *_frames[i].descriptorSet;
+		descriptorWrites[0].dstBinding = 0;
+		descriptorWrites[0].dstArrayElement = 0;
+		descriptorWrites[0].descriptorType = vk::DescriptorType::eUniformBuffer;
+		descriptorWrites[0].descriptorCount = 1;
+		descriptorWrites[0].pBufferInfo = &bufferInfo;
+
+		// Texture
+		descriptorWrites[1].dstSet = *_frames[i].descriptorSet;
+		descriptorWrites[1].dstBinding = 1;
+		descriptorWrites[1].dstArrayElement = 0;
+		descriptorWrites[1].descriptorType = vk::DescriptorType::eCombinedImageSampler;
+		descriptorWrites[1].descriptorCount = 1;
+		descriptorWrites[1].pImageInfo = &imageInfo;
+
+		_device->updateDescriptorSets(descriptorWrites, {});
 	}
 }
 

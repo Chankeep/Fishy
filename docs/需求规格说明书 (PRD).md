@@ -36,8 +36,8 @@
 
 - [x] **REQ-M-01 (Buffer 封装):** 封装 VulkanBuffer 类。  
   * 支持 Staging Buffer 上传机制（Host \-\> Device Local）。  
-- [ ] **REQ-M-02 (纹理系统):** \* 加载 .jpg/.png 图片并生成 VkImage 和 VkImageView。  
-  * 支持 Sampler 创建（线性过滤，Repeat 模式）。  
+- [x] **REQ-M-02 (纹理系统):** \* 加载 .jpg/.png 图片并生成 vk::raii::Image 和 vk::raii::ImageView。  
+  * 支持 vk::raii::Sampler 创建（线性过滤，Repeat 模式）。  
   * **必须实现**：图像布局转换 (Layout Transition) 的 Command 录制。  
 - [ ] **REQ-M-03 (描述符管理):** \* 实现动态 Descriptor Set Allocator。  
   * 避免手动管理单个 Set 的释放，支持按帧重置 Pool。  

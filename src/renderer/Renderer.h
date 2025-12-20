@@ -1,7 +1,5 @@
 #pragma once
 
-#define VULKAN_HPP_NO_CONSTRUCTORS // Disable constructors for Vulkan.hpp
-
 #include <volk.h>
 
 #if defined(__INTELLISENSE__) || !defined(USE_CPP20_MODULES)
@@ -11,6 +9,7 @@ import vulkan_hpp;
 #endif
 
 #include "GraphicsPipeline.h"
+#include "Texture.h"
 #include "Vertex.h"
 #include "core/VulkanBuffer.h"
 
@@ -108,14 +107,21 @@ private:
 	std::vector<FrameData> _frames;
 
 	// Geometry data
-	const std::vector<Vertex> _vertices = {{{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-										   {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
-										   {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
-										   {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}};
-	const std::vector<uint16_t> _indices = {0, 1, 2, 2, 3, 0};
+	const std::vector<Vertex> _vertices = {{{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+										   {{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+										   {{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+										   {{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
+
+										   {{-0.5f, -0.5f, 0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+										   {{0.5f, -0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+										   {{0.5f, 0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+										   {{-0.5f, 0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}};
+	const std::vector<uint16_t> _indices = {0, 1, 2, 2, 3, 0, 4, 5, 6, 6, 7, 4};
 
 	uint32_t _currentImageIndex = 0;
 	int _currentFrameIndex = 0;
 	bool _isFrameStarted = false;
+
+	std::unique_ptr<Texture> _texture;
 };
 } // namespace Fishy
