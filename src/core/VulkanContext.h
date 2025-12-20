@@ -4,6 +4,8 @@
 
 #define VULKAN_HPP_NO_CONSTRUCTORS // 移除Vulkan.hpp的构造函数
 
+#include <volk.h>
+
 #if defined(__INTELLISENSE__) || !defined(USE_CPP20_MODULES)
 #include <vulkan/vulkan_raii.hpp>
 #else
@@ -18,8 +20,8 @@ public:
 	VulkanContext();
 	~VulkanContext();
 
-	vk::raii::Instance &getInstance() { return _instance; }
-	
+	vk::raii::Instance& getInstance() { return _instance; }
+
 private:
 	void Init();
 	void Cleanup();
@@ -27,7 +29,7 @@ private:
 	// Helper functions
 	void createInstance();
 	void setupDebugMessenger();
-	
+
 	vk::raii::Context _context;
 	vk::raii::Instance _instance = nullptr;
 	vk::raii::DebugUtilsMessengerEXT _debugMessenger = nullptr;

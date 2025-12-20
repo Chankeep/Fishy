@@ -8,6 +8,9 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+add_compile_definitions(VK_NO_PROTOTYPES)
+add_compile_definitions(VULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1)
+
 # ==============================================================================
 # 1. 寻找依赖库 (Linux 环境)
 # ==============================================================================
@@ -20,6 +23,27 @@ find_package(glfw3 3.3 REQUIRED)
 
 # 寻找 GLM (数学库)
 find_package(glm REQUIRED)
+
+# ==============================================================================
+# FetchContent Dependencies
+# ==============================================================================
+include(FetchContent)
+
+# vk-bootstrap
+FetchContent_Declare(
+    vk-bootstrap
+    GIT_REPOSITORY https://github.com/charles-lunarg/vk-bootstrap.git
+    GIT_TAG        v0.7
+)
+FetchContent_MakeAvailable(vk-bootstrap)
+
+# volk
+FetchContent_Declare(
+    volk
+    GIT_REPOSITORY https://github.com/zeux/volk.git
+    GIT_TAG        master
+)
+FetchContent_MakeAvailable(volk)
 
 # 寻找 Slang 编译器 (slangc)
 # 确保 slangc 已经在系统 PATH 中，或者手动指定路径
@@ -101,6 +125,8 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Vulkan::Vulkan
     glfw
     glm::glm
+    vk-bootstrap
+    volk
     # Linux 下可能还需要链接多线程库，虽然 find_package 通常会自动处理
     ${CMAKE_DL_LIBS}
 )

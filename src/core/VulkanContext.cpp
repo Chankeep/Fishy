@@ -1,18 +1,20 @@
+#define VOLK_IMPLEMENTATION
 #include "VulkanContext.h"
 
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
+#include <VkBootstrap.h>
 #include <algorithm>
 #include <cstring>
 #include <iostream>
 #include <vector>
 
+VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
+
 namespace Fishy {
 
 // Define validation layers
-const std::vector<char const *> validationLayers = {"VK_LAYER_KHRONOS_validation"};
-
-
+const std::vector<char const*> validationLayers = {"VK_LAYER_KHRONOS_validation"};
 
 #ifdef NDEBUG
 const bool enableValidationLayers = false;
@@ -20,17 +22,17 @@ const bool enableValidationLayers = false;
 const bool enableValidationLayers = true;
 #endif
 
-VulkanContext::VulkanContext(){
-	Init();
-}
+VulkanContext::VulkanContext() { Init(); }
 
-VulkanContext::~VulkanContext(){
-	Cleanup();
-}
+VulkanContext::~VulkanContext() { Cleanup(); }
 
 void VulkanContext::Init() {
-	// Initialize RAII Context (loads Vulkan library)
-	_context = vk::raii::Context();
+	// Initialize volk
+	if (volkInitialize() != VK_SUCCESS) {
+		throw std::runtime_error("Failed to initialize volk!");
+	}
+
+	VULKAN_HPP_DEFAULT_DISPATCHER.init(_context.getDispatcher()->vkGetInstanceProcAddr);
 
 	createInstance();
 	setupDebugMessenger();
@@ -41,40 +43,10 @@ void VulkanContext::Cleanup() {
 	// Destroyed in reverse order of declaration in header.
 }
 
-std::vector<const char *> getRequiredExtensions() {
-	uint32_t glfwExtensionCount = 0;
-	const char **glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
-	
-	if (!glfwExtensions) {
-		std::cerr << "WARNING: glfwGetRequiredInstanceExtensions returned nullptr" << std::endl;
-		// Fallback - manually add common surface extensions
-		std::vector<const char *> extensions;
-		extensions.push_back(VK_KHR_SURFACE_EXTENSION_NAME);
-#ifdef VK_USE_PLATFORM_XLIB_KHR
-		extensions.push_back(VK_KHR_XLIB_SURFACE_EXTENSION_NAME);
-#endif
-#ifdef VK_USE_PLATFORM_WAYLAND_KHR
-		extensions.push_back(VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME);
-#endif
-		if (enableValidationLayers) {
-			extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-		}
-		return extensions;
-	}
-
-	std::vector<const char *> extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
-
-	if (enableValidationLayers) {
-		extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-	}
-
-	return extensions;
-}
-
 static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT severity,
 													  vk::DebugUtilsMessageTypeFlagsEXT type,
-													  const vk::DebugUtilsMessengerCallbackDataEXT *pCallbackData,
-													  void *) {
+													  const vk::DebugUtilsMessengerCallbackDataEXT* pCallbackData,
+													  void*) {
 	if (severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eError ||
 		severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning) {
 		std::cerr << "validation layer: type " << to_string(type) << " msg: " << pCallbackData->pMessage << std::endl;
@@ -84,58 +56,41 @@ static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(vk::DebugUtilsMessageSever
 }
 
 void VulkanContext::createInstance() {
-	vk::ApplicationInfo appInfo{
-		.pApplicationName = "Fishy Engine",
-		.applicationVersion = VK_MAKE_VERSION(1, 0, 0),
-		.pEngineName = "Fishy",
-		.engineVersion = VK_MAKE_VERSION(1, 0, 0),
-		.apiVersion = vk::ApiVersion14 // Construct using 1.3 for broad compatibility
-	};
+	vkb::InstanceBuilder builder;
+	builder.set_app_name("Fishy Engine").set_engine_name("Fishy").require_api_version(1, 3, 0); // Require Vulkan 1.3
 
-	// Get the required layers
-	std::vector<char const *> requiredLayers;
 	if (enableValidationLayers) {
-		requiredLayers.assign(validationLayers.begin(), validationLayers.end());
+		builder.request_validation_layers();
 	}
 
-	// Check if the required layers are supported by the Vulkan implementation.
-	// Note: enumerateInstanceLayerProperties() returns
-	// std::vector<vk::LayerProperties> but the user logic iterates and checks.
-	auto layerProperties = _context.enumerateInstanceLayerProperties();
-	for (auto const &requiredLayer : requiredLayers) {
-		if (std::ranges::none_of(layerProperties, [requiredLayer](auto const &layerProperty) {
-				return strcmp(layerProperty.layerName, requiredLayer) == 0;
-			})) {
-			throw std::runtime_error("Required layer not supported: " + std::string(requiredLayer));
-		}
+	auto system_info_ret = vkb::SystemInfo::get_system_info();
+	if (!system_info_ret) {
+		throw std::runtime_error(system_info_ret.error().message());
+	}
+	auto system_info = system_info_ret.value();
+
+	if (system_info.validation_layers_available) {
+		builder.enable_validation_layers();
 	}
 
-	// Get the required extensions.
-	auto requiredExtensions = getRequiredExtensions();
-
-	// Check if the required extensions are supported by the Vulkan
-	// implementation.
-	auto extensionProperties = _context.enumerateInstanceExtensionProperties();
-	for (auto const &requiredExtension : requiredExtensions) {
-		if (std::ranges::none_of(extensionProperties, [requiredExtension](auto const &extensionProperty) {
-				return strcmp(extensionProperty.extensionName, requiredExtension) == 0;
-			})) {
-			throw std::runtime_error("Required extension not supported: " + std::string(requiredExtension));
-		}
+	auto vkb_inst_ret = builder.build();
+	if (!vkb_inst_ret) {
+		throw std::runtime_error(vkb_inst_ret.error().message());
 	}
+	vkb::Instance vkb_inst = vkb_inst_ret.value();
 
-	vk::InstanceCreateInfo createInfo{.pApplicationInfo = &appInfo,
-									  .enabledLayerCount = static_cast<uint32_t>(requiredLayers.size()),
-									  .ppEnabledLayerNames = requiredLayers.data(),
-									  .enabledExtensionCount = static_cast<uint32_t>(requiredExtensions.size()),
-									  .ppEnabledExtensionNames = requiredExtensions.data()};
+	volkLoadInstance(vkb_inst.instance);
 
-	// Use member _instance and _entry
-	_instance = vk::raii::Instance(_context, createInfo);
+	// Load Vulkan functions via volk into a context
+	_context = vk::raii::Context();
+
+	// Create RAII Instance from existing handle
+	_instance = vk::raii::Instance(_context, vkb_inst.instance);
+
+	VULKAN_HPP_DEFAULT_DISPATCHER.init(*_instance);
 }
 
 void VulkanContext::setupDebugMessenger() {
-	// TODO: Implement Debug Messenger
 	if (!enableValidationLayers)
 		return;
 
@@ -149,7 +104,5 @@ void VulkanContext::setupDebugMessenger() {
 		.messageSeverity = severityFlags, .messageType = messageTypeFlags, .pfnUserCallback = &debugCallback};
 	_debugMessenger = _instance.createDebugUtilsMessengerEXT(debugUtilsMessengerCreateInfoEXT);
 }
-
-
 
 } // namespace Fishy

@@ -2,6 +2,8 @@
 
 #define VULKAN_HPP_NO_CONSTRUCTORS // 移除Vulkan.hpp的构造函数
 
+#include <volk.h>
+
 #if defined(__INTELLISENSE__) || !defined(USE_CPP20_MODULES)
 #include <vulkan/vulkan_raii.hpp>
 #else

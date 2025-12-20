@@ -1,101 +1,68 @@
 #include "VulkanDevice.h"
+#include <VkBootstrap.h>
 
 namespace Fishy {
 
 VulkanDevice::VulkanDevice(const vk::raii::Instance& instance, const vk::raii::SurfaceKHR& surface)
 	: _instance(instance), _surface(surface) {
-	pickPhysicalDevice();
-	createLogicalDevice();
+
+	vkb::Instance vkb_inst;
+	vkb_inst.instance = *instance;
+	vkb::PhysicalDeviceSelector selector{vkb_inst};
+	auto phys_ret = selector.set_surface(*surface).set_minimum_version(1, 3).select();
+
+	if (!phys_ret) {
+		throw std::runtime_error("Failed to select physical device: " + phys_ret.error().message());
+	}
+
+	vkb::PhysicalDevice vkb_phys = phys_ret.value();
+
+	// Define required features
+	vk::PhysicalDeviceVulkan13Features features13;
+	features13.synchronization2 = true;
+	features13.dynamicRendering = true;
+
+	vk::PhysicalDeviceVulkan11Features features11;
+	features11.shaderDrawParameters = true;
+
+	vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT featuresExt;
+	featuresExt.extendedDynamicState = true;
+
+	vkb::DeviceBuilder device_builder{vkb_phys};
+	device_builder.add_pNext(&features13).add_pNext(&features11).add_pNext(&featuresExt);
+	auto dev_ret = device_builder.build();
+	if (!dev_ret) {
+		throw std::runtime_error("Failed to build device: " + dev_ret.error().message());
+	}
+
+	vkb::Device vkb_device = dev_ret.value();
+
+	// Initialize volk for this device
+	volkLoadDevice(vkb_device.device);
+
+	_physicalDevice = vk::raii::PhysicalDevice(instance, vkb_device.physical_device);
+
+	// Create RAII Device wrapper around existing device
+	// Note: We need to be careful here. vk::raii::Device usually destroys the device on destruction.
+	// Since vkb created it, we pass it to RAII and RAII will destroy it.
+	_device = vk::raii::Device(_physicalDevice, vkb_device.device);
+
+	VULKAN_HPP_DEFAULT_DISPATCHER.init(*_device);
+
+	// Retrieve queues
+	auto graphics_queue_idx_ret = vkb_device.get_queue_index(vkb::QueueType::graphics);
+	auto present_queue_idx_ret = vkb_device.get_queue_index(vkb::QueueType::present);
+
+	if (!graphics_queue_idx_ret || !present_queue_idx_ret) {
+		throw std::runtime_error("Failed to get queues after device creation");
+	}
+
+	_graphicsQueueFamily = graphics_queue_idx_ret.value();
+
+	_graphicsQueue = vk::raii::Queue(_device, _graphicsQueueFamily, 0);
+	_presentQueue = vk::raii::Queue(_device, present_queue_idx_ret.value(), 0);
 }
 
 VulkanDevice::~VulkanDevice() {}
 
-// Define required device extensions
-std::vector<const char*> requiredDeviceExtension = {vk::KHRSwapchainExtensionName, vk::KHRSpirv14ExtensionName,
-													vk::KHRSynchronization2ExtensionName,
-													vk::KHRCreateRenderpass2ExtensionName};
-
-void VulkanDevice::pickPhysicalDevice() {
-	std::vector<vk::raii::PhysicalDevice> devices = _instance.enumeratePhysicalDevices();
-	const auto devIter = std::ranges::find_if(devices, [&](auto const& device) {
-		// Check if the device supports the Vulkan 1.3 API version
-		bool supportsVulkan1_3 = device.getProperties().apiVersion >= VK_API_VERSION_1_3;
-
-		// Check if any of the queue families support graphics operations
-		auto queueFamilies = device.getQueueFamilyProperties();
-		bool supportsGraphics = std::ranges::any_of(
-			queueFamilies, [](auto const& qfp) { return !!(qfp.queueFlags & vk::QueueFlagBits::eGraphics); });
-
-		// Check if all required device extensions are available
-		auto availableDeviceExtensions = device.enumerateDeviceExtensionProperties();
-		bool supportsAllRequiredExtensions = std::ranges::all_of(
-			requiredDeviceExtension, [&availableDeviceExtensions](auto const& requiredDeviceExtension) {
-				return std::ranges::any_of(
-					availableDeviceExtensions, [requiredDeviceExtension](auto const& availableDeviceExtension) {
-						return strcmp(availableDeviceExtension.extensionName, requiredDeviceExtension) == 0;
-					});
-			});
-
-		auto features = device.template getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features,
-													 vk::PhysicalDeviceVulkan13Features,
-													 vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
-		bool supportsRequiredFeatures =
-			features.template get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters &&
-			features.template get<vk::PhysicalDeviceVulkan13Features>().synchronization2 &&
-			features.template get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering &&
-			features.template get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState;
-
-		return supportsVulkan1_3 && supportsGraphics && supportsAllRequiredExtensions && supportsRequiredFeatures;
-	});
-	if (devIter != devices.end()) {
-		_physicalDevice = *devIter;
-	} else {
-		throw std::runtime_error("failed to find a suitable GPU!");
-	}
-}
-void VulkanDevice::createLogicalDevice() {
-	std::vector<vk::QueueFamilyProperties> queueFamilyProperties = _physicalDevice.getQueueFamilyProperties();
-
-	// get the first index into queueFamilyProperties which supports both
-	// graphics and present
-	for (uint32_t qfpIndex = 0; qfpIndex < queueFamilyProperties.size(); qfpIndex++) {
-		if ((queueFamilyProperties[qfpIndex].queueFlags & vk::QueueFlagBits::eGraphics) &&
-			_physicalDevice.getSurfaceSupportKHR(qfpIndex, *_surface)) {
-			// found a queue family that supports both graphics and present
-			_graphicsQueueFamily = qfpIndex;
-			break;
-		}
-	}
-	if (_graphicsQueueFamily == ~0) {
-		throw std::runtime_error("Could not find a queue for graphics and present -> terminating");
-	}
-
-	// query for Vulkan 1.3 features
-	vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features,
-					   vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>
-		featureChain = {
-			{},
-			// vk::PhysicalDeviceFeatures2
-			{.shaderDrawParameters = true},
-			// vk::PhysicalDeviceVulkan11Features
-			{.synchronization2 = true, .dynamicRendering = true},
-			// vk::PhysicalDeviceVulkan13Features
-			{.extendedDynamicState = true} // vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT
-		};
-
-	// create a Device
-	float queuePriority = 0.0f;
-	vk::DeviceQueueCreateInfo deviceQueueCreateInfo{
-		.queueFamilyIndex = _graphicsQueueFamily, .queueCount = 1, .pQueuePriorities = &queuePriority};
-	vk::DeviceCreateInfo deviceCreateInfo{.pNext = &featureChain.get<vk::PhysicalDeviceFeatures2>(),
-										  .queueCreateInfoCount = 1,
-										  .pQueueCreateInfos = &deviceQueueCreateInfo,
-										  .enabledExtensionCount =
-											  static_cast<uint32_t>(requiredDeviceExtension.size()),
-										  .ppEnabledExtensionNames = requiredDeviceExtension.data()};
-
-	_device = vk::raii::Device(_physicalDevice, deviceCreateInfo);
-	_graphicsQueue = vk::raii::Queue(_device, _graphicsQueueFamily, 0);
-	_presentQueue = vk::raii::Queue(_device, _graphicsQueueFamily, 0);
-}
 } // namespace Fishy
