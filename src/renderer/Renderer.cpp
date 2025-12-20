@@ -128,55 +128,37 @@ void Renderer::createGraphicsPipeline() {
 void Renderer::createVertexBuffer() {
 	vk::DeviceSize bufferSize = sizeof(_vertices[0]) * _vertices.size();
 
-	vk::raii::Buffer stagingBuffer(nullptr);
-	vk::raii::DeviceMemory stagingBufferMemory(nullptr);
-	createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc,
-				 vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, stagingBuffer,
-				 stagingBufferMemory);
+	// Create Device Local Buffer
+	_vertexBuffer = std::make_unique<VulkanBuffer>(
+		_device, bufferSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eVertexBuffer,
+		vk::MemoryPropertyFlagBits::eDeviceLocal);
 
-	void* data = stagingBufferMemory.mapMemory(0, bufferSize);
-	memcpy(data, _vertices.data(), bufferSize);
-	stagingBufferMemory.unmapMemory();
-
-	createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eVertexBuffer,
-				 vk::MemoryPropertyFlagBits::eDeviceLocal, _vertexBuffer, _vertexBufferMemory);
-
-	copyBuffer(stagingBuffer, _vertexBuffer, bufferSize);
+	// Upload using Staging Buffer
+	_vertexBuffer->uploadStaged(_commandPool, _device.getGraphicsQueue(), (void*)_vertices.data(), bufferSize);
 }
 
 void Renderer::createIndexBuffer() {
 	vk::DeviceSize bufferSize = sizeof(_indices[0]) * _indices.size();
 
-	vk::raii::Buffer stagingBuffer(nullptr);
-	vk::raii::DeviceMemory stagingBufferMemory(nullptr);
-	createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc,
-				 vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, stagingBuffer,
-				 stagingBufferMemory);
+	// Create Device Local Buffer
+	_indexBuffer = std::make_unique<VulkanBuffer>(
+		_device, bufferSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eIndexBuffer,
+		vk::MemoryPropertyFlagBits::eDeviceLocal);
 
-	void* data = stagingBufferMemory.mapMemory(0, bufferSize);
-	memcpy(data, _indices.data(), bufferSize);
-	stagingBufferMemory.unmapMemory();
-
-	createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eIndexBuffer,
-				 vk::MemoryPropertyFlagBits::eDeviceLocal, _indexBuffer, _indexBufferMemory);
-
-	copyBuffer(stagingBuffer, _indexBuffer, bufferSize);
+	// Upload using Staging Buffer
+	_indexBuffer->uploadStaged(_commandPool, _device.getGraphicsQueue(), (void*)_indices.data(), bufferSize);
 }
 
 void Renderer::createUniformBuffers() {
 	vk::DeviceSize bufferSize = sizeof(UniformBufferObject);
 
 	for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-		vk::raii::Buffer buffer(nullptr);
-		vk::raii::DeviceMemory bufferMem(nullptr);
+		_frames[i].uniformBuffer = std::make_unique<VulkanBuffer>(
+			_device, bufferSize, vk::BufferUsageFlagBits::eUniformBuffer,
+			vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
 
-		createBuffer(bufferSize, vk::BufferUsageFlagBits::eUniformBuffer,
-					 vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, buffer,
-					 bufferMem);
-
-		_frames[i].uniformBuffer = std::move(buffer);
-		_frames[i].uniformBufferMemory = std::move(bufferMem);
-		_frames[i].uniformBufferMapped = _frames[i].uniformBufferMemory.mapMemory(0, bufferSize);
+		// Persistent mapping: map once and keep it mapped
+		_frames[i].uniformBuffer->map();
 	}
 }
 
@@ -205,7 +187,7 @@ void Renderer::createDescriptorSets() {
 		_frames[i].descriptorSet = std::move(descriptorSets[i]);
 
 		vk::DescriptorBufferInfo bufferInfo{
-			.buffer = *_frames[i].uniformBuffer, .offset = 0, .range = sizeof(UniformBufferObject)};
+			.buffer = *_frames[i].uniformBuffer->getBuffer(), .offset = 0, .range = sizeof(UniformBufferObject)};
 
 		vk::WriteDescriptorSet descriptorWrite{.dstSet = *_frames[i].descriptorSet,
 											   .dstBinding = 0,
@@ -216,49 +198,6 @@ void Renderer::createDescriptorSets() {
 
 		_device->updateDescriptorSets(descriptorWrite, {});
 	}
-}
-
-void Renderer::createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties,
-							vk::raii::Buffer& buffer, vk::raii::DeviceMemory& bufferMemory) {
-	vk::BufferCreateInfo bufferInfo{.size = size, .usage = usage, .sharingMode = vk::SharingMode::eExclusive};
-
-	buffer = vk::raii::Buffer(*_device, bufferInfo);
-
-	vk::MemoryRequirements memRequirements = buffer.getMemoryRequirements();
-	vk::MemoryAllocateInfo allocInfo{.allocationSize = memRequirements.size,
-									 .memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties)};
-
-	bufferMemory = vk::raii::DeviceMemory(*_device, allocInfo);
-	buffer.bindMemory(*bufferMemory, 0);
-}
-
-void Renderer::copyBuffer(vk::raii::Buffer& srcBuffer, vk::raii::Buffer& dstBuffer, vk::DeviceSize size) {
-	vk::CommandBufferAllocateInfo allocInfo{
-		.commandPool = *_commandPool, .level = vk::CommandBufferLevel::ePrimary, .commandBufferCount = 1};
-
-	auto commandBuffers = _device->allocateCommandBuffers(allocInfo);
-	auto& commandBuffer = commandBuffers.front();
-
-	vk::CommandBufferBeginInfo beginInfo{.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit};
-	commandBuffer.begin(beginInfo);
-	commandBuffer.copyBuffer(*srcBuffer, *dstBuffer, vk::BufferCopy{0, 0, size});
-	commandBuffer.end();
-
-	vk::SubmitInfo submitInfo{.commandBufferCount = 1, .pCommandBuffers = &*commandBuffer};
-	_device.getGraphicsQueue().submit(submitInfo, nullptr);
-	_device.getGraphicsQueue().waitIdle();
-}
-
-uint32_t Renderer::findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties) {
-	vk::PhysicalDeviceMemoryProperties memProperties = _device.getPhysicalDevice().getMemoryProperties();
-
-	for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
-		if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
-			return i;
-		}
-	}
-
-	throw std::runtime_error("failed to find suitable memory type!");
 }
 
 void Renderer::updateUniformBuffer(uint32_t frameIndex) {
@@ -275,7 +214,7 @@ void Renderer::updateUniformBuffer(uint32_t frameIndex) {
 								static_cast<float>(extent.width) / static_cast<float>(extent.height), 0.1f, 10.0f);
 	ubo.proj[1][1] *= -1; // Invert Y for Vulkan
 
-	memcpy(_frames[frameIndex].uniformBufferMapped, &ubo, sizeof(ubo));
+	_frames[frameIndex].uniformBuffer->upload(&ubo, sizeof(ubo));
 }
 
 void Renderer::transitionImageLayout(uint32_t imageIndex, vk::ImageLayout oldLayout, vk::ImageLayout newLayout,

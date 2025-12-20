@@ -12,6 +12,7 @@ import vulkan_hpp;
 
 #include "GraphicsPipeline.h"
 #include "Vertex.h"
+#include "core/VulkanBuffer.h"
 
 #include <memory>
 #include <vector>
@@ -50,8 +51,8 @@ public:
 	// Resource accessors for Application rendering
 	const GraphicsPipeline& getPipeline() const { return *_graphicsPipeline; }
 	const vk::raii::DescriptorSet& getDescriptorSet(int frame) const { return _frames[frame].descriptorSet; }
-	const vk::raii::Buffer& getVertexBuffer() const { return _vertexBuffer; }
-	const vk::raii::Buffer& getIndexBuffer() const { return _indexBuffer; }
+	const vk::raii::Buffer& getVertexBuffer() const { return _vertexBuffer->getBuffer(); }
+	const vk::raii::Buffer& getIndexBuffer() const { return _indexBuffer->getBuffer(); }
 	const std::vector<vk::raii::ImageView>& getSwapChainImageViews() const;
 	vk::Extent2D getSwapChainExtent() const;
 	vk::Format getSwapChainFormat() const;
@@ -72,19 +73,11 @@ private:
 	void createDescriptorPool();
 	void createDescriptorSets();
 
-	// Buffer helper
-	void createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties,
-					  vk::raii::Buffer& buffer, vk::raii::DeviceMemory& bufferMemory);
-	void copyBuffer(vk::raii::Buffer& srcBuffer, vk::raii::Buffer& dstBuffer, vk::DeviceSize size);
-	uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties);
-
 	struct FrameData {
 		vk::raii::CommandBuffer commandBuffer = nullptr;
 		vk::raii::Semaphore imageAvailableSemaphore = nullptr;
 		vk::raii::Fence inFlightFence = nullptr;
-		vk::raii::Buffer uniformBuffer = nullptr;
-		vk::raii::DeviceMemory uniformBufferMemory = nullptr;
-		void* uniformBufferMapped = nullptr;
+		std::unique_ptr<VulkanBuffer> uniformBuffer;
 		vk::raii::DescriptorSet descriptorSet = nullptr;
 	};
 
@@ -105,10 +98,8 @@ private:
 	vk::raii::DescriptorSetLayout _descriptorSetLayout = nullptr;
 
 	// Buffers
-	vk::raii::Buffer _vertexBuffer = nullptr;
-	vk::raii::DeviceMemory _vertexBufferMemory = nullptr;
-	vk::raii::Buffer _indexBuffer = nullptr;
-	vk::raii::DeviceMemory _indexBufferMemory = nullptr;
+	std::unique_ptr<VulkanBuffer> _vertexBuffer;
+	std::unique_ptr<VulkanBuffer> _indexBuffer;
 
 	// Descriptors
 	vk::raii::DescriptorPool _descriptorPool = nullptr;

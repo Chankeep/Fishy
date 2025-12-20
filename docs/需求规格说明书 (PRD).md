@@ -34,9 +34,8 @@
 
 ### **2.3 资源管理 (Resource Management)**
 
-- [ ] **REQ-M-01 (Buffer 封装):** 封装 VulkanBuffer 类。  
+- [x] **REQ-M-01 (Buffer 封装):** 封装 VulkanBuffer 类。  
   * 支持 Staging Buffer 上传机制（Host \-\> Device Local）。  
-  * 支持由 VMA (Vulkan Memory Allocator) 管理内存。  
 - [ ] **REQ-M-02 (纹理系统):** \* 加载 .jpg/.png 图片并生成 VkImage 和 VkImageView。  
   * 支持 Sampler 创建（线性过滤，Repeat 模式）。  
   * **必须实现**：图像布局转换 (Layout Transition) 的 Command 录制。  
