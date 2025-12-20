@@ -1,6 +1,6 @@
 #pragma once
 
-#define VULKAN_HPP_NO_CONSTRUCTORS // 移除Vulkan.hpp的构造函数
+#define VULKAN_HPP_NO_CONSTRUCTORS // Disable constructors for Vulkan.hpp
 
 #if defined(__INTELLISENSE__) || !defined(USE_CPP20_MODULES)
 #include <vulkan/vulkan_raii.hpp>
@@ -13,6 +13,12 @@ import vulkan_hpp;
 
 namespace Fishy {
 
+/**
+ * @brief Manages the GLFW window and Vulkan surface.
+ *
+ * Handles window creation, event callbacks (resizing, input), and creates
+ * the corresponding Vulkan surface.
+ */
 class Window {
 public:
 	struct Properties {

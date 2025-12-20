@@ -1,6 +1,6 @@
 #pragma once
 
-#define VULKAN_HPP_NO_CONSTRUCTORS // 移除Vulkan.hpp的构造函数
+#define VULKAN_HPP_NO_CONSTRUCTORS // Disable constructors for Vulkan.hpp
 
 #include <volk.h>
 
@@ -14,6 +14,12 @@ namespace Fishy {
 
 class VulkanContext;
 
+/**
+ * @brief Manages the logical Vulkan Device and Queues.
+ *
+ * Handles physical device selection, logical device creation, and
+ * retrieval of graphics and present queues.
+ */
 class VulkanDevice {
 public:
 	VulkanDevice(const vk::raii::Instance& instance, const vk::raii::SurfaceKHR& surface);

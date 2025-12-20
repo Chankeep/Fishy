@@ -1,6 +1,9 @@
 #include "core/Application.h"
 #include <iostream>
 
+/**
+ * @brief Entry point of the application.
+ */
 int main() {
 	try {
 		Fishy::Application app;

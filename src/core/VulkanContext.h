@@ -2,7 +2,7 @@
 #include <optional>
 #include <vector>
 
-#define VULKAN_HPP_NO_CONSTRUCTORS // 移除Vulkan.hpp的构造函数
+#define VULKAN_HPP_NO_CONSTRUCTORS // Disable constructors for Vulkan.hpp
 
 #include <volk.h>
 
@@ -15,6 +15,12 @@ import vulkan_hpp;
 struct GLFWwindow;
 
 namespace Fishy {
+/**
+ * @brief Manages the Vulkan Instance and Debug Messenger.
+ *
+ * Initializes the Vulkan loader (volk), creates the Vulkan instance,
+ * and sets up validation layers if enabled.
+ */
 class VulkanContext {
 public:
 	VulkanContext();

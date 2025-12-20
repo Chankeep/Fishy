@@ -21,6 +21,7 @@ Application::Application()
 
 Application::~Application() {}
 
+// Main application loop
 void Application::Run() {
 	while (!_window.ShouldClose()) {
 		_window.Update();

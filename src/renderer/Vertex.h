@@ -1,6 +1,6 @@
 #pragma once
 
-#define VULKAN_HPP_NO_CONSTRUCTORS // 移除Vulkan.hpp的构造函数
+#define VULKAN_HPP_NO_CONSTRUCTORS // Disable constructors for Vulkan.hpp
 
 #include <array>
 #include <glm/glm.hpp>

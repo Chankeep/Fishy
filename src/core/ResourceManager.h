@@ -1,6 +1,6 @@
 #pragma once
 
-#define VULKAN_HPP_NO_CONSTRUCTORS // 移除Vulkan.hpp的构造函数
+#define VULKAN_HPP_NO_CONSTRUCTORS // Disable constructors for Vulkan.hpp
 
 #if defined(__INTELLISENSE__) || !defined(USE_CPP20_MODULES)
 #include <vulkan/vulkan_raii.hpp>
@@ -16,6 +16,9 @@ namespace Fishy {
 
 class VulkanDevice;
 
+/**
+ * @brief Manages loading and caching of resources like shaders.
+ */
 class ResourceManager {
 public:
 	explicit ResourceManager(VulkanDevice& device);

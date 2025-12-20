@@ -10,6 +10,12 @@
 
 namespace Fishy {
 
+/**
+ * @brief Main application class.
+ *
+ * Coordinates the engine lifecycle: initialization, main loop, and cleanup.
+ * Manages core subsystems like Window, VulkanContext, Device, and Renderer.
+ */
 class Application {
 public:
 	Application();

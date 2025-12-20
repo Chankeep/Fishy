@@ -21,6 +21,7 @@ void Window::Init(const Properties& properties) {
 	// Note: glfwInit() should be called before creating VulkanContext
 	// This allows GLFW to properly provide the required Vulkan extensions
 
+	// Stop GLFW from creating an OpenGL context
 	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 	glfwWindowHint(GLFW_RESIZABLE, properties.resizable ? GLFW_TRUE : GLFW_FALSE);
 

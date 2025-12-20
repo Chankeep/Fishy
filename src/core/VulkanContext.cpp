@@ -55,6 +55,7 @@ static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(vk::DebugUtilsMessageSever
 	return vk::False;
 }
 
+// Create the Vulkan Instance using vk-bootstrap
 void VulkanContext::createInstance() {
 	vkb::InstanceBuilder builder;
 	builder.set_app_name("Fishy Engine").set_engine_name("Fishy").require_api_version(1, 3, 0); // Require Vulkan 1.3

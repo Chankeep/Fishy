@@ -1,6 +1,6 @@
 #pragma once
 
-#define VULKAN_HPP_NO_CONSTRUCTORS // 移除Vulkan.hpp的构造函数
+#define VULKAN_HPP_NO_CONSTRUCTORS // Disable constructors for Vulkan.hpp
 
 #if defined(__INTELLISENSE__) || !defined(USE_CPP20_MODULES)
 #include <vulkan/vulkan_raii.hpp>
@@ -27,7 +27,8 @@ public:
 	const vk::raii::Pipeline& getPipeline() const { return pipeline; }
 
 private:
-	// 销毁时与声明顺序相反：Pipeline 依赖 Layout (通常来说)，所以 Pipeline 先销毁，Layout 后销毁
+	// Destruction order is reverse of declaration: Pipeline depends on Layout (usually), so Pipeline destroyed first,
+	// Layout last
 	vk::raii::PipelineLayout layout;
 	vk::raii::Pipeline pipeline;
 };

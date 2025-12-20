@@ -21,13 +21,13 @@ void PipelineBuilder::clear() {
 	_multisampling = vk::PipelineMultisampleStateCreateInfo{
 		{}, vk::SampleCountFlagBits::e1, VK_FALSE, 1.0f, nullptr, VK_FALSE, VK_FALSE};
 	_depthStencil = vk::PipelineDepthStencilStateCreateInfo{};
-	_colorBlendAttachment = vk::PipelineColorBlendAttachmentState{}; // 默认混合关闭
+	_colorBlendAttachment = vk::PipelineColorBlendAttachmentState{}; // Default blending disabled
 	_colorBlendAttachment.colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
 										   vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
 	_vertexInputInfo = vk::PipelineVertexInputStateCreateInfo{};
 
-	// 动态状态通常是必须的（为了适配不同 Swapchain 尺寸）
-	_dynamicStates = {vk ::DynamicState::eViewport, vk::DynamicState::eScissor};
+	// Dynamic states are usually required (to adapt to different Swapchain sizes)
+	_dynamicStates = {vk::DynamicState::eViewport, vk::DynamicState::eScissor};
 }
 
 PipelineBuilder& PipelineBuilder::setShaders(const vk::raii::ShaderModule& vertShader,
@@ -71,7 +71,7 @@ PipelineBuilder& PipelineBuilder::setCullMode(vk::CullModeFlags cullMode, vk::Fr
 	return *this;
 }
 
-// 深度测试配置
+// Depth Test Configuration
 PipelineBuilder& PipelineBuilder::setDepthTest(bool depthWriteEnable, bool depthTestEnable, vk::CompareOp compareOp) {
 	_depthStencil.depthTestEnable = depthTestEnable ? VK_TRUE : VK_FALSE;
 	_depthStencil.depthWriteEnable = depthWriteEnable ? VK_TRUE : VK_FALSE;
@@ -82,7 +82,7 @@ PipelineBuilder& PipelineBuilder::setDepthTest(bool depthWriteEnable, bool depth
 	return *this;
 }
 
-// 简单的透明混合配置
+// Simple Alpha Blending Configuration
 PipelineBuilder& PipelineBuilder::enableAlphaBlending() {
 	_colorBlendAttachment.blendEnable = VK_TRUE;
 	_colorBlendAttachment.srcColorBlendFactor = vk::BlendFactor::eSrcAlpha;
@@ -94,7 +94,7 @@ PipelineBuilder& PipelineBuilder::enableAlphaBlending() {
 	return *this;
 }
 
-// 设置 DescriptorSetLayouts 和 PushConstants
+// Set DescriptorSetLayouts and PushConstants
 PipelineBuilder& PipelineBuilder::setLayout(const std::vector<vk::DescriptorSetLayout>& layouts,
 											const std::vector<vk::PushConstantRange>& pushConstants) {
 	_descriptorSetLayouts = layouts;
@@ -102,14 +102,14 @@ PipelineBuilder& PipelineBuilder::setLayout(const std::vector<vk::DescriptorSetL
 	return *this;
 }
 
-// 设置顶点输入格式 (通常来自 Mesh 类的静态方法)
+// Set Vertex Input Format (usually from Mesh class static methods)
 PipelineBuilder& PipelineBuilder::setVertexInput(const vk::PipelineVertexInputStateCreateInfo& info) {
 	_vertexInputInfo = info;
 	return *this;
 }
 
-// 适配 Dynamic Rendering (Vulkan 1.3 或 KHR_dynamic_rendering)
-// 如果你不使用 RenderPass 对象，需要这个
+// Adapt for Dynamic Rendering (Vulkan 1.3 or KHR_dynamic_rendering)
+// If you don't use RenderPass object, you need this
 PipelineBuilder& PipelineBuilder::setRenderingFormats(const std::vector<vk::Format>& colorFormats,
 													  vk::Format depthFormat) {
 	_colorAttachmentFormats = colorFormats;
@@ -118,17 +118,17 @@ PipelineBuilder& PipelineBuilder::setRenderingFormats(const std::vector<vk::Form
 }
 
 std::unique_ptr<GraphicsPipeline> PipelineBuilder::build(const vk::raii::Device& device, vk::RenderPass renderPass) {
-	// 1. 创建 Pipeline Layout (RAII)
+	// 1. Create Pipeline Layout (RAII)
 	vk::PipelineLayoutCreateInfo pipelineLayoutInfo{};
 	pipelineLayoutInfo.setLayoutCount = static_cast<uint32_t>(_descriptorSetLayouts.size());
 	pipelineLayoutInfo.pSetLayouts = _descriptorSetLayouts.data();
 	pipelineLayoutInfo.pushConstantRangeCount = static_cast<uint32_t>(_pushConstantRanges.size());
 	pipelineLayoutInfo.pPushConstantRanges = _pushConstantRanges.data();
 
-	// 直接创建 RAII 对象，如果失败会抛出异常 (除非没开启异常)
+	// Create RAII object directly, will throw exception if failed (unless exceptions disabled)
 	vk::raii::PipelineLayout layout(device, pipelineLayoutInfo);
 
-	// 2. 准备各种 State 指针 (与之前相同)
+	// 2. Prepare state pointers (Same as before)
 	vk::PipelineViewportStateCreateInfo viewportState{};
 	viewportState.viewportCount = 1;
 	viewportState.scissorCount = 1;
@@ -142,7 +142,7 @@ std::unique_ptr<GraphicsPipeline> PipelineBuilder::build(const vk::raii::Device&
 	dynamicStateInfo.dynamicStateCount = static_cast<uint32_t>(_dynamicStates.size());
 	dynamicStateInfo.pDynamicStates = _dynamicStates.data();
 
-	// 3. 组装 GraphicsPipelineCreateInfo
+	// 3. Assemble GraphicsPipelineCreateInfo
 	vk::GraphicsPipelineCreateInfo pipelineInfo{};
 	pipelineInfo.stageCount = static_cast<uint32_t>(_shaderStages.size());
 	pipelineInfo.pStages = _shaderStages.data();
@@ -154,10 +154,10 @@ std::unique_ptr<GraphicsPipeline> PipelineBuilder::build(const vk::raii::Device&
 	pipelineInfo.pDepthStencilState = &_depthStencil;
 	pipelineInfo.pColorBlendState = &colorBlending;
 	pipelineInfo.pDynamicState = &dynamicStateInfo;
-	pipelineInfo.layout = *layout; // 取出刚刚创建的 layout 的句柄
+	pipelineInfo.layout = *layout; // Get handle from just created layout
 	pipelineInfo.subpass = 0;
 
-	// 处理 Dynamic Rendering vs RenderPass
+	// Handle Dynamic Rendering vs RenderPass
 	vk::PipelineRenderingCreateInfo renderingInfo{};
 	if (renderPass) {
 		pipelineInfo.renderPass = renderPass;
@@ -169,15 +169,15 @@ std::unique_ptr<GraphicsPipeline> PipelineBuilder::build(const vk::raii::Device&
 		pipelineInfo.pNext = &renderingInfo;
 	}
 
-	// 4. 创建 Pipeline (RAII)
-	// device.createGraphicsPipeline 返回的是一个 std::pair<Result, raii::Pipeline> 或者直接是 raii::Pipeline
-	// (取决于是否有 pipeline cache) 按照 vulkan_raii 的习惯，这里应该这样写：
+	// 4. Create Pipeline (RAII)
+	// device.createGraphicsPipeline returns a std::pair<Result, raii::Pipeline> or directly raii::Pipeline
+	// (depending on if pipeline cache is used) As per vulkan_raii convention, it should be like this:
 
 	vk::raii::Pipeline pipeline(device,
-								nullptr, // pipeline cache, 暂时为空
+								nullptr, // pipeline cache, empty for now
 								pipelineInfo);
 
-	// 5. 返回封装对象
+	// 5. Return wrapper object
 	return std::make_unique<GraphicsPipeline>(std::move(layout), std::move(pipeline));
 }
 

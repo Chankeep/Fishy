@@ -18,6 +18,7 @@ VulkanDevice::VulkanDevice(const vk::raii::Instance& instance, const vk::raii::S
 	vkb::PhysicalDevice vkb_phys = phys_ret.value();
 
 	// Define required features
+	// We need Synchronization2 and DynamicRendering for modern Vulkan features
 	vk::PhysicalDeviceVulkan13Features features13;
 	features13.synchronization2 = true;
 	features13.dynamicRendering = true;

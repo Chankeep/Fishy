@@ -1,6 +1,6 @@
 #pragma once
 
-#define VULKAN_HPP_NO_CONSTRUCTORS // 移除Vulkan.hpp的构造函数
+#define VULKAN_HPP_NO_CONSTRUCTORS // Disable constructors for Vulkan.hpp
 
 #if defined(__INTELLISENSE__) || !defined(USE_CPP20_MODULES)
 #include <vulkan/vulkan_raii.hpp>
@@ -20,13 +20,13 @@ public:
 	SwapChain(const VulkanDevice& device, const vk::raii::SurfaceKHR& surface, int width, int height);
 	~SwapChain() = default;
 
-	// 禁止拷贝，允许移动 (因为内部持有引用，移动也比较麻烦，通常建议直接禁用拷贝)
+	// Disable copying, allow moving (Since it holds references, moving is tricky, better to disable copy)
 	SwapChain(const SwapChain&) = delete;
 	SwapChain& operator=(const SwapChain&) = delete;
 
 	void recreate(int width, int height);
 
-	// 访问接口
+	// Accessors
 	const vk::raii::SwapchainKHR& get() const { return _swapChain; }
 	const vk::raii::SwapchainKHR& operator*() const { return _swapChain; }
 	const std::vector<vk::raii::ImageView>& getImageViews() const { return _imageViews; }
@@ -36,7 +36,7 @@ public:
 	uint32_t getImageCount() const { return static_cast<uint32_t>(_imageViews.size()); }
 
 private:
-	// 创建与销毁辅助
+	// Creation and Destruction helpers
 	void createSwapChain(int width, int height);
 	void createImageViews();
 
@@ -49,6 +49,5 @@ private:
 	vk::Extent2D _swapChainExtent;
 	std::vector<vk::Image> _images;
 	std::vector<vk::raii::ImageView> _imageViews;
-
 };
 } // namespace Fishy
