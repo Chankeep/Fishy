@@ -13,6 +13,7 @@ import vulkan_hpp;
 namespace Fishy {
 
 class VulkanDevice;
+class Texture;
 
 /**
  * @brief Manages loading and caching of resources like shaders.
@@ -24,6 +25,9 @@ public:
 
 	// Load shader from file path. If already loaded, returns cached module.
 	const vk::raii::ShaderModule& getShader(const std::string& filepath);
+
+	// Load texture from file path. If already loaded, returns cached texture.
+	std::shared_ptr<Texture> getTexture(const std::string& filepath);
 
 	// Clear all cached resources
 	void clear();
@@ -38,6 +42,7 @@ private:
 private:
 	VulkanDevice& _device;
 	std::unordered_map<std::string, vk::raii::ShaderModule> _shaderCache;
+	std::unordered_map<std::string, std::shared_ptr<Texture>> _textureCache;
 };
 
 } // namespace Fishy

@@ -79,8 +79,11 @@ void Application::Run() {
 			cmd.bindIndexBuffer(*_renderer.getIndexBuffer(), 0, vk::IndexType::eUint16);
 
 			// Bind descriptor sets
+			std::vector<vk::DescriptorSet> descriptorSets = {*_renderer.getDescriptorSet(frameIndex),
+															 *_renderer.getMaterial().getDescriptorSet()};
+
 			cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *_renderer.getPipeline().getLayout(), 0,
-								   *_renderer.getDescriptorSet(frameIndex), nullptr);
+								   descriptorSets, nullptr);
 
 			// Draw indexed
 			cmd.drawIndexed(_renderer.getIndexCount(), 1, 0, 0, 0);

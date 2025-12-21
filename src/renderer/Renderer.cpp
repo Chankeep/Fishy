@@ -19,14 +19,25 @@ Renderer::Renderer(VulkanDevice& device, Window& window, ResourceManager& resour
 	_frames.resize(MAX_FRAMES_IN_FLIGHT);
 	recreateSwapChain();
 	createCommandBuffers();
-	_texture = std::make_unique<Texture>(_device, "assets/texture.jpg");
-	createDescriptorSetLayout();
+	createGlobalSetLayout();
+	createMaterialSetLayout();
+	createDescriptorPool(); // Create pool before material
+
+	_material = std::make_unique<Material>(
+		_device,
+		Material::Config{.albedo = _resourceManager.getTexture("assets/laminate-flooring-brown-bl/albedo.png"),
+						 .metallic = _resourceManager.getTexture("assets/laminate-flooring-brown-bl/metallic.png"),
+						 .roughness = _resourceManager.getTexture("assets/laminate-flooring-brown-bl/roughness.png"),
+						 .normal = _resourceManager.getTexture("assets/laminate-flooring-brown-bl/normal-ogl.png"),
+						 .ao = _resourceManager.getTexture("assets/laminate-flooring-brown-bl/ao.png"),
+						 .height = _resourceManager.getTexture("assets/laminate-flooring-brown-bl/height.png")});
+	_material->createDescriptorSet(*_descriptorPool, *_materialSetLayout);
+
 	createGraphicsPipeline();
 	createVertexBuffer();
 	createIndexBuffer();
 	createUniformBuffers();
-	createDescriptorPool();
-	createDescriptorSets();
+	createDescriptorSets(); // Now only for Global sets
 	createSyncObjects();
 }
 
@@ -94,23 +105,63 @@ void Renderer::createSyncObjects() {
 	}
 }
 
-void Renderer::createDescriptorSetLayout() {
+void Renderer::createGlobalSetLayout() {
 	vk::DescriptorSetLayoutBinding uboLayoutBinding{.binding = 0,
 													.descriptorType = vk::DescriptorType::eUniformBuffer,
 													.descriptorCount = 1,
-													.stageFlags = vk::ShaderStageFlagBits::eVertex};
+													.stageFlags = vk::ShaderStageFlagBits::eVertex |
+																  vk::ShaderStageFlagBits::eFragment};
 
-	vk::DescriptorSetLayoutBinding samplerLayoutBinding{.binding = 1,
-														.descriptorType = vk::DescriptorType::eCombinedImageSampler,
-														.descriptorCount = 1,
-														.stageFlags = vk::ShaderStageFlagBits::eFragment};
+	vk::DescriptorSetLayoutCreateInfo layoutInfo{.bindingCount = 1, .pBindings = &uboLayoutBinding};
 
-	std::array<vk::DescriptorSetLayoutBinding, 2> bindings = {uboLayoutBinding, samplerLayoutBinding};
+	_globalSetLayout = vk::raii::DescriptorSetLayout(*_device, layoutInfo);
+}
+
+void Renderer::createMaterialSetLayout() {
+	// Binding 0: Albedo
+	// Binding 1: Metallic
+	// Binding 2: Roughness
+	// Binding 3: Normal
+	// Binding 4: AO
+	// Binding 5: Height
+	// std::vector<vk::DescriptorSetLayoutBinding> bindings = {
+	// 	{.binding = 0,
+	// 	 .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+	// 	 .descriptorCount = 1,
+	// 	 .stageFlags = vk::ShaderStageFlagBits::eFragment},
+	// 	{.binding = 1,
+	// 	 .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+	// 	 .descriptorCount = 1,
+	// 	 .stageFlags = vk::ShaderStageFlagBits::eFragment},
+	// 	{.binding = 2,
+	// 	 .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+	// 	 .descriptorCount = 1,
+	// 	 .stageFlags = vk::ShaderStageFlagBits::eFragment},
+	// 	{.binding = 3,
+	// 	 .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+	// 	 .descriptorCount = 1,
+	// 	 .stageFlags = vk::ShaderStageFlagBits::eFragment},
+	// 	{.binding = 4,
+	// 	 .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+	// 	 .descriptorCount = 1,
+	// 	 .stageFlags = vk::ShaderStageFlagBits::eFragment},
+	// 	{.binding = 5,
+	// 	 .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+	// 	 .descriptorCount = 1,
+	// 	 .stageFlags = vk::ShaderStageFlagBits::eFragment}};
+
+	std::vector<vk::DescriptorSetLayoutBinding> bindings;
+	for (uint32_t i = 0; i < 6; i++) {
+		bindings.push_back({.binding = i,
+							.descriptorType = vk::DescriptorType::eCombinedImageSampler,
+							.descriptorCount = 1,
+							.stageFlags = vk::ShaderStageFlagBits::eFragment});
+	}
 
 	vk::DescriptorSetLayoutCreateInfo layoutInfo{.bindingCount = static_cast<uint32_t>(bindings.size()),
 												 .pBindings = bindings.data()};
 
-	_descriptorSetLayout = vk::raii::DescriptorSetLayout(*_device, layoutInfo);
+	_materialSetLayout = vk::raii::DescriptorSetLayout(*_device, layoutInfo);
 }
 
 void Renderer::createGraphicsPipeline() {
@@ -131,7 +182,7 @@ void Renderer::createGraphicsPipeline() {
 		.setVertexInput(vertexInputInfo)
 		.setInputTopology(vk::PrimitiveTopology::eTriangleList)
 		.setCullMode(vk::CullModeFlagBits::eBack, vk::FrontFace::eCounterClockwise)
-		.setLayout({*_descriptorSetLayout}, {})
+		.setLayout({*_globalSetLayout, *_materialSetLayout}, {})
 		.setRenderingFormats({_swapChain->getFormat()}, _depthFormat)
 		.setDepthStencilTest(true, true, vk::CompareOp::eLess, false, vk::CompareOp::eAlways);
 
@@ -180,7 +231,8 @@ void Renderer::createDescriptorPool() {
 		vk::DescriptorPoolSize{.type = vk::DescriptorType::eUniformBuffer,
 							   .descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT)},
 		vk::DescriptorPoolSize{.type = vk::DescriptorType::eCombinedImageSampler,
-							   .descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT)}};
+							   .descriptorCount =
+								   static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT * 10)}}; // More samplers for materials
 
 	vk::DescriptorPoolCreateInfo poolInfo{.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
 										  .maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT),
@@ -191,7 +243,7 @@ void Renderer::createDescriptorPool() {
 }
 
 void Renderer::createDescriptorSets() {
-	std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *_descriptorSetLayout);
+	std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *_globalSetLayout);
 
 	vk::DescriptorSetAllocateInfo allocInfo{.descriptorPool = *_descriptorPool,
 											.descriptorSetCount = static_cast<uint32_t>(layouts.size()),
@@ -205,11 +257,7 @@ void Renderer::createDescriptorSets() {
 		vk::DescriptorBufferInfo bufferInfo{
 			.buffer = *_frames[i].uniformBuffer->getBuffer(), .offset = 0, .range = sizeof(UniformBufferObject)};
 
-		vk::DescriptorImageInfo imageInfo{.sampler = *_texture->getSampler(),
-										  .imageView = *_texture->getImageView(),
-										  .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal};
-
-		std::array<vk::WriteDescriptorSet, 2> descriptorWrites{};
+		std::array<vk::WriteDescriptorSet, 1> descriptorWrites{};
 
 		// Uniform Buffer
 		descriptorWrites[0].dstSet = *_frames[i].descriptorSet;
@@ -218,14 +266,6 @@ void Renderer::createDescriptorSets() {
 		descriptorWrites[0].descriptorType = vk::DescriptorType::eUniformBuffer;
 		descriptorWrites[0].descriptorCount = 1;
 		descriptorWrites[0].pBufferInfo = &bufferInfo;
-
-		// Texture
-		descriptorWrites[1].dstSet = *_frames[i].descriptorSet;
-		descriptorWrites[1].dstBinding = 1;
-		descriptorWrites[1].dstArrayElement = 0;
-		descriptorWrites[1].descriptorType = vk::DescriptorType::eCombinedImageSampler;
-		descriptorWrites[1].descriptorCount = 1;
-		descriptorWrites[1].pImageInfo = &imageInfo;
 
 		_device->updateDescriptorSets(descriptorWrites, {});
 	}
@@ -239,8 +279,15 @@ void Renderer::updateUniformBuffer(uint32_t frameIndex) {
 
 	auto extent = _swapChain->getExtent();
 	UniformBufferObject ubo{};
+
+	// Lighting
+	ubo.camPos = glm::vec3(2.0f, 2.0f, 2.0f); // Should match camera pos
+	ubo.lightDir = glm::normalize(glm::vec3(1.0f, 1.0f, 2.0f));
+	ubo.lightColor = glm::vec3(1.0f, 1.0f, 1.0f) * 5.0f; // High intensity for PBR
+
+	// Model
 	ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-	ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+	ubo.view = glm::lookAt(ubo.camPos, glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
 	ubo.proj = glm::perspective(glm::radians(45.0f),
 								static_cast<float>(extent.width) / static_cast<float>(extent.height), 0.1f, 10.0f);
 	ubo.proj[1][1] *= -1; // Invert Y for Vulkan

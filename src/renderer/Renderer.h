@@ -9,6 +9,7 @@ import vulkan_hpp;
 #endif
 
 #include "GraphicsPipeline.h"
+#include "Material.h"
 #include "Texture.h"
 #include "Vertex.h"
 #include "core/SwapChain.h"
@@ -59,6 +60,7 @@ public:
 	// Resource accessors for Application rendering
 	const GraphicsPipeline& getPipeline() const { return *_graphicsPipeline; }
 	const vk::raii::DescriptorSet& getDescriptorSet(int frame) const { return _frames[frame].descriptorSet; }
+	const Material& getMaterial() const { return *_material; }
 	const vk::raii::Buffer& getVertexBuffer() const { return _vertexBuffer->getBuffer(); }
 	const vk::raii::Buffer& getIndexBuffer() const { return _indexBuffer->getBuffer(); }
 	const std::vector<vk::raii::ImageView>& getSwapChainImageViews() const { return _swapChainImageViews; }
@@ -78,7 +80,8 @@ private:
 	void createVertexBuffer();
 	void createIndexBuffer();
 	void createUniformBuffers();
-	void createDescriptorSetLayout();
+	void createGlobalSetLayout();
+	void createMaterialSetLayout();
 	void createDescriptorPool();
 	void createDescriptorSets();
 
@@ -112,7 +115,8 @@ private:
 
 	// Graphics Pipeline
 	std::unique_ptr<GraphicsPipeline> _graphicsPipeline;
-	vk::raii::DescriptorSetLayout _descriptorSetLayout = nullptr;
+	vk::raii::DescriptorSetLayout _globalSetLayout = nullptr;
+	vk::raii::DescriptorSetLayout _materialSetLayout = nullptr;
 
 	// Buffers
 	std::unique_ptr<VulkanBuffer> _vertexBuffer;
@@ -125,21 +129,22 @@ private:
 	std::vector<FrameData> _frames;
 
 	// Geometry data
-	const std::vector<Vertex> _vertices = {{{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
-										   {{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
-										   {{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
-										   {{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
+	const std::vector<Vertex> _vertices = {
+		{{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}, {-1.0f, 0.0f, 0.0f}},
+		{{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}, {-1.0f, 0.0f, 0.0f}},
+		{{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}, {-1.0f, 0.0f, 0.0f}},
+		{{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}, {-1.0f, 0.0f, 0.0f}},
 
-										   {{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
-										   {{0.5f, -0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
-										   {{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
-										   {{-0.5f, 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}};
+		{{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}, {-1.0f, 0.0f, 0.0f}},
+		{{0.5f, -0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}, {-1.0f, 0.0f, 0.0f}},
+		{{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}, {-1.0f, 0.0f, 0.0f}},
+		{{-0.5f, 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}, {-1.0f, 0.0f, 0.0f}}};
 	const std::vector<uint16_t> _indices = {0, 1, 2, 2, 3, 0, 4, 5, 6, 6, 7, 4};
 
 	uint32_t _currentImageIndex = 0;
 	int _currentFrameIndex = 0;
 	bool _isFrameStarted = false;
 
-	std::unique_ptr<Texture> _texture;
+	std::unique_ptr<Material> _material;
 };
 } // namespace Fishy

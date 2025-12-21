@@ -1,4 +1,5 @@
 #include "ResourceManager.h"
+#include "../renderer/Texture.h"
 #include "VulkanDevice.h"
 
 #include <filesystem>
@@ -29,9 +30,34 @@ const vk::raii::ShaderModule& ResourceManager::getShader(const std::string& file
 	return insertedIt.first->second;
 }
 
+std::shared_ptr<Texture> ResourceManager::getTexture(const std::string& filepath) {
+	if (filepath.empty()) {
+		return nullptr;
+	}
+
+	// Check cache
+	auto it = _textureCache.find(filepath);
+	if (it != _textureCache.end()) {
+		return it->second;
+	}
+
+	// Load new
+	try {
+		// Log loading?
+		std::cout << "Loading texture: " << filepath << std::endl;
+		auto texture = std::make_shared<Texture>(_device, filepath);
+		_textureCache.emplace(filepath, texture);
+		return texture;
+	} catch (const std::exception& e) {
+		std::cerr << "Failed to load texture: " << filepath << " Error: " << e.what() << std::endl;
+		return nullptr;
+	}
+}
+
 void ResourceManager::clear() {
 	// RAII objects in the map will be destroyed automatically
 	_shaderCache.clear();
+	_textureCache.clear();
 }
 
 std::vector<char> ResourceManager::readFile(const std::string& filename) {
