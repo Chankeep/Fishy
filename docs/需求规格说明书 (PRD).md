@@ -45,15 +45,16 @@
 
 ### **2.4 场景与对象 (Scene \& Objects)**
 
-- [ ] **REQ-S-01 (模型加载):** 集成 tinygltf 加载 .gltf/.glb 模型。  
-  * 解析节点层级、Mesh、Primitive。  
-- [ ] **REQ-S-02 (数据导向变换):** \* **TransformSystem**: 使用 std::vector\<glm::mat4\> 连续存储所有物体的世界矩阵。  
+- [ ] **REQ-S-01 (模型加载):** 集成 tinyobjloader / fastgltf 支持运行时加载 .obj/.gltf 模型。  
+  * 解析节点层级、Mesh、Primitive。
+  * **支持运行时导入**: 通过路径字符串动态加载并生成 Mesh 资源。
+- [ ] **REQ-S-02 (数据导向变换):** * **TransformSystem**: 使用 std::vector\<glm::mat4\> 连续存储所有物体的世界矩阵。  
   * 场景节点仅存储索引 ID。  
 - [ ] **REQ-S-03 (基础剔除):** 实现 CPU 端视锥体剔除 (Frustum Culling)，基于 AABB 包围盒，输出可见物体索引列表。
 
 ### **2.5 材质与光照 (Material \& Lighting)**
 
-- [ ] **REQ-L-01 (PBR 材质数据):**  
+- [x] **REQ-L-01 (PBR 材质数据):**  
   * 支持 Albedo, Metallic, Roughness, Normal 贴图。  
   * 通过 Descriptor Set 绑定至 Shader。  
 - [ ] **REQ-L-02 (全局光照数据):** \* 实现一个全局 Scene UBO。  
@@ -63,6 +64,12 @@
 ### **2.6 交互 (Interaction)**
 
 - [ ] **REQ-I-01 (漫游相机):** 实现第一人称 FPS 相机 (WASD 移动 \+ 鼠标右键旋转)。
+- [ ] **REQ-I-02 (编辑器 UI):** 集成 Dear ImGui (Docking Branch)。
+  * **Scene Hierarchy**: 显示场景物体列表，点击选中。
+  * **Inspector**: 实时修改选中物体的 Transform 和材质。
+  * **Asset Browser**: 浏览并加载磁盘上的模型与纹理。
+  * **Material Creator**: 创建新材质并分配纹理资源。
+- [ ] **REQ-I-03 (输入屏蔽):** 当操作 UI 时，屏蔽相机的键盘鼠标输入。
 
 ## **3\. 非功能性需求 (NFR)**
 
@@ -73,7 +80,6 @@
 ## **4\. 范围排除 (Out of Scope for MVP 1.0)**
 
 * 多线程任务调度 (Job System) \- 仅留接口，单线程执行。  
-* 运行时热重载 (Hot Reloading)。  
 * GPU Driven Rendering (Mesh Shaders / GPU Culling)。  
 * 阴影映射 (Shadow Mapping)。  
 * 后期处理 (Post Processing)。

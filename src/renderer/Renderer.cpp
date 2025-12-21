@@ -165,7 +165,7 @@ void Renderer::createMaterialSetLayout() {
 }
 
 void Renderer::createGraphicsPipeline() {
-	const auto& shaderModule = _resourceManager.getShader("shaders/shader.slang.spv");
+	const auto& shaderModule = _resourceManager.getShader("shaders/PBRshader.slang.spv");
 
 	auto bindingDescription = Vertex::getBindingDescription();
 	auto attributeDescriptions = Vertex::getAttributeDescriptions();

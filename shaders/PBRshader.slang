@@ -1,6 +1,6 @@
 struct VSInput {
     float3 inPosition;
-    float3 inColor;
+    float3 inNormal;
     float2 inTexCoord;
     float3 inTangent;
 };
@@ -39,15 +39,12 @@ VSOutput vertMain(VSInput input) {
     float4 worldPos = mul(ubo.model, float4(input.inPosition, 1.0));
     output.worldPos = worldPos.xyz;
     output.pos = mul(ubo.proj, mul(ubo.View, worldPos));
-    output.color = input.inColor;
+    output.color = float3(1.0, 1.0, 1.0); // Default white color for models
     output.texCoord = input.inTexCoord;
     
     // Transform normal and tangent to world space
     // Assuming uniform scaling (otherwise use inverse-transpose for normal)
-    
-    // Hardcoded normal for the quad (facing +Z in object space)
-    float3 objectNormal = float3(0, 0, 1); 
-    output.worldNormal = normalize(mul((float3x3)ubo.model, objectNormal));
+    output.worldNormal = normalize(mul((float3x3)ubo.model, input.inNormal));
     output.worldTangent = normalize(mul((float3x3)ubo.model, input.inTangent));
 
     return output;
