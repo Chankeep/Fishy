@@ -36,7 +36,8 @@
 
 - [x] **REQ-M-01 (Buffer 封装):** 封装 VulkanBuffer 类。  
   * 支持 Staging Buffer 上传机制（Host \-\> Device Local）。  
-- [x] **REQ-M-02 (纹理系统):** \* 加载 .jpg/.png 图片并生成 vk::raii::Image 和 vk::raii::ImageView。  
+- [x] **REQ-M-02 (纹理系统):** \* 加载 .jpg/.png/.ktx2 图片。
+  * **KTX2 支持**: 支持加载 KTX2 格式纹理，利用 Basis Universal 压缩减少显存占用。
   * 支持 vk::raii::Sampler 创建（线性过滤，Repeat 模式）。  
   * **必须实现**：图像布局转换 (Layout Transition) 的 Command 录制。  
 - [ ] **REQ-M-03 (描述符管理):** \* 实现动态 Descriptor Set Allocator。  
@@ -45,8 +46,9 @@
 
 ### **2.4 场景与对象 (Scene \& Objects)**
 
-- [ ] **REQ-S-01 (模型加载):** 集成 tinyobjloader / fastgltf 支持运行时加载 .obj/.gltf 模型。  
+- [ ] **REQ-S-01 (模型加载):** 集成 `tinygltf` / `tinyobjloader` 支持运行时加载 .gltf/.glb/.obj 模型。  
   * 解析节点层级、Mesh、Primitive。
+  * **内嵌数据支持**: 支持读取 .gltf 文件中内嵌的 Material 和 Texture (Embedded Buffers/Images)。
   * **支持运行时导入**: 通过路径字符串动态加载并生成 Mesh 资源。
 - [ ] **REQ-S-02 (数据导向变换):** * **TransformSystem**: 使用 std::vector\<glm::mat4\> 连续存储所有物体的世界矩阵。  
   * 场景节点仅存储索引 ID。  
@@ -57,7 +59,11 @@
 - [x] **REQ-L-01 (PBR 材质数据):**  
   * 支持 Albedo, Metallic, Roughness, Normal 贴图。  
   * 通过 Descriptor Set 绑定至 Shader。  
-- [ ] **REQ-L-02 (全局光照数据):** \* 实现一个全局 Scene UBO。  
+- [ ] **REQ-L-02 (glTF PBR支持):** 实现符合 glTF 2.0 标准的 Metallic-Roughness 工作流 Shader。
+  * **属性支持**: 读取 glTF material 中的 `baseColorFactor`, `metallicFactor`, `roughnessFactor` 等参数并通过 Uniform/PushConstant 传递。
+  * **纹理支持**: 采样 `baseColorTexture`, `metallicRoughnessTexture`, `normalTexture`, `occlusionTexture`。
+  * **内嵌数据**: 支持直接从 glTF BufferView 创建纹理对象用于 Shader 采样。
+- [ ] **REQ-L-03 (全局光照数据):** \* 实现一个全局 Scene UBO。  
   * 包含：相机矩阵 (View, Proj)、环境光参数、主方向光参数。  
   * 支持点光源数组 (Point Lights)。
 
