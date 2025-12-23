@@ -4,7 +4,13 @@
 #include "../core/VulkanDevice.h"
 
 #include <memory>
+
+#if (__linux__)
 #include <stb/stb_image.h>
+#else
+#include <stb_image.h>
+#endif
+
 #include <stdexcept>
 #include <string>
 
@@ -12,7 +18,15 @@ namespace Fishy {
 
 class Texture {
 public:
+	// Load from file path
 	Texture(const VulkanDevice& device, const std::string& path);
+
+	// Load from encoded image data in memory (PNG, JPG, etc. for embedded glTF textures)
+	Texture(const VulkanDevice& device, const unsigned char* data, size_t size);
+
+	// Create from raw RGBA pixel data (for programmatic textures like default white/normal)
+	Texture(const VulkanDevice& device, const unsigned char* pixels, int width, int height);
+
 	~Texture();
 
 	// Prevent copy
@@ -25,6 +39,8 @@ public:
 
 private:
 	void createTextureImage(const std::string& path);
+	void createTextureImageFromMemory(const unsigned char* data, size_t size);
+	void createTextureFromPixels(const unsigned char* pixels, int texWidth, int texHeight);
 	void createTextureImageView();
 	void createTextureSampler();
 

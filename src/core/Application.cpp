@@ -1,8 +1,6 @@
 #include "Application.h"
 #include <iostream>
 
-#include "renderer/Vertex.h"
-
 namespace Fishy {
 
 Application::GlfwInitializer::GlfwInitializer() {
@@ -17,7 +15,38 @@ Application::Application()
 	: _glfwInitializer(), _context(),
 	  _window({.title = "Fishy Engine", .width = 1280, .height = 720}, _context.getInstance()),
 	  _device(_context.getInstance(), _window.getSurface()), _resourceManager(_device),
-	  _renderer(_device, _window, _resourceManager) {}
+	  _renderer(_device, _window, _resourceManager) {
+
+	// Try to load a default model
+	_model = ModelLoader::loadModel("assets/models/DamagedHelmet.glb", &_resourceManager);
+
+	if (!_model) {
+		std::cout << "No model loaded. Creating default geometry..." << std::endl;
+		// Create a simple default model with two quads
+		_model = std::make_shared<Model>();
+
+		std::vector<Vertex> vertices = {
+			// Front quad
+			{{-0.5f, -0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+			{{0.5f, -0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+			{{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+			{{-0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+
+			// Back quad
+			{{-0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {0.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+			{{0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {1.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+			{{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {1.0f, 1.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+			{{-0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {0.0f, 1.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+		};
+
+		std::vector<uint32_t> indices = {0, 1, 2, 2, 3, 0, 4, 5, 6, 6, 7, 4};
+
+		auto mesh = std::make_shared<Mesh>(vertices, indices);
+		auto material = std::make_shared<Material>();
+
+		_model->addPrimitive({mesh, material});
+	}
+}
 
 Application::~Application() {}
 
@@ -25,79 +54,7 @@ Application::~Application() {}
 void Application::Run() {
 	while (!_window.ShouldClose()) {
 		_window.Update();
-
-		const auto& cmd = _renderer.BeginFrame();
-		if (*cmd) { // Check if command buffer is valid
-			uint32_t imageIndex = _renderer.getCurrentImageIndex();
-			int frameIndex = _renderer.getFrameIndex();
-
-			// Update uniform buffer with current MVP matrices
-			_renderer.updateUniformBuffer(frameIndex);
-
-			// Transition image to COLOR_ATTACHMENT_OPTIMAL
-			_renderer.transitionImageLayout(
-				imageIndex, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal, {},
-				vk::AccessFlagBits2::eColorAttachmentWrite, vk::PipelineStageFlagBits2::eTopOfPipe,
-				vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::ImageAspectFlagBits::eColor);
-
-			// Begin dynamic rendering
-			vk::ClearValue clearColor{.color = {.float32 = {{0.0f, 0.0f, 0.0f, 1.0f}}}};
-			vk::ClearValue clearDepth{.depthStencil = {1.0f, 0}};
-			const auto& imageViews = _renderer.getSwapChainImageViews();
-			vk::Extent2D extent = _renderer.getSwapChainExtent();
-
-			vk::RenderingAttachmentInfo attachmentInfo{.imageView = *imageViews[imageIndex],
-													   .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-													   .loadOp = vk::AttachmentLoadOp::eClear,
-													   .storeOp = vk::AttachmentStoreOp::eStore,
-													   .clearValue = clearColor};
-
-			vk::RenderingAttachmentInfo depthAttachmentInfo{.imageView = *_renderer.getDepthImageView(),
-															.imageLayout = vk::ImageLayout::eDepthAttachmentOptimal,
-															.loadOp = vk::AttachmentLoadOp::eClear,
-															.storeOp = vk::AttachmentStoreOp::eDontCare,
-															.clearValue = clearDepth};
-
-			vk::RenderingInfo renderingInfo{.renderArea = vk::Rect2D{{0, 0}, extent},
-											.layerCount = 1,
-											.colorAttachmentCount = 1,
-											.pColorAttachments = &attachmentInfo,
-											.pDepthAttachment = &depthAttachmentInfo};
-
-			cmd.beginRendering(renderingInfo);
-
-			// Bind pipeline
-			_renderer.getPipeline().bind(cmd);
-
-			// Set viewport and scissor
-			cmd.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(extent.width),
-											static_cast<float>(extent.height), 0.0f, 1.0f));
-			cmd.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), extent));
-
-			// Bind vertex and index buffers
-			cmd.bindVertexBuffers(0, *_renderer.getVertexBuffer(), {0});
-			cmd.bindIndexBuffer(*_renderer.getIndexBuffer(), 0, vk::IndexType::eUint16);
-
-			// Bind descriptor sets
-			std::vector<vk::DescriptorSet> descriptorSets = {*_renderer.getDescriptorSet(frameIndex),
-															 *_renderer.getMaterial().getDescriptorSet()};
-
-			cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *_renderer.getPipeline().getLayout(), 0,
-								   descriptorSets, nullptr);
-
-			// Draw indexed
-			cmd.drawIndexed(_renderer.getIndexCount(), 1, 0, 0, 0);
-
-			cmd.endRendering();
-
-			// Transition image to PRESENT_SRC
-			_renderer.transitionImageLayout(imageIndex, vk::ImageLayout::eColorAttachmentOptimal,
-											vk::ImageLayout::ePresentSrcKHR, vk::AccessFlagBits2::eColorAttachmentWrite,
-											{}, vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-											vk::PipelineStageFlagBits2::eBottomOfPipe, vk::ImageAspectFlagBits::eColor);
-
-			_renderer.EndFrame();
-		}
+		_renderer.render(*_model);
 	}
 
 	_device->waitIdle();

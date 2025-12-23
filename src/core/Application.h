@@ -1,7 +1,9 @@
 #pragma once
 
 #include "../renderer/Renderer.h"
-#include "ResourceManager.h"
+#include "../resources/Model.h"
+#include "../resources/ModelLoader.h"
+#include "../resources/ResourceManager.h"
 #include "VulkanContext.h"
 #include "VulkanDevice.h"
 #include "Window.h"
@@ -41,11 +43,14 @@ private:
 	// 3. Device - Destroyed before Surface
 	Fishy::VulkanDevice _device;
 
-	// 4. Resource Manager (Shader Modules) - Destroyed before Device
+	// 4. Resource Manager - Destroyed before Device
 	Fishy::ResourceManager _resourceManager;
 
 	// 5. Renderer - Owns SwapChain, destroyed before Device
 	Fishy::Renderer _renderer;
+
+	// 6. Loaded model
+	std::shared_ptr<Model> _model;
 };
 
 } // namespace Fishy

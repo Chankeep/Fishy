@@ -21,6 +21,12 @@ void Window::Init(const Properties& properties) {
 	// Note: glfwInit() should be called before creating VulkanContext
 	// This allows GLFW to properly provide the required Vulkan extensions
 
+	// Force X11 platform on Linux/WSL to ensure window decorations work properly
+	// Wayland in WSLg sometimes doesn't display window decorations correctly
+#ifdef __linux__
+	glfwWindowHint(GLFW_PLATFORM, GLFW_PLATFORM_X11);
+#endif
+
 	// Stop GLFW from creating an OpenGL context
 	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 	glfwWindowHint(GLFW_RESIZABLE, properties.resizable ? GLFW_TRUE : GLFW_FALSE);

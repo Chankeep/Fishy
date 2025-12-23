@@ -10,6 +10,18 @@ Texture::Texture(const VulkanDevice& device, const std::string& path) : _device(
 	createTextureSampler();
 }
 
+Texture::Texture(const VulkanDevice& device, const unsigned char* data, size_t size) : _device(device) {
+	createTextureImageFromMemory(data, size);
+	createTextureImageView();
+	createTextureSampler();
+}
+
+Texture::Texture(const VulkanDevice& device, const unsigned char* pixels, int width, int height) : _device(device) {
+	createTextureFromPixels(pixels, width, height);
+	createTextureImageView();
+	createTextureSampler();
+}
+
 Texture::~Texture() {
 	// RAII handles cleanup
 }
@@ -17,17 +29,35 @@ Texture::~Texture() {
 void Texture::createTextureImage(const std::string& path) {
 	int texWidth, texHeight, texChannels;
 	stbi_uc* pixels = stbi_load(path.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
-	vk::DeviceSize imageSize = texWidth * texHeight * 4;
 
 	if (!pixels) {
 		throw std::runtime_error("failed to load texture image: " + path);
 	}
 
+	createTextureFromPixels(pixels, texWidth, texHeight);
+	stbi_image_free(pixels);
+}
+
+void Texture::createTextureImageFromMemory(const unsigned char* data, size_t size) {
+	int texWidth, texHeight, texChannels;
+	stbi_uc* pixels =
+		stbi_load_from_memory(data, static_cast<int>(size), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+
+	if (!pixels) {
+		throw std::runtime_error("failed to load texture from memory");
+	}
+
+	createTextureFromPixels(pixels, texWidth, texHeight);
+	stbi_image_free(pixels);
+}
+
+void Texture::createTextureFromPixels(const unsigned char* pixels, int texWidth, int texHeight) {
+	vk::DeviceSize imageSize = texWidth * texHeight * 4;
+
 	VulkanBuffer stagingBuffer(_device, imageSize, vk::BufferUsageFlagBits::eTransferSrc,
 							   vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
 
-	stagingBuffer.upload(pixels, imageSize);
-	stbi_image_free(pixels);
+	stagingBuffer.upload((void*)pixels, imageSize);
 
 	vk::ImageCreateInfo imageInfo{
 		.imageType = vk::ImageType::e2D,
@@ -55,16 +85,7 @@ void Texture::createTextureImage(const std::string& path) {
 	_imageMemory = vk::raii::DeviceMemory(*_device, allocInfo);
 	_image.bindMemory(*_imageMemory, 0);
 
-	// Transition and Copy
-	// Using Graphics Queue for simplicity, but ideally should use Transfer Queue if separate
-	// We need a helper to execute single time commands.
-	// Since we don't have a global helper, we create a temporary command pool/buffer here or rely on
-	// VulkanBuffer::uploadStaged style logic. However, VulkanBuffer::uploadStaged is for buffers. We need one for
-	// Images. For now, I will manually create CommandPool/CommandBuffer here similar to uploadStaged.
-
-	// TODO: Ideally pass CommandPool to constructor or create a global CommandPool in VulkanDevice/Renderer.
-	// For this implementation, I will assume we can create a temporary CommandPool.
-
+	// Create temporary command pool/buffer for image operations
 	vk::CommandPoolCreateInfo poolInfo{
 		.flags = vk::CommandPoolCreateFlagBits::eTransient,
 		.queueFamilyIndex = _device.getGraphicsQueueFamilyIndex(),

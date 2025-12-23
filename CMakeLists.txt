@@ -8,44 +8,108 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# 全局编译定义
 add_compile_definitions(VK_NO_PROTOTYPES)
 add_compile_definitions(VULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1)
 add_compile_definitions(GLM_FORCE_DEPTH_ZERO_TO_ONE)
 add_compile_definitions(VULKAN_HPP_NO_CONSTRUCTORS)
 
-# ==============================================================================
-# 1. 寻找依赖库 (Linux 环境)
-# ==============================================================================
+if(MSVC)
+    add_compile_definitions(/utf-8)
+endif()
 
-# 寻找 Vulkan SDK
+# ==============================================================================
+# 1. 寻找 Vulkan SDK (所有平台必须安装)
+# ==============================================================================
 find_package(Vulkan REQUIRED)
 
-# 寻找 GLFW3
-find_package(glfw3 3.3 REQUIRED)
-
-# 寻找 GLM (数学库)
-find_package(glm REQUIRED)
-
 # ==============================================================================
-# FetchContent Dependencies
+# 2. FetchContent Dependencies (跨平台自动下载)
 # ==============================================================================
 include(FetchContent)
 
-# vk-bootstrap
+# 优化 FetchContent：避免每次 configure 都检查更新
+set(FETCHCONTENT_UPDATES_DISCONNECTED ON CACHE BOOL "Don't update deps on every configure")
+
+# ------------------------------------------------------------------------------
+# GLFW - 窗口管理
+# ------------------------------------------------------------------------------
+set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_INSTALL OFF CACHE BOOL "" FORCE)
+# 禁用 Wayland 后端，强制使用 X11，解决 WSLg 下窗口装饰缺失问题
+set(GLFW_BUILD_WAYLAND OFF CACHE BOOL "" FORCE)
+
+FetchContent_Declare(
+    glfw
+    GIT_REPOSITORY https://github.com/glfw/glfw.git
+    GIT_TAG        3.4
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(glfw)
+
+# ------------------------------------------------------------------------------
+# GLM - 数学库
+# ------------------------------------------------------------------------------
+FetchContent_Declare(
+    glm
+    GIT_REPOSITORY https://github.com/g-truc/glm.git
+    GIT_TAG        1.0.1
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(glm)
+
+# ------------------------------------------------------------------------------
+# vk-bootstrap - Vulkan 初始化辅助库
+# ------------------------------------------------------------------------------
 FetchContent_Declare(
     vk-bootstrap
     GIT_REPOSITORY https://github.com/charles-lunarg/vk-bootstrap.git
-    GIT_TAG        v0.7
+    GIT_TAG        v1.4.328
+    GIT_SHALLOW    TRUE
 )
 FetchContent_MakeAvailable(vk-bootstrap)
 
-# volk
+# ------------------------------------------------------------------------------
+# volk - Vulkan 函数加载器
+# ------------------------------------------------------------------------------
+set(VOLK_PULL_IN_VULKAN OFF CACHE BOOL "" FORCE)
+
 FetchContent_Declare(
     volk
     GIT_REPOSITORY https://github.com/zeux/volk.git
-    GIT_TAG        master
+    GIT_TAG        vulkan-sdk-1.4.328.1
+    GIT_SHALLOW    TRUE
 )
 FetchContent_MakeAvailable(volk)
+target_link_libraries(volk PRIVATE Vulkan::Vulkan)
+
+# ------------------------------------------------------------------------------
+# tinygltf - glTF 模型加载
+# ------------------------------------------------------------------------------
+set(TINYGLTF_HEADER_ONLY ON CACHE INTERNAL "")
+set(TINYGLTF_BUILD_LOADER_EXAMPLE OFF CACHE INTERNAL "")
+set(TINYGLTF_INSTALL OFF CACHE INTERNAL "")
+
+FetchContent_Declare(
+    tinygltf
+    GIT_REPOSITORY https://github.com/syoyo/tinygltf.git
+    GIT_TAG        v2.9.3
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(tinygltf)
+
+# ------------------------------------------------------------------------------
+# VMA - Vulkan Memory Allocator
+# ------------------------------------------------------------------------------
+FetchContent_Declare(
+    VulkanMemoryAllocator
+    GIT_REPOSITORY https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git
+    GIT_TAG        v3.1.0
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(VulkanMemoryAllocator)
 
 # 寻找 Slang 编译器 (slangc)
 # 确保 slangc 已经在系统 PATH 中，或者手动指定路径
@@ -117,9 +181,7 @@ add_executable(${PROJECT_NAME} ${SOURCE_FILES})
 # 包含路径 (Include Directories)
 target_include_directories(${PROJECT_NAME} PRIVATE
     src
-    external                  # 假设你有外部库头文件在这里
-    ${Vulkan_INCLUDE_DIRS}    # Vulkan 头文件
-    ${GLM_INCLUDE_DIRS}       # GLM 头文件
+    ${Vulkan_INCLUDE_DIRS}
 )
 
 # 链接库 (Linking)
@@ -127,9 +189,10 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Vulkan::Vulkan
     glfw
     glm::glm
-    vk-bootstrap
-    volk
-    # Linux 下可能还需要链接多线程库，虽然 find_package 通常会自动处理
+    vk-bootstrap::vk-bootstrap
+    volk::volk
+    tinygltf
+    GPUOpen::VulkanMemoryAllocator
     ${CMAKE_DL_LIBS}
 )
 

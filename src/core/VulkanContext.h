@@ -2,6 +2,7 @@
 #include <optional>
 #include <vector>
 
+#include <VkBootstrap.h>
 #include <volk.h>
 
 #if defined(__INTELLISENSE__) || !defined(USE_CPP20_MODULES)
@@ -32,10 +33,9 @@ private:
 
 	// Helper functions
 	void createInstance();
-	void setupDebugMessenger();
 
 	vk::raii::Context _context;
 	vk::raii::Instance _instance = nullptr;
-	vk::raii::DebugUtilsMessengerEXT _debugMessenger = nullptr;
+	vkb::Instance _vkbInstance; // Stores vk-bootstrap instance for debug messenger cleanup
 };
 } // namespace Fishy

@@ -2,9 +2,9 @@
 #include <iostream>
 
 #include "PipelineBuilder.h"
-#include "core/ResourceManager.h"
 #include "core/VulkanDevice.h"
 #include "core/Window.h"
+#include "resources/ResourceManager.h"
 #include "vulkan/vulkan.hpp"
 
 #include <array>
@@ -21,30 +21,122 @@ Renderer::Renderer(VulkanDevice& device, Window& window, ResourceManager& resour
 	createCommandBuffers();
 	createGlobalSetLayout();
 	createMaterialSetLayout();
-	createDescriptorPool(); // Create pool before material
-
-	_material = std::make_unique<Material>(
-		_device,
-		Material::Config{.albedo = _resourceManager.getTexture("assets/laminate-flooring-brown-bl/albedo.png"),
-						 .metallic = _resourceManager.getTexture("assets/laminate-flooring-brown-bl/metallic.png"),
-						 .roughness = _resourceManager.getTexture("assets/laminate-flooring-brown-bl/roughness.png"),
-						 .normal = _resourceManager.getTexture("assets/laminate-flooring-brown-bl/normal-ogl.png"),
-						 .ao = _resourceManager.getTexture("assets/laminate-flooring-brown-bl/ao.png"),
-						 .height = _resourceManager.getTexture("assets/laminate-flooring-brown-bl/height.png")});
-	_material->createDescriptorSet(*_descriptorPool, *_materialSetLayout);
-
+	createDescriptorPool();
 	createGraphicsPipeline();
-	createVertexBuffer();
-	createIndexBuffer();
 	createUniformBuffers();
-	createDescriptorSets(); // Now only for Global sets
+	createDescriptorSets();
 	createSyncObjects();
+
+	// Initialize ResourceManager with material descriptor resources
+	_resourceManager.initMaterialResources(*_materialSetLayout, _descriptorPool);
 }
 
 Renderer::~Renderer() {
 	_device->waitIdle();
+
+	// Clear GPU resources from ResourceManager before destroying the descriptor pool
+	// This prevents validation errors about freeing descriptor sets from an invalid pool
+	_resourceManager.clearGPUResources();
+
 	freeCommandBuffers();
 	_swapChain.reset();
+}
+
+void Renderer::render(const Model& model) {
+	if (!beginFrame()) {
+		return; // SwapChain was recreated, skip this frame
+	}
+
+	const auto& cmd = _frames[_currentFrameIndex].commandBuffer;
+
+	// Update uniform buffer with current MVP matrices
+	updateUniformBuffer(_currentFrameIndex);
+
+	// Transition image to COLOR_ATTACHMENT_OPTIMAL
+	transitionImage(*cmd, _swapChain->getImages()[_currentImageIndex], vk::ImageLayout::eUndefined,
+					vk::ImageLayout::eColorAttachmentOptimal, {}, vk::AccessFlagBits2::eColorAttachmentWrite,
+					vk::PipelineStageFlagBits2::eTopOfPipe, vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+					vk::ImageAspectFlagBits::eColor);
+
+	// Begin dynamic rendering
+	vk::ClearValue clearColor{.color = {.float32 = {{0.01f, 0.01f, 0.02f, 1.0f}}}};
+	vk::ClearValue clearDepth{.depthStencil = {1.0f, 0}};
+	vk::Extent2D extent = _swapChain->getExtent();
+
+	vk::RenderingAttachmentInfo colorAttachment{.imageView = *_swapChainImageViews[_currentImageIndex],
+												.imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+												.loadOp = vk::AttachmentLoadOp::eClear,
+												.storeOp = vk::AttachmentStoreOp::eStore,
+												.clearValue = clearColor};
+
+	vk::RenderingAttachmentInfo depthAttachment{.imageView = *_depthImageView,
+												.imageLayout = vk::ImageLayout::eDepthAttachmentOptimal,
+												.loadOp = vk::AttachmentLoadOp::eClear,
+												.storeOp = vk::AttachmentStoreOp::eDontCare,
+												.clearValue = clearDepth};
+
+	vk::RenderingInfo renderingInfo{.renderArea = vk::Rect2D{{0, 0}, extent},
+									.layerCount = 1,
+									.colorAttachmentCount = 1,
+									.pColorAttachments = &colorAttachment,
+									.pDepthAttachment = &depthAttachment};
+
+	cmd.beginRendering(renderingInfo);
+
+	// Bind pipeline
+	_graphicsPipeline->bind(cmd);
+
+	// Set viewport and scissor
+	cmd.setViewport(
+		0, vk::Viewport(0.0f, 0.0f, static_cast<float>(extent.width), static_cast<float>(extent.height), 0.0f, 1.0f));
+	cmd.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), extent));
+
+	// Render each primitive in the model
+	for (const auto& primitive : model.getPrimitives()) {
+		if (!primitive.mesh) {
+			continue;
+		}
+
+		// Get or create GPU resources
+		GPUMesh* gpuMesh = _resourceManager.getOrCreateGPUMesh(primitive.mesh.get(), _commandPool);
+		GPUMaterial* gpuMaterial = nullptr;
+
+		if (primitive.material) {
+			gpuMaterial = _resourceManager.getOrCreateGPUMaterial(primitive.material.get());
+		}
+
+		if (!gpuMesh) {
+			continue;
+		}
+
+		// Bind vertex and index buffers
+		cmd.bindVertexBuffers(0, *gpuMesh->vertexBuffer->getBuffer(), {0});
+		cmd.bindIndexBuffer(*gpuMesh->indexBuffer->getBuffer(), 0, vk::IndexType::eUint32);
+
+		// Bind descriptor sets
+		std::vector<vk::DescriptorSet> descriptorSets;
+		descriptorSets.push_back(*_frames[_currentFrameIndex].descriptorSet);
+
+		if (gpuMaterial) {
+			descriptorSets.push_back(*gpuMaterial->descriptorSet);
+		}
+
+		cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *_graphicsPipeline->getLayout(), 0, descriptorSets,
+							   nullptr);
+
+		// Draw indexed
+		cmd.drawIndexed(gpuMesh->indexCount, 1, 0, 0, 0);
+	}
+
+	cmd.endRendering();
+
+	// Transition image to PRESENT_SRC
+	transitionImage(*cmd, _swapChain->getImages()[_currentImageIndex], vk::ImageLayout::eColorAttachmentOptimal,
+					vk::ImageLayout::ePresentSrcKHR, vk::AccessFlagBits2::eColorAttachmentWrite, {},
+					vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::PipelineStageFlagBits2::eBottomOfPipe,
+					vk::ImageAspectFlagBits::eColor);
+
+	endFrame();
 }
 
 void Renderer::recreateSwapChain() {
@@ -97,7 +189,6 @@ void Renderer::createSyncObjects() {
 	}
 
 	// Per-swapchain-image sync objects
-	// We need these to be 1:1 with images because the presentation engine holds them
 	_renderFinishedSemaphores.clear();
 	size_t imageCount = _swapChain->getImageCount();
 	for (size_t i = 0; i < imageCount; i++) {
@@ -118,40 +209,26 @@ void Renderer::createGlobalSetLayout() {
 }
 
 void Renderer::createMaterialSetLayout() {
-	// Binding 0: Albedo
-	// Binding 1: Metallic
-	// Binding 2: Roughness
-	// Binding 3: Normal
-	// Binding 4: AO
-	// Binding 5: Height
-	// std::vector<vk::DescriptorSetLayoutBinding> bindings = {
-	// 	{.binding = 0,
-	// 	 .descriptorType = vk::DescriptorType::eCombinedImageSampler,
-	// 	 .descriptorCount = 1,
-	// 	 .stageFlags = vk::ShaderStageFlagBits::eFragment},
-	// 	{.binding = 1,
-	// 	 .descriptorType = vk::DescriptorType::eCombinedImageSampler,
-	// 	 .descriptorCount = 1,
-	// 	 .stageFlags = vk::ShaderStageFlagBits::eFragment},
-	// 	{.binding = 2,
-	// 	 .descriptorType = vk::DescriptorType::eCombinedImageSampler,
-	// 	 .descriptorCount = 1,
-	// 	 .stageFlags = vk::ShaderStageFlagBits::eFragment},
-	// 	{.binding = 3,
-	// 	 .descriptorType = vk::DescriptorType::eCombinedImageSampler,
-	// 	 .descriptorCount = 1,
-	// 	 .stageFlags = vk::ShaderStageFlagBits::eFragment},
-	// 	{.binding = 4,
-	// 	 .descriptorType = vk::DescriptorType::eCombinedImageSampler,
-	// 	 .descriptorCount = 1,
-	// 	 .stageFlags = vk::ShaderStageFlagBits::eFragment},
-	// 	{.binding = 5,
-	// 	 .descriptorType = vk::DescriptorType::eCombinedImageSampler,
-	// 	 .descriptorCount = 1,
-	// 	 .stageFlags = vk::ShaderStageFlagBits::eFragment}};
+	// Material set layout matching glTF PBR with extensions:
+	// Binding 0: MaterialUBO (uniform buffer)
+	// Binding 1: baseColorMap
+	// Binding 2: metallicRoughnessMap
+	// Binding 3: normalMap
+	// Binding 4: occlusionMap
+	// Binding 5: emissiveMap
+	// Binding 6: clearcoatMap
+	// Binding 7: clearcoatRoughnessMap
+	// Binding 8: clearcoatNormalMap
+	// Binding 9: transmissionMap
+	std::vector<vk::DescriptorSetLayoutBinding> bindings = {
+		{.binding = 0,
+		 .descriptorType = vk::DescriptorType::eUniformBuffer,
+		 .descriptorCount = 1,
+		 .stageFlags = vk::ShaderStageFlagBits::eFragment},
+	};
 
-	std::vector<vk::DescriptorSetLayoutBinding> bindings;
-	for (uint32_t i = 0; i < 6; i++) {
+	// 9 texture bindings (1-9)
+	for (uint32_t i = 1; i <= 9; i++) {
 		bindings.push_back({.binding = i,
 							.descriptorType = vk::DescriptorType::eCombinedImageSampler,
 							.descriptorCount = 1,
@@ -189,30 +266,6 @@ void Renderer::createGraphicsPipeline() {
 	_graphicsPipeline = builder.build(*_device);
 }
 
-void Renderer::createVertexBuffer() {
-	vk::DeviceSize bufferSize = sizeof(_vertices[0]) * _vertices.size();
-
-	// Create Device Local Buffer
-	_vertexBuffer = std::make_unique<VulkanBuffer>(
-		_device, bufferSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eVertexBuffer,
-		vk::MemoryPropertyFlagBits::eDeviceLocal);
-
-	// Upload using Staging Buffer
-	_vertexBuffer->uploadStaged(_commandPool, _device.getGraphicsQueue(), (void*)_vertices.data(), bufferSize);
-}
-
-void Renderer::createIndexBuffer() {
-	vk::DeviceSize bufferSize = sizeof(_indices[0]) * _indices.size();
-
-	// Create Device Local Buffer
-	_indexBuffer = std::make_unique<VulkanBuffer>(
-		_device, bufferSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eIndexBuffer,
-		vk::MemoryPropertyFlagBits::eDeviceLocal);
-
-	// Upload using Staging Buffer
-	_indexBuffer->uploadStaged(_commandPool, _device.getGraphicsQueue(), (void*)_indices.data(), bufferSize);
-}
-
 void Renderer::createUniformBuffers() {
 	vk::DeviceSize bufferSize = sizeof(UniformBufferObject);
 
@@ -229,13 +282,14 @@ void Renderer::createUniformBuffers() {
 void Renderer::createDescriptorPool() {
 	std::array<vk::DescriptorPoolSize, 2> poolSizes{
 		vk::DescriptorPoolSize{.type = vk::DescriptorType::eUniformBuffer,
-							   .descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT)},
+							   .descriptorCount =
+								   static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT + 100)}, // Extra for materials
 		vk::DescriptorPoolSize{.type = vk::DescriptorType::eCombinedImageSampler,
 							   .descriptorCount =
-								   static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT * 10)}}; // More samplers for materials
+								   static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT * 10 + 500)}}; // Extra for materials
 
 	vk::DescriptorPoolCreateInfo poolInfo{.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
-										  .maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT),
+										  .maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT + 100),
 										  .poolSizeCount = static_cast<uint32_t>(poolSizes.size()),
 										  .pPoolSizes = poolSizes.data()};
 
@@ -280,16 +334,24 @@ void Renderer::updateUniformBuffer(uint32_t frameIndex) {
 	auto extent = _swapChain->getExtent();
 	UniformBufferObject ubo{};
 
-	// Lighting
-	ubo.camPos = glm::vec3(2.0f, 2.0f, 2.0f); // Should match camera pos
-	ubo.lightDir = glm::normalize(glm::vec3(1.0f, 1.0f, 2.0f));
-	ubo.lightColor = glm::vec3(1.0f, 1.0f, 1.0f) * 5.0f; // High intensity for PBR
+	// Camera position (Y-up coordinate system for glTF)
+	ubo.camPos = glm::vec3(0.0f, 0.0f, 3.0f);
 
-	// Model
-	ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-	ubo.view = glm::lookAt(ubo.camPos, glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+	// Lighting
+	ubo.lightDir = glm::normalize(glm::vec3(1.0f, 1.0f, 1.0f));
+	ubo.lightColor = glm::vec3(1.0f, 1.0f, 1.0f) * 5.0f;
+
+	// Model - rotate around Y axis (glTF uses Y-up)
+	// Rotate +90 degrees around X to fix model orientation
+	glm::mat4 fixRotation = glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+	glm::mat4 animRotation = glm::rotate(glm::mat4(1.0f), time * glm::radians(30.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+	ubo.model = animRotation * fixRotation;
+
+	// View - Y-up coordinate system
+	ubo.view = glm::lookAt(ubo.camPos, glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+
 	ubo.proj = glm::perspective(glm::radians(45.0f),
-								static_cast<float>(extent.width) / static_cast<float>(extent.height), 0.1f, 10.0f);
+								static_cast<float>(extent.width) / static_cast<float>(extent.height), 0.1f, 100.0f);
 	ubo.proj[1][1] *= -1; // Invert Y for Vulkan
 
 	_frames[frameIndex].uniformBuffer->upload(&ubo, sizeof(ubo));
@@ -317,17 +379,9 @@ void Renderer::transitionImage(vk::CommandBuffer cmd, vk::Image image, vk::Image
 	cmd.pipelineBarrier2(dependencyInfo);
 }
 
-void Renderer::transitionImageLayout(uint32_t imageIndex, vk::ImageLayout oldLayout, vk::ImageLayout newLayout,
-									 vk::AccessFlags2 srcAccessMask, vk::AccessFlags2 dstAccessMask,
-									 vk::PipelineStageFlags2 srcStageMask, vk::PipelineStageFlags2 dstStageMask,
-									 vk::ImageAspectFlags aspectMask) {
-	transitionImage(*_frames[_currentFrameIndex].commandBuffer, _swapChain->getImages()[imageIndex], oldLayout,
-					newLayout, srcAccessMask, dstAccessMask, srcStageMask, dstStageMask, aspectMask);
-}
-
-const vk::raii::CommandBuffer& Renderer::BeginFrame() {
+bool Renderer::beginFrame() {
 	if (_isFrameStarted) {
-		throw std::runtime_error("Can't call BeginFrame while already in progress");
+		throw std::runtime_error("Can't call beginFrame while already in progress");
 	}
 
 	auto result = _device->waitForFences(*_frames[_currentFrameIndex].inFlightFence, vk::True, UINT64_MAX);
@@ -344,8 +398,7 @@ const vk::raii::CommandBuffer& Renderer::BeginFrame() {
 		imageIndex = idx;
 	} catch (const vk::OutOfDateKHRError&) {
 		recreateSwapChain();
-		static vk::raii::CommandBuffer nullBuffer(nullptr);
-		return nullBuffer;
+		return false;
 	}
 	_currentImageIndex = imageIndex;
 
@@ -363,12 +416,12 @@ const vk::raii::CommandBuffer& Renderer::BeginFrame() {
 	vk::CommandBufferBeginInfo beginInfo{};
 	_frames[_currentFrameIndex].commandBuffer.begin(beginInfo);
 
-	return _frames[_currentFrameIndex].commandBuffer;
+	return true;
 }
 
-void Renderer::EndFrame() {
+void Renderer::endFrame() {
 	if (!_isFrameStarted) {
-		throw std::runtime_error("Can't call EndFrame if frame not started");
+		throw std::runtime_error("Can't call endFrame if frame not started");
 	}
 
 	_frames[_currentFrameIndex].commandBuffer.end();
@@ -470,15 +523,14 @@ void Renderer::createDepthResources() {
 	_depthImageView = vk::raii::ImageView(*_device, viewInfo);
 
 	// Perform explicit layout transition Undefined -> DepthStencilAttachmentOptimal
-	// This is required for Dynamic Rendering as we don't have implicit subpass transitions on first use.
 	{
 		vk::CommandPoolCreateInfo poolInfo{.flags = vk::CommandPoolCreateFlagBits::eTransient,
 										   .queueFamilyIndex = _device.getGraphicsQueueFamilyIndex()};
 		vk::raii::CommandPool commandPool(*_device, poolInfo);
 
-		vk::CommandBufferAllocateInfo allocInfo{
+		vk::CommandBufferAllocateInfo cmdAllocInfo{
 			.commandPool = *commandPool, .level = vk::CommandBufferLevel::ePrimary, .commandBufferCount = 1};
-		auto commandBuffers = vk::raii::CommandBuffers(*_device, allocInfo);
+		auto commandBuffers = vk::raii::CommandBuffers(*_device, cmdAllocInfo);
 		vk::raii::CommandBuffer& cmd = commandBuffers[0];
 
 		vk::CommandBufferBeginInfo beginInfo{.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit};

@@ -1,57 +1,94 @@
 #pragma once
 
-#include "Texture.h"
+#include "../resources/Texture.h"
+#include <glm/glm.hpp>
 #include <memory>
-#include <string>
 
 namespace Fishy {
 
-class VulkanDevice;
-
+/**
+ * @brief Material class following glTF PBR Metallic-Roughness workflow.
+ *
+ * Supports KHR_materials_clearcoat and other glTF extensions.
+ * Pure data container - no GPU resources. GPU resources are managed by ResourceManager.
+ */
 class Material {
 public:
-	// Pure data holder, no loading responsibility
-	struct Config {
-		std::shared_ptr<Texture> albedo;
-		std::shared_ptr<Texture> metallic;
-		std::shared_ptr<Texture> roughness;
-		std::shared_ptr<Texture> normal;
-		std::shared_ptr<Texture> ao;
-		std::shared_ptr<Texture> height;
+	struct PBRParameters {
+		// Metallic-Roughness workflow
+		glm::vec4 baseColorFactor = glm::vec4(1.0f);
+		float metallicFactor = 1.0f;
+		float roughnessFactor = 1.0f;
+
+		// Normal and occlusion
+		float normalScale = 1.0f;
+		float occlusionStrength = 1.0f;
+
+		// Emissive
+		glm::vec3 emissiveFactor = glm::vec3(0.0f);
+
+		// Alpha
+		enum class AlphaMode { OPAQUE_MODE, MASK, BLEND };
+		AlphaMode alphaMode = AlphaMode::OPAQUE_MODE;
+		float alphaCutoff = 0.5f;
+
+		// Rendering
+		bool doubleSided = false;
+
+		// KHR_materials_clearcoat
+		float clearcoatFactor = 0.0f;
+		float clearcoatRoughnessFactor = 0.0f;
+
+		// KHR_materials_transmission
+		float transmissionFactor = 0.0f;
+
+		// KHR_materials_ior
+		float ior = 1.5f;
+
+		// KHR_materials_emissive_strength
+		float emissiveStrength = 1.0f;
 	};
 
-	Material(const VulkanDevice& device, const Config& config);
-	~Material();
+	Material() = default;
+	~Material() = default;
 
-	// Create descriptor set for this material.
-	// Assumes layout has bindings:
-	// 0: Albedo
-	// 1: Metallic
-	// 2: Roughness
-	// 3: Normal
-	void createDescriptorSet(vk::DescriptorPool descriptorPool, vk::DescriptorSetLayout layout);
+	// Core PBR Textures (glTF naming convention)
+	std::shared_ptr<Texture> baseColorMap;		   // RGBA base color
+	std::shared_ptr<Texture> metallicRoughnessMap; // G=roughness, B=metallic (glTF spec)
+	std::shared_ptr<Texture> normalMap;			   // RGB normal map
+	std::shared_ptr<Texture> occlusionMap;		   // R=ambient occlusion
+	std::shared_ptr<Texture> emissiveMap;		   // RGB emissive
 
-	const vk::raii::DescriptorSet& getDescriptorSet() const { return _descriptorSet; }
+	// Extension Textures
+	std::shared_ptr<Texture> clearcoatMap;			// KHR_materials_clearcoat
+	std::shared_ptr<Texture> clearcoatRoughnessMap; // KHR_materials_clearcoat
+	std::shared_ptr<Texture> clearcoatNormalMap;	// KHR_materials_clearcoat
+	std::shared_ptr<Texture> transmissionMap;		// KHR_materials_transmission
 
-	// Accessors
-	const std::shared_ptr<Texture>& getAlbedoMap() const { return _albedoMap; }
-	const std::shared_ptr<Texture>& getMetallicMap() const { return _metallicMap; }
-	const std::shared_ptr<Texture>& getRoughnessMap() const { return _roughnessMap; }
-	const std::shared_ptr<Texture>& getNormalMap() const { return _normalMap; }
-	const std::shared_ptr<Texture>& getAoMap() const { return _aoMap; }
-	const std::shared_ptr<Texture>& getHeightMap() const { return _heightMap; }
+	PBRParameters params;
+};
 
-private:
-	const VulkanDevice& _device;
+/**
+ * @brief GPU uniform buffer layout for Material (std140 aligned).
+ *
+ * Must match the shader's material uniform block layout.
+ */
+struct MaterialUBO {
+	glm::vec4 baseColorFactor; // 16 bytes, offset 0
+	float metallicFactor;	   // 4 bytes, offset 16
+	float roughnessFactor;	   // 4 bytes, offset 20
+	float normalScale;		   // 4 bytes, offset 24
+	float occlusionStrength;   // 4 bytes, offset 28
+	glm::vec4 emissiveFactor;  // 16 bytes, offset 32 (w = emissiveStrength)
+	float alphaCutoff;		   // 4 bytes, offset 48
+	uint32_t flags;			   // 4 bytes, offset 52 (doubleSided, alphaMode, texture flags)
 
-	std::shared_ptr<Texture> _albedoMap;
-	std::shared_ptr<Texture> _metallicMap;
-	std::shared_ptr<Texture> _roughnessMap;
-	std::shared_ptr<Texture> _normalMap;
-	std::shared_ptr<Texture> _aoMap;
-	std::shared_ptr<Texture> _heightMap;
-
-	vk::raii::DescriptorSet _descriptorSet = nullptr;
+	// Extensions
+	float clearcoatFactor;			// 4 bytes, offset 56
+	float clearcoatRoughnessFactor; // 4 bytes, offset 60
+	float transmissionFactor;		// 4 bytes, offset 64
+	float ior;						// 4 bytes, offset 68
+	float padding[3];				// 12 bytes, offset 72 (total 80 bytes, 16-byte aligned)
 };
 
 } // namespace Fishy

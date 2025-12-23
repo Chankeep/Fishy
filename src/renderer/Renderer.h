@@ -8,10 +8,9 @@
 import vulkan_hpp;
 #endif
 
+#include "../resources/Mesh.h"
+#include "../resources/Model.h"
 #include "GraphicsPipeline.h"
-#include "Material.h"
-#include "Texture.h"
-#include "Vertex.h"
 #include "core/SwapChain.h"
 #include "core/VulkanBuffer.h"
 
@@ -27,63 +26,55 @@ class ResourceManager;
 
 constexpr int MAX_FRAMES_IN_FLIGHT = 2;
 
+/**
+ * @brief Main renderer class.
+ *
+ * Handles all rendering operations including frame management, pipeline binding, and draw calls.
+ * GPU resource management (meshes, materials) is delegated to ResourceManager.
+ */
 class Renderer {
 public:
 	Renderer(VulkanDevice& device, Window& window, ResourceManager& resourceManager);
 	~Renderer();
 
-	// Frame management
-	const vk::raii::CommandBuffer& BeginFrame();
-	void EndFrame();
+	/**
+	 * @brief Render a model.
+	 *
+	 * This is the main rendering interface. All command buffer recording is encapsulated here.
+	 */
+	void render(const Model& model);
 
-	// Helpers for rendering
+	// Accessors
+	float getAspectRatio() const;
+	vk::Format getSwapChainFormat() const { return _swapChain->getFormat(); }
+	vk::Extent2D getSwapChainExtent() const { return _swapChain->getExtent(); }
+
+private:
+	// Frame management
+	bool beginFrame();
+	void endFrame();
+
+	// Rendering helpers
 	void updateUniformBuffer(uint32_t frameIndex);
 	static void transitionImage(vk::CommandBuffer cmd, vk::Image image, vk::ImageLayout oldLayout,
 								vk::ImageLayout newLayout, vk::AccessFlags2 srcAccessMask,
 								vk::AccessFlags2 dstAccessMask, vk::PipelineStageFlags2 srcStageMask,
 								vk::PipelineStageFlags2 dstStageMask, vk::ImageAspectFlags aspectMask);
-	void transitionImageLayout(uint32_t imageIndex, vk::ImageLayout oldLayout, vk::ImageLayout newLayout,
-							   vk::AccessFlags2 srcAccessMask, vk::AccessFlags2 dstAccessMask,
-							   vk::PipelineStageFlags2 srcStageMask, vk::PipelineStageFlags2 dstStageMask,
-							   vk::ImageAspectFlags aspectMask);
-	void createDepthResources();
-	vk::Format findDepthFormat();
-	void createSwapChainImageViews();
 
-	// Accessors
-	float getAspectRatio() const;
-	bool isFrameInProgress() const { return _isFrameStarted; }
-	const vk::raii::CommandBuffer& getCurrentCommandBuffer() const { return _frames[_currentFrameIndex].commandBuffer; }
-	int getFrameIndex() const { return _currentFrameIndex; }
-	uint32_t getCurrentImageIndex() const { return _currentImageIndex; }
-
-	// Resource accessors for Application rendering
-	const GraphicsPipeline& getPipeline() const { return *_graphicsPipeline; }
-	const vk::raii::DescriptorSet& getDescriptorSet(int frame) const { return _frames[frame].descriptorSet; }
-	const Material& getMaterial() const { return *_material; }
-	const vk::raii::Buffer& getVertexBuffer() const { return _vertexBuffer->getBuffer(); }
-	const vk::raii::Buffer& getIndexBuffer() const { return _indexBuffer->getBuffer(); }
-	const std::vector<vk::raii::ImageView>& getSwapChainImageViews() const { return _swapChainImageViews; }
-	const vk::raii::ImageView& getDepthImageView() const { return _depthImageView; }
-	vk::Extent2D getSwapChainExtent() const { return _swapChain->getExtent(); }
-	vk::Format getSwapChainFormat() const { return _swapChain->getFormat(); }
-	uint32_t getIndexCount() const { return static_cast<uint32_t>(_indices.size()); }
-
-private:
+	// Initialization
 	void createCommandBuffers();
 	void createSyncObjects();
 	void freeCommandBuffers();
 	void recreateSwapChain();
-
-	// New initialization methods
 	void createGraphicsPipeline();
-	void createVertexBuffer();
-	void createIndexBuffer();
 	void createUniformBuffers();
 	void createGlobalSetLayout();
 	void createMaterialSetLayout();
 	void createDescriptorPool();
 	void createDescriptorSets();
+	void createDepthResources();
+	vk::Format findDepthFormat();
+	void createSwapChainImageViews();
 
 	struct FrameData {
 		vk::raii::CommandBuffer commandBuffer = nullptr;
@@ -100,17 +91,19 @@ private:
 
 	std::unique_ptr<SwapChain> _swapChain;
 
+	// Depth resources
 	vk::raii::Image _depthImage = nullptr;
 	vk::raii::DeviceMemory _depthImageMemory = nullptr;
 	vk::raii::ImageView _depthImageView = nullptr;
-
 	vk::Format _depthFormat = vk::Format::eUndefined;
 
+	// SwapChain image views
 	std::vector<vk::raii::ImageView> _swapChainImageViews;
 
+	// Sync objects
 	std::vector<vk::raii::Semaphore> _renderFinishedSemaphores;
 
-	// Command Buffers
+	// Command Pool
 	vk::raii::CommandPool _commandPool = nullptr;
 
 	// Graphics Pipeline
@@ -118,33 +111,16 @@ private:
 	vk::raii::DescriptorSetLayout _globalSetLayout = nullptr;
 	vk::raii::DescriptorSetLayout _materialSetLayout = nullptr;
 
-	// Buffers
-	std::unique_ptr<VulkanBuffer> _vertexBuffer;
-	std::unique_ptr<VulkanBuffer> _indexBuffer;
-
-	// Descriptors
+	// Descriptor Pool
 	vk::raii::DescriptorPool _descriptorPool = nullptr;
 
-	// Frame Data (Must be declared after pools to ensure correct destruction order)
+	// Frame Data
 	std::vector<FrameData> _frames;
 
-	// Geometry data
-	const std::vector<Vertex> _vertices = {
-		{{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}, {-1.0f, 0.0f, 0.0f}},
-		{{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}, {-1.0f, 0.0f, 0.0f}},
-		{{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}, {-1.0f, 0.0f, 0.0f}},
-		{{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}, {-1.0f, 0.0f, 0.0f}},
-
-		{{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}, {-1.0f, 0.0f, 0.0f}},
-		{{0.5f, -0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}, {-1.0f, 0.0f, 0.0f}},
-		{{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}, {-1.0f, 0.0f, 0.0f}},
-		{{-0.5f, 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}, {-1.0f, 0.0f, 0.0f}}};
-	const std::vector<uint16_t> _indices = {0, 1, 2, 2, 3, 0, 4, 5, 6, 6, 7, 4};
-
+	// Frame state
 	uint32_t _currentImageIndex = 0;
 	int _currentFrameIndex = 0;
 	bool _isFrameStarted = false;
-
-	std::unique_ptr<Material> _material;
 };
+
 } // namespace Fishy

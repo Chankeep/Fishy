@@ -35,24 +35,16 @@ void VulkanContext::Init() {
 	VULKAN_HPP_DEFAULT_DISPATCHER.init(_context.getDispatcher()->vkGetInstanceProcAddr);
 
 	createInstance();
-	setupDebugMessenger();
 }
 
 void VulkanContext::Cleanup() {
-	// RAII handles handle destruction automatically.
-	// Destroyed in reverse order of declaration in header.
-}
-
-static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT severity,
-													  vk::DebugUtilsMessageTypeFlagsEXT type,
-													  const vk::DebugUtilsMessengerCallbackDataEXT* pCallbackData,
-													  void*) {
-	if (severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eError ||
-		severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning) {
-		std::cerr << "validation layer: type " << to_string(type) << " msg: " << pCallbackData->pMessage << std::endl;
+	// Must explicitly destroy vk-bootstrap's debug messenger before the RAII instance destructs
+	// Otherwise we get validation errors about undestroyed objects
+	if (_vkbInstance.debug_messenger != VK_NULL_HANDLE) {
+		vkb::destroy_debug_utils_messenger(_vkbInstance.instance, _vkbInstance.debug_messenger);
 	}
 
-	return vk::False;
+	// RAII handles destruction automatically in reverse order of declaration
 }
 
 // Create the Vulkan Instance using vk-bootstrap
@@ -61,7 +53,7 @@ void VulkanContext::createInstance() {
 	builder.set_app_name("Fishy Engine").set_engine_name("Fishy").require_api_version(1, 3, 0); // Require Vulkan 1.3
 
 	if (enableValidationLayers) {
-		builder.request_validation_layers();
+		builder.request_validation_layers().use_default_debug_messenger(); // Let vk-bootstrap handle debug messenger
 	}
 
 	auto system_info_ret = vkb::SystemInfo::get_system_info();
@@ -70,7 +62,7 @@ void VulkanContext::createInstance() {
 	}
 	auto system_info = system_info_ret.value();
 
-	if (system_info.validation_layers_available) {
+	if (system_info.validation_layers_available && enableValidationLayers) {
 		builder.enable_validation_layers();
 	}
 
@@ -78,32 +70,16 @@ void VulkanContext::createInstance() {
 	if (!vkb_inst_ret) {
 		throw std::runtime_error(vkb_inst_ret.error().message());
 	}
-	vkb::Instance vkb_inst = vkb_inst_ret.value();
+	_vkbInstance = vkb_inst_ret.value();
 
-	volkLoadInstance(vkb_inst.instance);
-
-	// Load Vulkan functions via volk into a context
-	_context = vk::raii::Context();
+	volkLoadInstance(_vkbInstance.instance);
 
 	// Create RAII Instance from existing handle
-	_instance = vk::raii::Instance(_context, vkb_inst.instance);
+	// Note: _context is already initialized in the class, no need to recreate
+	_instance = vk::raii::Instance(_context, _vkbInstance.instance);
 
-	VULKAN_HPP_DEFAULT_DISPATCHER.init(*_instance);
-}
-
-void VulkanContext::setupDebugMessenger() {
-	if (!enableValidationLayers)
-		return;
-
-	vk::DebugUtilsMessageSeverityFlagsEXT severityFlags(vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose |
-														vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
-														vk::DebugUtilsMessageSeverityFlagBitsEXT::eError);
-	vk::DebugUtilsMessageTypeFlagsEXT messageTypeFlags(vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
-													   vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance |
-													   vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation);
-	vk::DebugUtilsMessengerCreateInfoEXT debugUtilsMessengerCreateInfoEXT{
-		.messageSeverity = severityFlags, .messageType = messageTypeFlags, .pfnUserCallback = &debugCallback};
-	_debugMessenger = _instance.createDebugUtilsMessengerEXT(debugUtilsMessengerCreateInfoEXT);
+	// Reinitialize the dispatcher with volk's loaded instance functions
+	VULKAN_HPP_DEFAULT_DISPATCHER.init(*_instance, vkGetInstanceProcAddr);
 }
 
 } // namespace Fishy

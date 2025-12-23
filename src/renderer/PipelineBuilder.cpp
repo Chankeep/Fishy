@@ -26,7 +26,7 @@ void PipelineBuilder::clear() {
 					  .alphaToCoverageEnable = vk::False,
 					  .alphaToOneEnable = vk::False};
 
-	_depthStencil = {};
+	_depthStencil = vk::PipelineDepthStencilStateCreateInfo{};
 
 	_colorBlendAttachment = vk::PipelineColorBlendAttachmentState{}; // Not a CreateInfo, no sType
 	// Default blending disabled
@@ -34,7 +34,7 @@ void PipelineBuilder::clear() {
 	_colorBlendAttachment.colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
 										   vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
 
-	_vertexInputInfo = {};
+	_vertexInputInfo = vk::PipelineVertexInputStateCreateInfo{};
 
 	// Dynamic states are usually required (to adapt to different Swapchain sizes)
 	_dynamicStates = {vk::DynamicState::eViewport, vk::DynamicState::eScissor};
