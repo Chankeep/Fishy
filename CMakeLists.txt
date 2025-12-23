@@ -15,7 +15,7 @@ add_compile_definitions(GLM_FORCE_DEPTH_ZERO_TO_ONE)
 add_compile_definitions(VULKAN_HPP_NO_CONSTRUCTORS)
 
 if(MSVC)
-    add_compile_definitions(/utf-8)
+    add_compile_options(/utf-8)
 endif()
 
 # ==============================================================================
@@ -111,6 +111,45 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(VulkanMemoryAllocator)
 
+# ------------------------------------------------------------------------------
+# Dear ImGui - 即时模式 GUI (Docking Branch)
+# ------------------------------------------------------------------------------
+FetchContent_Declare(
+    imgui
+    GIT_REPOSITORY https://github.com/ocornut/imgui.git
+    GIT_TAG        docking
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(imgui)
+
+# 创建 ImGui 静态库 (包含核心 + GLFW/Vulkan backends)
+add_library(imgui STATIC
+    ${imgui_SOURCE_DIR}/imgui.cpp
+    ${imgui_SOURCE_DIR}/imgui_demo.cpp
+    ${imgui_SOURCE_DIR}/imgui_draw.cpp
+    ${imgui_SOURCE_DIR}/imgui_tables.cpp
+    ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp
+)
+
+target_include_directories(imgui PUBLIC
+    ${imgui_SOURCE_DIR}
+    ${imgui_SOURCE_DIR}/backends
+)
+
+target_link_libraries(imgui PUBLIC
+    glfw
+    Vulkan::Vulkan
+    volk::volk
+)
+
+# 使用 volk 加载 Vulkan 函数
+target_compile_definitions(imgui PUBLIC
+    IMGUI_IMPL_VULKAN_USE_VOLK
+    VK_NO_PROTOTYPES
+)
+
 # 寻找 Slang 编译器 (slangc)
 # 确保 slangc 已经在系统 PATH 中，或者手动指定路径
 find_program(SLANG_COMPILER slangc REQUIRED)
@@ -193,6 +232,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     volk::volk
     tinygltf
     GPUOpen::VulkanMemoryAllocator
+    imgui
     ${CMAKE_DL_LIBS}
 )
 

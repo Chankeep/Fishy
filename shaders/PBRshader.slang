@@ -18,6 +18,10 @@ struct GlobalUBO {
     float3 camPos;
     float3 lightDir;
     float3 lightColor;
+    // Debug visualization controls
+    float debugViewInputs;   // 0=off, 1=baseColor, 2=normal, 3=AO, 4=emissive, 5=metallic, 6=roughness
+    float debugViewEquation; // 0=off, 1=diffuse, 2=F, 3=G, 4=D, 5=specular
+    float2 _padding;
 };
 [[vk::binding(0, 0)]] ConstantBuffer<GlobalUBO> ubo;
 
@@ -96,6 +100,32 @@ float3 linearToSRGB(float3 linear) {
 // Normal Mapping
 // ============================================================================
 
+// Calculate the TBN matrix using either vertex tangents or screen-space derivatives
+float3x3 getTBN(VSOutput vertIn) {
+    float3 N = normalize(vertIn.worldNormal);
+    float3 T, B;
+    
+    // Check if we have valid tangent data (tangentW != 0 indicates valid tangent)
+    if (abs(vertIn.tangentW) > 0.001) {
+        // Use provided tangent
+        T = normalize(vertIn.worldTangent);
+        T = normalize(T - dot(T, N) * N); // Gram-Schmidt re-orthogonalization
+        B = cross(N, T) * vertIn.tangentW;
+    } else {
+        // Perturb normal using screen-space derivatives (no tangent provided)
+        // Note: Vulkan ddy is negated compared to OpenGL dFdy due to flipped Y-axis
+        float3 q1 = ddx(vertIn.worldPos);
+        float3 q2 = -ddy(vertIn.worldPos);  // Negate for Vulkan
+        float2 st1 = ddx(vertIn.texCoord);
+        float2 st2 = -ddy(vertIn.texCoord); // Negate for Vulkan
+        
+        T = normalize(q1 * st2.y - q2 * st1.y);
+        B = -normalize(cross(N, T));
+    }
+    
+    return float3x3(T, B, N);
+}
+
 // Find the normal for this fragment, pulling either from a predefined normal map
 // or from the interpolated mesh normal and tangent attributes.
 // Reference: http://www.thetenthplanet.de/archives/1180
@@ -104,29 +134,7 @@ float3 getNormal(VSOutput vertIn) {
     tangentNormal.xy *= material.normalScale;
     tangentNormal = normalize(tangentNormal);
     
-    float3 N = normalize(vertIn.worldNormal);
-    
-    // Check if we have valid tangent data (tangentW != 0 indicates valid tangent)
-    if (abs(vertIn.tangentW) > 0.001) {
-        // Use provided tangent
-        float3 T = normalize(vertIn.worldTangent);
-        T = normalize(T - dot(T, N) * N); // Gram-Schmidt re-orthogonalization
-        float3 B = cross(N, T) * vertIn.tangentW;
-        float3x3 TBN = float3x3(T, B, N);
-        return normalize(mul(tangentNormal, TBN));
-    } else {
-        // Perturb normal using screen-space derivatives (no tangent provided)
-        float3 q1 = ddx(vertIn.worldPos);
-        float3 q2 = ddy(vertIn.worldPos);
-        float2 st1 = ddx(vertIn.texCoord);
-        float2 st2 = ddy(vertIn.texCoord);
-        
-        float3 T = normalize(q1 * st2.y - q2 * st1.y);
-        float3 B = -normalize(cross(N, T));
-        float3x3 TBN = float3x3(T, B, N);
-        
-        return normalize(mul(tangentNormal, TBN));
-    }
+    return normalize(mul(tangentNormal, getTBN(vertIn)));
 }
 
 // Get clearcoat normal (separate from base normal)
@@ -137,26 +145,8 @@ float3 getClearcoatNormal(VSOutput vertIn, float3 geometricNormal) {
     }
     
     float3 tangentNormal = clearcoatNormalMap.Sample(vertIn.texCoord).rgb * 2.0 - 1.0;
-    float3 N = normalize(vertIn.worldNormal);
     
-    if (abs(vertIn.tangentW) > 0.001) {
-        float3 T = normalize(vertIn.worldTangent);
-        T = normalize(T - dot(T, N) * N);
-        float3 B = cross(N, T) * vertIn.tangentW;
-        float3x3 TBN = float3x3(T, B, N);
-        return normalize(mul(tangentNormal, TBN));
-    } else {
-        float3 q1 = ddx(vertIn.worldPos);
-        float3 q2 = ddy(vertIn.worldPos);
-        float2 st1 = ddx(vertIn.texCoord);
-        float2 st2 = ddy(vertIn.texCoord);
-        
-        float3 T = normalize(q1 * st2.y - q2 * st1.y);
-        float3 B = -normalize(cross(N, T));
-        float3x3 TBN = float3x3(T, B, N);
-        
-        return normalize(mul(tangentNormal, TBN));
-    }
+    return normalize(mul(tangentNormal, getTBN(vertIn)));
 }
 
 // ============================================================================
@@ -290,12 +280,12 @@ float4 fragMain(VSOutput vertIn) : SV_Target
     
     // glTF: metallic in B channel, roughness in G channel
     float4 mrSample = metallicRoughnessMap.Sample(uv);
-    float perceptualRoughness = clamp(mrSample.g * material.roughnessFactor, MIN_ROUGHNESS, 1.0);
-    float metallic = clamp(mrSample.b * material.metallicFactor, 0.0, 1.0);
+    float perceptualRoughness = clamp(mrSample.g, MIN_ROUGHNESS, 1.0);
+    float metallic = clamp(mrSample.b, 0.0, 1.0);
     
     // Roughness is authored as perceptual roughness; as is convention,
     // convert to material roughness by squaring the perceptual roughness
-    float alphaRoughness = perceptualRoughness * perceptualRoughness;
+    float alphaRoughness = perceptualRoughness;
     
     // ========================================================================
     // Calculate reflectance
@@ -320,8 +310,8 @@ float4 fragMain(VSOutput vertIn) : SV_Target
     // Get vectors for lighting calculation
     // ========================================================================
     
-    // Check if normal map is present (bit 3)
-    float3 n = ((material.flags & (1 << 3)) != 0) ? getNormal(vertIn) : normalize(vertIn.worldNormal);
+    // Check if normal map is present (bit 5)
+    float3 n = ((material.flags & (1 << 5)) != 0) ? getNormal(vertIn) : normalize(vertIn.worldNormal);
     float3 v = normalize(ubo.camPos - vertIn.worldPos);    // Vector from surface point to camera
     float3 l = normalize(ubo.lightDir);                    // Vector from surface point to light
     float3 h = normalize(l + v);                           // Half vector between both l and v
@@ -390,8 +380,8 @@ float4 fragMain(VSOutput vertIn) : SV_Target
     // Apply ambient occlusion
     // ========================================================================
     
-    // Check if occlusion map is present (bit 4)
-    if ((material.flags & (1 << 4)) != 0) {
+    // Check if occlusion map is present (bit 6)
+    if ((material.flags & (1 << 6)) != 0) {
         float ao = occlusionMap.Sample(uv).r;
         color = lerp(color, color * ao, material.occlusionStrength);
     }
@@ -407,14 +397,87 @@ float4 fragMain(VSOutput vertIn) : SV_Target
     // Emissive
     // ========================================================================
     
-    // Check if emissive map is present (bit 5)
+    // Check if emissive map is present (bit 7)
     float emissiveStrength = material.emissiveFactor.w;
     float3 emissive = material.emissiveFactor.rgb * emissiveStrength;
-    if ((material.flags & (1 << 5)) != 0) {
+    if ((material.flags & (1 << 7)) != 0) {
         emissive *= sRGBToLinear(emissiveMap.Sample(uv)).rgb;
     }
     color += emissive;
     
+    // ========================================================================
+    // Debug Visualization
+    // ========================================================================
+    
+    // Shader inputs debug visualization
+    if (ubo.debugViewInputs > 0.0) {
+        int index = int(ubo.debugViewInputs);
+        switch (index) {
+            case 1: // Base Color
+                color = baseColor.rgb;
+                break;
+            case 2: // Shading Normal (final normal used for lighting)
+                color = n * 0.5 + 0.5; // Remap from [-1,1] to [0,1]
+                break;
+            case 3: // AO
+                color = ((material.flags & (1 << 6)) != 0) ? occlusionMap.Sample(uv).rrr : float3(1.0);
+                break;
+            case 4: // Emissive
+                color = emissive;
+                break;
+            case 5: // Metallic
+                color = metallicRoughnessMap.Sample(uv).bbb;
+                break;
+            case 6: // Roughness
+                color = metallicRoughnessMap.Sample(uv).ggg;
+                break;
+            case 7: // UV
+                color = float3(uv, 0.0);
+                break;
+            case 8: // Geometric Normal (interpolated vertex normal)
+                color = normalize(vertIn.worldNormal) * 0.5 + 0.5;
+                break;
+            case 9: // Tangent
+                {
+                    float3x3 TBN = getTBN(vertIn);
+                    color = TBN[0] * 0.5 + 0.5;
+                }
+                break;
+            case 10: // Bitangent
+                {
+                    float3x3 TBN = getTBN(vertIn);
+                    color = TBN[1] * 0.5 + 0.5;
+                }
+                break;
+        }
+        
+        return float4(color, baseColor.a);
+    }
+    
+    // PBR equation debug visualization
+    if (ubo.debugViewEquation > 0.0) {
+        int index = int(ubo.debugViewEquation);
+        switch (index) {
+            case 1: // Diffuse contribution
+                color = diffuseContrib;
+                break;
+            case 2: // Fresnel (F)
+                color = F;
+                break;
+            case 3: // Geometric occlusion (G)
+                color = float3(G);
+                break;
+            case 4: // Microfacet distribution (D)
+                color = float3(D);
+                break;
+            case 5: // Specular contribution
+                color = specContrib;
+                break;
+        }
+        color = linearToSRGB(color);
+        return float4(color, baseColor.a);
+    }
+
     // ========================================================================
     // Tone mapping and gamma correction
     // ========================================================================

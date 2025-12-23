@@ -60,7 +60,7 @@
   * 支持 Albedo, Metallic, Roughness, Normal 贴图。  
   * 通过 Descriptor Set 绑定至 Shader。  
 - [ ] **REQ-L-02 (glTF PBR支持):** 实现符合 glTF 2.0 标准的 Metallic-Roughness 工作流 Shader。
-  * **属性支持**: 读取 glTF material 中的 `baseColorFactor`, `metallicFactor`, `roughnessFactor` 等参数并通过 Uniform/PushConstant 传递。
+  * **属性支持**: 读取 glTF material 中的 `baseColorFactor`, `metallicFactor`, `roughnessFactor` 等参数并通过 SSBO 传递。
   * **纹理支持**: 采样 `baseColorTexture`, `metallicRoughnessTexture`, `normalTexture`, `occlusionTexture`。
   * **内嵌数据**: 支持直接从 glTF BufferView 创建纹理对象用于 Shader 采样。
 - [ ] **REQ-L-03 (全局光照数据):** \* 实现一个全局 Scene UBO。  

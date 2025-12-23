@@ -76,7 +76,9 @@ std::shared_ptr<Model> ModelLoader::loadModel(const std::string& filepath, Resou
 	std::string baseDir = modelPath.parent_path().string();
 
 	// Helper to load texture (handles both external files and embedded textures)
-	auto loadTexture = [&](int textureIndex) -> std::shared_ptr<Texture> {
+	// format should be eR8G8B8A8Srgb for color textures, eR8G8B8A8Unorm for data textures
+	auto loadTexture = [&](int textureIndex,
+						   vk::Format format = vk::Format::eR8G8B8A8Srgb) -> std::shared_ptr<Texture> {
 		if (textureIndex < 0 || textureIndex >= static_cast<int>(gltfModel.textures.size())) {
 			return nullptr;
 		}
@@ -96,7 +98,7 @@ std::shared_ptr<Model> ModelLoader::loadModel(const std::string& filepath, Resou
 			} else {
 				texPath = baseDir + "/" + img.uri;
 			}
-			return resourceManager->getTexture(texPath);
+			return resourceManager->getTexture(texPath, format);
 		} else if (img.bufferView >= 0 && resourceManager) {
 			// Embedded: load from glTF buffer
 			const auto& bufferView = gltfModel.bufferViews[img.bufferView];
@@ -105,12 +107,12 @@ std::shared_ptr<Model> ModelLoader::loadModel(const std::string& filepath, Resou
 			size_t size = bufferView.byteLength;
 
 			std::string cacheKey = filepath + "_tex_" + std::to_string(textureIndex);
-			return resourceManager->loadTextureFromMemory(data, size, cacheKey);
+			return resourceManager->loadTextureFromMemory(data, size, cacheKey, format);
 		} else if (!img.image.empty() && resourceManager) {
 			// Image data loaded by tinygltf (decoded in memory)
 			// This happens when tinygltf decodes embedded base64 images
 			std::string cacheKey = filepath + "_tex_" + std::to_string(textureIndex);
-			return resourceManager->loadTextureFromMemory(img.image.data(), img.image.size(), cacheKey);
+			return resourceManager->loadTextureFromMemory(img.image.data(), img.image.size(), cacheKey, format);
 		}
 
 		return nullptr;
@@ -149,12 +151,14 @@ std::shared_ptr<Model> ModelLoader::loadModel(const std::string& filepath, Resou
 		material->params.normalScale = static_cast<float>(gltfMat.normalTexture.scale);
 		material->params.occlusionStrength = static_cast<float>(gltfMat.occlusionTexture.strength);
 
-		// Core Textures (using glTF naming)
-		material->baseColorMap = loadTexture(pbr.baseColorTexture.index);
-		material->metallicRoughnessMap = loadTexture(pbr.metallicRoughnessTexture.index);
-		material->normalMap = loadTexture(gltfMat.normalTexture.index);
-		material->occlusionMap = loadTexture(gltfMat.occlusionTexture.index);
-		material->emissiveMap = loadTexture(gltfMat.emissiveTexture.index);
+		// Core Textures - use appropriate formats:
+		// sRGB for color data (baseColor, emissive)
+		// UNORM for linear/data textures (normal, metallicRoughness, occlusion)
+		material->baseColorMap = loadTexture(pbr.baseColorTexture.index, vk::Format::eR8G8B8A8Srgb);
+		material->metallicRoughnessMap = loadTexture(pbr.metallicRoughnessTexture.index, vk::Format::eR8G8B8A8Srgb);
+		material->normalMap = loadTexture(gltfMat.normalTexture.index, vk::Format::eR8G8B8A8Unorm);
+		material->occlusionMap = loadTexture(gltfMat.occlusionTexture.index, vk::Format::eR8G8B8A8Srgb);
+		material->emissiveMap = loadTexture(gltfMat.emissiveTexture.index, vk::Format::eR8G8B8A8Srgb);
 
 		// Log texture presence
 		std::cout << "  Material textures:" << std::endl;
@@ -178,15 +182,15 @@ std::shared_ptr<Model> ModelLoader::loadModel(const std::string& filepath, Resou
 				}
 				if (extValue.Has("clearcoatTexture")) {
 					int texIndex = extValue.Get("clearcoatTexture").Get("index").GetNumberAsInt();
-					material->clearcoatMap = loadTexture(texIndex);
+					material->clearcoatMap = loadTexture(texIndex, vk::Format::eR8G8B8A8Srgb);
 				}
 				if (extValue.Has("clearcoatRoughnessTexture")) {
 					int texIndex = extValue.Get("clearcoatRoughnessTexture").Get("index").GetNumberAsInt();
-					material->clearcoatRoughnessMap = loadTexture(texIndex);
+					material->clearcoatRoughnessMap = loadTexture(texIndex, vk::Format::eR8G8B8A8Srgb);
 				}
 				if (extValue.Has("clearcoatNormalTexture")) {
 					int texIndex = extValue.Get("clearcoatNormalTexture").Get("index").GetNumberAsInt();
-					material->clearcoatNormalMap = loadTexture(texIndex);
+					material->clearcoatNormalMap = loadTexture(texIndex, vk::Format::eR8G8B8A8Srgb);
 				}
 				std::cout << "    KHR_materials_clearcoat: factor=" << material->params.clearcoatFactor
 						  << ", clearcoatMap=" << (material->clearcoatMap ? "loaded" : "not present")
@@ -199,7 +203,7 @@ std::shared_ptr<Model> ModelLoader::loadModel(const std::string& filepath, Resou
 				}
 				if (extValue.Has("transmissionTexture")) {
 					int texIndex = extValue.Get("transmissionTexture").Get("index").GetNumberAsInt();
-					material->transmissionMap = loadTexture(texIndex);
+					material->transmissionMap = loadTexture(texIndex, vk::Format::eR8G8B8A8Srgb);
 				}
 				std::cout << "    KHR_materials_transmission: factor=" << material->params.transmissionFactor
 						  << ", transmissionMap=" << (material->transmissionMap ? "loaded" : "not present")

@@ -54,8 +54,9 @@ public:
 	const vk::raii::ShaderModule& getShader(const std::string& filepath);
 
 	// Texture loading
-	std::shared_ptr<Texture> getTexture(const std::string& filepath);
-	std::shared_ptr<Texture> loadTextureFromMemory(const unsigned char* data, size_t size, const std::string& cacheKey);
+	std::shared_ptr<Texture> getTexture(const std::string& filepath, vk::Format format = vk::Format::eR8G8B8A8Srgb);
+	std::shared_ptr<Texture> loadTextureFromMemory(const unsigned char* data, size_t size, const std::string& cacheKey,
+												   vk::Format format = vk::Format::eR8G8B8A8Srgb);
 
 	// GPU resource management
 	GPUMesh* getOrCreateGPUMesh(const Mesh* mesh, const vk::raii::CommandPool& cmdPool);

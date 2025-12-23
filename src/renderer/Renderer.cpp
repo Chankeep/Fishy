@@ -42,7 +42,7 @@ Renderer::~Renderer() {
 	_swapChain.reset();
 }
 
-void Renderer::render(const Model& model) {
+void Renderer::render(const Model& model, std::function<void(VkCommandBuffer)> uiRenderCallback) {
 	if (!beginFrame()) {
 		return; // SwapChain was recreated, skip this frame
 	}
@@ -129,6 +129,27 @@ void Renderer::render(const Model& model) {
 	}
 
 	cmd.endRendering();
+
+	// UI Rendering Pass (if callback provided)
+	if (uiRenderCallback) {
+		// Start UI rendering pass (no depth, load previous color)
+		vk::RenderingAttachmentInfo uiColorAttachment{.imageView = *_swapChainImageViews[_currentImageIndex],
+													  .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+													  .loadOp = vk::AttachmentLoadOp::eLoad,
+													  .storeOp = vk::AttachmentStoreOp::eStore};
+
+		vk::RenderingInfo uiRenderingInfo{.renderArea = vk::Rect2D{{0, 0}, extent},
+										  .layerCount = 1,
+										  .colorAttachmentCount = 1,
+										  .pColorAttachments = &uiColorAttachment};
+
+		cmd.beginRendering(uiRenderingInfo);
+
+		// Call the UI render callback with raw VkCommandBuffer
+		uiRenderCallback(static_cast<VkCommandBuffer>(*cmd));
+
+		cmd.endRendering();
+	}
 
 	// Transition image to PRESENT_SRC
 	transitionImage(*cmd, _swapChain->getImages()[_currentImageIndex], vk::ImageLayout::eColorAttachmentOptimal,
@@ -353,6 +374,10 @@ void Renderer::updateUniformBuffer(uint32_t frameIndex) {
 	ubo.proj = glm::perspective(glm::radians(45.0f),
 								static_cast<float>(extent.width) / static_cast<float>(extent.height), 0.1f, 100.0f);
 	ubo.proj[1][1] *= -1; // Invert Y for Vulkan
+
+	// Debug settings
+	ubo.debugViewInputs = _debugViewInputs;
+	ubo.debugViewEquation = _debugViewEquation;
 
 	_frames[frameIndex].uniformBuffer->upload(&ubo, sizeof(ubo));
 }

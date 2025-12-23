@@ -26,7 +26,7 @@ struct Vertex {
 	}
 };
 
-// Global uniform buffer (camera, lighting)
+// Global uniform buffer (camera, lighting, debug)
 struct UniformBufferObject {
 	glm::mat4 model;
 	glm::mat4 view;
@@ -34,6 +34,10 @@ struct UniformBufferObject {
 	alignas(16) glm::vec3 camPos;
 	alignas(16) glm::vec3 lightDir;
 	alignas(16) glm::vec3 lightColor;
+	// Debug visualization controls
+	float debugViewInputs = 0.0f;	// 0=off, 1=baseColor, 2=normal, 3=AO, 4=emissive, 5=metallic, 6=roughness
+	float debugViewEquation = 0.0f; // 0=off, 1=diffuse, 2=F, 3=G, 4=D, 5=specular
+	float padding[2];				// Align to 16 bytes
 };
 
 // Mesh class - pure data container for geometry

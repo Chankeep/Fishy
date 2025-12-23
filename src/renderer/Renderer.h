@@ -14,6 +14,7 @@ import vulkan_hpp;
 #include "core/SwapChain.h"
 #include "core/VulkanBuffer.h"
 
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -38,11 +39,21 @@ public:
 	~Renderer();
 
 	/**
-	 * @brief Render a model.
+	 * @brief Render a model with optional UI callback.
 	 *
 	 * This is the main rendering interface. All command buffer recording is encapsulated here.
+	 * The uiRenderCallback is called after scene rendering but before present, allowing ImGui to render.
+	 *
+	 * @param model The model to render.
+	 * @param uiRenderCallback Optional callback for UI rendering (receives VkCommandBuffer).
 	 */
-	void render(const Model& model);
+	void render(const Model& model, std::function<void(VkCommandBuffer)> uiRenderCallback = nullptr);
+
+	// Debug settings
+	void setDebugSettings(float debugViewInputs, float debugViewEquation) {
+		_debugViewInputs = debugViewInputs;
+		_debugViewEquation = debugViewEquation;
+	}
 
 	// Accessors
 	float getAspectRatio() const;
@@ -121,6 +132,10 @@ private:
 	uint32_t _currentImageIndex = 0;
 	int _currentFrameIndex = 0;
 	bool _isFrameStarted = false;
+
+	// Debug settings
+	float _debugViewInputs = 0.0f;
+	float _debugViewEquation = 0.0f;
 };
 
 } // namespace Fishy

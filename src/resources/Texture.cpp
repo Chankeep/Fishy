@@ -4,19 +4,22 @@
 
 namespace Fishy {
 
-Texture::Texture(const VulkanDevice& device, const std::string& path) : _device(device) {
+Texture::Texture(const VulkanDevice& device, const std::string& path, vk::Format format)
+	: _device(device), _format(format) {
 	createTextureImage(path);
 	createTextureImageView();
 	createTextureSampler();
 }
 
-Texture::Texture(const VulkanDevice& device, const unsigned char* data, size_t size) : _device(device) {
+Texture::Texture(const VulkanDevice& device, const unsigned char* data, size_t size, vk::Format format)
+	: _device(device), _format(format) {
 	createTextureImageFromMemory(data, size);
 	createTextureImageView();
 	createTextureSampler();
 }
 
-Texture::Texture(const VulkanDevice& device, const unsigned char* pixels, int width, int height) : _device(device) {
+Texture::Texture(const VulkanDevice& device, const unsigned char* pixels, int width, int height, vk::Format format)
+	: _device(device), _format(format) {
 	createTextureFromPixels(pixels, width, height);
 	createTextureImageView();
 	createTextureSampler();
@@ -61,7 +64,7 @@ void Texture::createTextureFromPixels(const unsigned char* pixels, int texWidth,
 
 	vk::ImageCreateInfo imageInfo{
 		.imageType = vk::ImageType::e2D,
-		.format = vk::Format::eR8G8B8A8Srgb,
+		.format = _format,
 		.extent = vk::Extent3D{static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight), 1},
 		.mipLevels = 1,
 		.arrayLayers = 1,
@@ -184,7 +187,7 @@ void Texture::createTextureImageView() {
 	vk::ImageViewCreateInfo viewInfo{
 		.image = *_image,
 		.viewType = vk::ImageViewType::e2D,
-		.format = vk::Format::eR8G8B8A8Srgb,
+		.format = _format,
 		.subresourceRange =
 			{
 				.aspectMask = vk::ImageAspectFlagBits::eColor,

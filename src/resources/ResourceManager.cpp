@@ -25,13 +25,13 @@ void ResourceManager::initMaterialResources(vk::DescriptorSetLayout materialLayo
 }
 
 void ResourceManager::createDefaultTextures() {
-	// Create 1x1 white texture (RGBA)
+	// Create 1x1 white texture (RGBA) - sRGB for color data
 	unsigned char whitePixel[] = {255, 255, 255, 255};
-	_defaultWhiteTexture = std::make_shared<Texture>(_device, whitePixel, 1, 1);
+	_defaultWhiteTexture = std::make_shared<Texture>(_device, whitePixel, 1, 1, vk::Format::eR8G8B8A8Srgb);
 
-	// Create 1x1 default normal map (pointing up: RGB = 128, 128, 255 -> 0.5, 0.5, 1.0 in normalized form)
+	// Create 1x1 default normal map (pointing up: RGB = 128, 128, 255) - UNORM for data textures
 	unsigned char normalPixel[] = {128, 128, 255, 255};
-	_defaultNormalTexture = std::make_shared<Texture>(_device, normalPixel, 1, 1);
+	_defaultNormalTexture = std::make_shared<Texture>(_device, normalPixel, 1, 1, vk::Format::eR8G8B8A8Unorm);
 
 	_textureCache["__default_white__"] = _defaultWhiteTexture;
 	_textureCache["__default_normal__"] = _defaultNormalTexture;
@@ -66,13 +66,16 @@ const vk::raii::ShaderModule& ResourceManager::getShader(const std::string& file
 	return insertedIt.first->second;
 }
 
-std::shared_ptr<Texture> ResourceManager::getTexture(const std::string& filepath) {
+std::shared_ptr<Texture> ResourceManager::getTexture(const std::string& filepath, vk::Format format) {
 	if (filepath.empty()) {
 		return nullptr;
 	}
 
+	// Include format in cache key to support same file with different formats
+	std::string cacheKey = filepath + "_fmt" + std::to_string(static_cast<int>(format));
+
 	// Check cache
-	auto it = _textureCache.find(filepath);
+	auto it = _textureCache.find(cacheKey);
 	if (it != _textureCache.end()) {
 		return it->second;
 	}
@@ -80,8 +83,8 @@ std::shared_ptr<Texture> ResourceManager::getTexture(const std::string& filepath
 	// Load new
 	try {
 		std::cout << "Loading texture: " << filepath << std::endl;
-		auto texture = std::make_shared<Texture>(_device, filepath);
-		_textureCache.emplace(filepath, texture);
+		auto texture = std::make_shared<Texture>(_device, filepath, format);
+		_textureCache.emplace(cacheKey, texture);
 		return texture;
 	} catch (const std::exception& e) {
 		std::cerr << "Failed to load texture: " << filepath << " Error: " << e.what() << std::endl;
@@ -90,9 +93,12 @@ std::shared_ptr<Texture> ResourceManager::getTexture(const std::string& filepath
 }
 
 std::shared_ptr<Texture> ResourceManager::loadTextureFromMemory(const unsigned char* data, size_t size,
-																const std::string& cacheKey) {
+																const std::string& cacheKey, vk::Format format) {
+	// Include format in cache key
+	std::string fullCacheKey = cacheKey + "_fmt" + std::to_string(static_cast<int>(format));
+
 	// Check cache
-	auto it = _textureCache.find(cacheKey);
+	auto it = _textureCache.find(fullCacheKey);
 	if (it != _textureCache.end()) {
 		return it->second;
 	}
@@ -100,8 +106,8 @@ std::shared_ptr<Texture> ResourceManager::loadTextureFromMemory(const unsigned c
 	// Load from memory
 	try {
 		std::cout << "Loading embedded texture: " << cacheKey << std::endl;
-		auto texture = std::make_shared<Texture>(_device, data, size);
-		_textureCache.emplace(cacheKey, texture);
+		auto texture = std::make_shared<Texture>(_device, data, size, format);
+		_textureCache.emplace(fullCacheKey, texture);
 		return texture;
 	} catch (const std::exception& e) {
 		std::cerr << "Failed to load embedded texture: " << cacheKey << " Error: " << e.what() << std::endl;

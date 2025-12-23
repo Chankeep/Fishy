@@ -4,6 +4,7 @@
 #include "../resources/Model.h"
 #include "../resources/ModelLoader.h"
 #include "../resources/ResourceManager.h"
+#include "../ui/ImGuiLayer.h"
 #include "VulkanContext.h"
 #include "VulkanDevice.h"
 #include "Window.h"
@@ -49,7 +50,10 @@ private:
 	// 5. Renderer - Owns SwapChain, destroyed before Device
 	Fishy::Renderer _renderer;
 
-	// 6. Loaded model
+	// 6. ImGui Layer - Destroyed before Renderer
+	std::unique_ptr<ImGuiLayer> _imguiLayer;
+
+	// 7. Loaded model
 	std::shared_ptr<Model> _model;
 };
 

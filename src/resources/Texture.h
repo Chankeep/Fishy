@@ -19,13 +19,16 @@ namespace Fishy {
 class Texture {
 public:
 	// Load from file path
-	Texture(const VulkanDevice& device, const std::string& path);
+	// format: eR8G8B8A8Srgb for color textures, eR8G8B8A8Unorm for data textures
+	Texture(const VulkanDevice& device, const std::string& path, vk::Format format = vk::Format::eR8G8B8A8Srgb);
 
 	// Load from encoded image data in memory (PNG, JPG, etc. for embedded glTF textures)
-	Texture(const VulkanDevice& device, const unsigned char* data, size_t size);
+	Texture(const VulkanDevice& device, const unsigned char* data, size_t size,
+			vk::Format format = vk::Format::eR8G8B8A8Srgb);
 
 	// Create from raw RGBA pixel data (for programmatic textures like default white/normal)
-	Texture(const VulkanDevice& device, const unsigned char* pixels, int width, int height);
+	Texture(const VulkanDevice& device, const unsigned char* pixels, int width, int height,
+			vk::Format format = vk::Format::eR8G8B8A8Srgb);
 
 	~Texture();
 
@@ -45,6 +48,7 @@ private:
 	void createTextureSampler();
 
 	const VulkanDevice& _device;
+	vk::Format _format;
 
 	vk::raii::Image _image = nullptr;
 	vk::raii::DeviceMemory _imageMemory = nullptr;
