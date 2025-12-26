@@ -1,6 +1,7 @@
 #include "Renderer.h"
 #include <iostream>
 
+#include "Camera.h"
 #include "PipelineBuilder.h"
 #include "core/VulkanDevice.h"
 #include "core/Window.h"
@@ -353,33 +354,23 @@ void Renderer::createDescriptorSets() {
 }
 
 void Renderer::updateUniformBuffer(uint32_t frameIndex) {
-	static auto startTime = std::chrono::high_resolution_clock::now();
-
-	auto currentTime = std::chrono::high_resolution_clock::now();
-	float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
-
 	auto extent = _swapChain->getExtent();
 	UniformBufferObject ubo{};
 
-	// Camera position (Y-up coordinate system for glTF)
-	ubo.camPos = glm::vec3(0.0f, 0.0f, 3.0f);
+	// Get camera matrices from Camera class
+	ubo.view = _camera.getViewMatrix();
+	ubo.proj = _camera.getProjectionMatrix(
+		static_cast<float>(extent.width) / static_cast<float>(extent.height));
+	ubo.camPos = _camera.getPosition();
 
 	// Lighting
 	ubo.lightDir = glm::normalize(glm::vec3(1.0f, 1.0f, 1.0f));
 	ubo.lightColor = glm::vec3(1.0f, 1.0f, 1.0f) * 5.0f;
 
-	// Model - rotate around Y axis (glTF uses Y-up)
-	// Rotate +90 degrees around X to fix model orientation
+	// Model - no auto-rotation (static)
+	// Rotate +90 degrees around X to fix model orientation (glTF uses Y-up)
 	glm::mat4 fixRotation = glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
-	glm::mat4 animRotation = glm::rotate(glm::mat4(1.0f), time * glm::radians(30.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-	ubo.model = animRotation * fixRotation;
-
-	// View - Y-up coordinate system
-	ubo.view = glm::lookAt(ubo.camPos, glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-
-	ubo.proj = glm::perspective(glm::radians(45.0f),
-								static_cast<float>(extent.width) / static_cast<float>(extent.height), 0.1f, 100.0f);
-	ubo.proj[1][1] *= -1; // Invert Y for Vulkan
+	ubo.model = fixRotation;
 
 	// Debug settings
 	ubo.debugViewInputs = _debugViewInputs;

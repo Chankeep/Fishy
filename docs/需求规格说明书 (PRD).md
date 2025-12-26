@@ -1,10 +1,10 @@
 # **现代 Vulkan 渲染引擎 MVP 1.0 \- 需求规格说明书 (PRD)**
 
-**版本:** 1.1
+**版本:** 1.2.1
 
-**状态:** 已冻结
+**状态:** 活跃
 
-**更新日期:** 2025/10/24 (基于架构优化建议修订)
+**更新日期:** 2025/12/27 (完成 REQ-I-01 轨道相机 + REQ-I-03 输入屏蔽)
 
 ## **1\. 项目概述**
 
@@ -33,9 +33,15 @@
   * 包含深度测试 (Depth Test) 和 深度写入 (Depth Write)。  
   * 清除值配置：Color (黑色), Depth (1.0)。  
 - [x] **REQ-R-02 (动态状态):** 使用 Dynamic State (Viewport, Scissor) 以避免因窗口 Resize 导致的管线重建。  
-- [x] **REQ-R-03 (Shader 管理):** 支持 Vertex 和 Fragment Shader 的加载。  
-  * 输入：SPIR-V 字节码。  
-- [ ] **REQ-R-04 (管线缓存):** 实现基础的 Pipeline 缓存机制（例如 HashMap），避免相同材质配置重复创建 Pipeline Object。
+- [x] **REQ-R-03 (Shader 管理):** 支持 Vertex 和 Fragment Shader 的加载。
+  * 输入：SPIR-V 字节码。
+- [ ] **REQ-R-04 (Shader Reflection):** 从 SPIR-V 自动提取管线配置。
+  * 解析 vertex input attributes（location, format, offset）
+  * 解析 descriptor bindings（set, binding, type, stage）
+  * 解析 push constant ranges
+  * 按照约定验证 shader/Material 兼容性
+  * 缓存反射结果避免重复解析
+- [ ] **REQ-R-05 (管线缓存):** 实现基础的 Pipeline 缓存机制（例如 HashMap），避免相同材质配置重复创建 Pipeline Object。
 
 ### **2.3 资源管理 (Resource Management)**
 
@@ -74,13 +80,17 @@
 
 ### **2.6 交互 (Interaction)**
 
-- [ ] **REQ-I-01 (漫游相机):** 实现第一人称 FPS 相机 (WASD 移动 \+ 鼠标右键旋转)。
+- [x] **REQ-I-01 (漫游相机):** 实现轨道视察相机 (Orbit Camera) 用于模型检查。
+  * 鼠标右键拖拽: 围绕目标旋转
+  * 鼠标滚轮: 缩放
+  * 鼠标中键拖拽: 平移
+  * 自动移除模型的时间自动旋转
 - [ ] **REQ-I-02 (编辑器 UI):** 集成 Dear ImGui (Docking Branch)。
   * **Scene Hierarchy**: 显示场景物体列表，点击选中。
   * **Inspector**: 实时修改选中物体的 Transform 和材质。
   * **Asset Browser**: 浏览并加载磁盘上的模型与纹理。
   * **Material Creator**: 创建新材质并分配纹理资源。
-- [ ] **REQ-I-03 (输入屏蔽):** 当操作 UI 时，屏蔽相机的键盘鼠标输入。
+- [x] **REQ-I-03 (输入屏蔽):** 当操作 UI 时，屏蔽相机的鼠标输入。
 
 ## **3\. 非功能性需求 (NFR)**
 

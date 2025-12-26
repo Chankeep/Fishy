@@ -2,10 +2,15 @@
 
 ## Active
 
-- [ ] Fix PBR material implementation (currently not working properly).
-- [ ] Improve ImGui integration and input handling
-- [ ] PBR material: Correct texture format selection and proper gamma operations in shader
-- [ ] Integrate KTX2 texture format
+- [ ] Fix PBR material (texture formats, gamma)
+- [ ] ImGui integration and input handling
+- [ ] KTX2 texture format support
+- [ ] Shader reflection system
+  - Add `ShaderReflection` struct for vertex inputs and descriptor bindings
+  - Parse SPIR-V using SPIRV-Reflect (or custom parser)
+  - Auto-generate `PipelineVertexInputStateCreateInfo` and `DescriptorSetLayout`
+  - Validate shader/Material compatibility (glTF standard binding order)
+  - Cache reflection results in `ResourceManager`
 
 ## Archived
 

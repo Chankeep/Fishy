@@ -43,6 +43,9 @@ void Window::Init(const Properties& properties) {
 	glfwSetWindowUserPointer(_window, this);
 	glfwSetKeyCallback(_window, KeyCallback);
 	glfwSetFramebufferSizeCallback(_window, FramebufferResizeCallback);
+	glfwSetMouseButtonCallback(_window, MouseButtonCallback);
+	glfwSetCursorPosCallback(_window, CursorPosCallback);
+	glfwSetScrollCallback(_window, ScrollCallback);
 }
 
 void Window::createSurface(const vk::raii::Instance& instance) {
@@ -96,6 +99,47 @@ void Window::KeyCallback(GLFWwindow* window, int key, int scancode, int action, 
 				mode->width, mode->height, mode->refreshRate);
 		}
 	}
+}
+
+void Window::MouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
+	Window* win = static_cast<Window*>(glfwGetWindowUserPointer(window));
+
+	if (button == GLFW_MOUSE_BUTTON_RIGHT) {
+		win->_mouseState.rightButton = (action == GLFW_PRESS || action == GLFW_REPEAT);
+	}
+	if (button == GLFW_MOUSE_BUTTON_MIDDLE) {
+		win->_mouseState.middleButton = (action == GLFW_PRESS || action == GLFW_REPEAT);
+	}
+	if (button == GLFW_MOUSE_BUTTON_LEFT) {
+		win->_mouseState.leftButton = (action == GLFW_PRESS || action == GLFW_REPEAT);
+	}
+
+	// Reset first mouse state when any button is pressed to avoid jump
+	if (action == GLFW_PRESS) {
+		win->_firstMouse = true;
+	}
+}
+
+void Window::CursorPosCallback(GLFWwindow* window, double xpos, double ypos) {
+	Window* win = static_cast<Window*>(glfwGetWindowUserPointer(window));
+
+	if (win->_firstMouse) {
+		win->_lastMouseX = xpos;
+		win->_lastMouseY = ypos;
+		win->_firstMouse = false;
+	}
+
+	win->_mouseState.deltaX = xpos - win->_lastMouseX;
+	win->_mouseState.deltaY = ypos - win->_lastMouseY;
+
+	win->_lastMouseX = xpos;
+	win->_lastMouseY = ypos;
+}
+
+void Window::ScrollCallback(GLFWwindow* window, double xoffset, double yoffset) {
+	Window* win = static_cast<Window*>(glfwGetWindowUserPointer(window));
+	// yoffset is the scroll delta (positive = scroll up/zoom in, negative = scroll down/zoom out)
+	win->_mouseState.scrollDelta = yoffset;
 }
 
 } // namespace Fishy

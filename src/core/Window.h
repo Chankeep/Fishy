@@ -12,10 +12,29 @@ import vulkan_hpp;
 namespace Fishy {
 
 /**
+ * @brief Mouse input state for camera controls
+ */
+struct MouseState {
+	double deltaX = 0.0;      // Mouse X movement since last frame
+	double deltaY = 0.0;      // Mouse Y movement since last frame
+	double scrollDelta = 0.0; // Mouse wheel scroll delta
+	bool rightButton = false; // Right mouse button held
+	bool middleButton = false;// Middle mouse button held
+	bool leftButton = false;  // Left mouse button held
+
+	// Reset per-frame deltas
+	void reset() {
+		deltaX = 0.0;
+		deltaY = 0.0;
+		scrollDelta = 0.0;
+	}
+};
+
+/**
  * @brief Manages the GLFW window and Vulkan surface.
  *
  * Handles window creation, event callbacks (resizing, input), and creates
- * the corresponding Vulkan surface.
+ * the corresponding Vulkan surface. Also tracks mouse input for camera controls.
  */
 class Window {
 public:
@@ -42,11 +61,18 @@ public:
 
 	vk::raii::SurfaceKHR& getSurface() { return _surface; }
 
+	// Mouse state accessors
+	const MouseState& getMouseState() const { return _mouseState; }
+	void resetMouseDelta() { _mouseState.reset(); }
+
 private:
 	void Init(const Properties& properties);
 	void createSurface(const vk::raii::Instance& instance);
 	static void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods);
 	static void FramebufferResizeCallback(GLFWwindow* window, int width, int height);
+	static void MouseButtonCallback(GLFWwindow* window, int button, int action, int mods);
+	static void CursorPosCallback(GLFWwindow* window, double xpos, double ypos);
+	static void ScrollCallback(GLFWwindow* window, double xoffset, double yoffset);
 
 	vk::raii::SurfaceKHR _surface = nullptr;
 
@@ -61,6 +87,12 @@ private:
 	int _windowedHeight = 0;
 
 	bool _framebufferResized = false;
+
+	// Mouse tracking state
+	MouseState _mouseState;
+	double _lastMouseX = 0.0;
+	double _lastMouseY = 0.0;
+	bool _firstMouse = true;
 };
 
 } // namespace Fishy

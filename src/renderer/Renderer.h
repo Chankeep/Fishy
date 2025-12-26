@@ -10,6 +10,7 @@ import vulkan_hpp;
 
 #include "../resources/Mesh.h"
 #include "../resources/Model.h"
+#include "Camera.h"
 #include "GraphicsPipeline.h"
 #include "core/SwapChain.h"
 #include "core/VulkanBuffer.h"
@@ -60,6 +61,10 @@ public:
 	vk::Format getSwapChainFormat() const { return _swapChain->getFormat(); }
 	vk::Extent2D getSwapChainExtent() const { return _swapChain->getExtent(); }
 
+	// Camera access
+	Camera& getCamera() { return _camera; }
+	const Camera& getCamera() const { return _camera; }
+
 private:
 	// Frame management
 	bool beginFrame();
@@ -99,6 +104,9 @@ private:
 	VulkanDevice& _device;
 	Window& _window;
 	ResourceManager& _resourceManager;
+
+	// Camera for orbit controls
+	Camera _camera;
 
 	std::unique_ptr<SwapChain> _swapChain;
 

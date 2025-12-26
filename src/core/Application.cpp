@@ -77,8 +77,34 @@ void Application::Run() {
 	LogSystem::get().info("Starting main render loop");
 	DebugPanel debugPanel;
 
+	// Frame timing
+	static auto lastFrameTime = std::chrono::high_resolution_clock::now();
+
 	while (!_window.ShouldClose()) {
+		// Calculate delta time
+		auto currentTime = std::chrono::high_resolution_clock::now();
+		float deltaTime = std::chrono::duration<float>(currentTime - lastFrameTime).count();
+		lastFrameTime = currentTime;
+
 		_window.Update();
+
+		// Update camera from mouse input (only if ImGui is not capturing mouse)
+		ImGuiIO& io = ImGui::GetIO();
+		if (!io.WantCaptureMouse) {
+			const auto& mouseState = _window.getMouseState();
+			_renderer.getCamera().update(
+				static_cast<float>(mouseState.deltaX),
+				static_cast<float>(mouseState.deltaY),
+				static_cast<float>(mouseState.scrollDelta),
+				mouseState.rightButton,
+				mouseState.middleButton,
+				mouseState.leftButton,
+				deltaTime
+			);
+		}
+
+		// Reset mouse delta for next frame
+		_window.resetMouseDelta();
 
 		// Start ImGui frame
 		_imguiLayer->newFrame();
