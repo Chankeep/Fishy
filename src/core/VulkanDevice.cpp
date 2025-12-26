@@ -6,16 +6,28 @@ namespace Fishy {
 VulkanDevice::VulkanDevice(const vk::raii::Instance& instance, const vk::raii::SurfaceKHR& surface)
 	: _instance(instance), _surface(surface) {
 
+	LogSystem::get().info("Selecting physical device...");
+
 	vkb::Instance vkb_inst;
 	vkb_inst.instance = *instance;
 	vkb::PhysicalDeviceSelector selector{vkb_inst};
 	auto phys_ret = selector.set_surface(*surface).set_minimum_version(1, 3).select();
 
 	if (!phys_ret) {
+		LogSystem::get().error("Failed to select physical device: {}", phys_ret.error().message());
 		throw std::runtime_error("Failed to select physical device: " + phys_ret.error().message());
 	}
 
 	vkb::PhysicalDevice vkb_phys = phys_ret.value();
+
+	// Log selected device info
+	auto deviceName = vkb_phys.properties.deviceName;
+	LogSystem::get().info("Selected physical device: {}", deviceName);
+	LogSystem::get().info("  Driver Version: {}", vkb_phys.properties.driverVersion);
+	LogSystem::get().info("  API Version: {}.{}.{}",
+		VK_VERSION_MAJOR(vkb_phys.properties.apiVersion),
+		VK_VERSION_MINOR(vkb_phys.properties.apiVersion),
+		VK_VERSION_PATCH(vkb_phys.properties.apiVersion));
 
 	// Define required features
 	// We need Synchronization2 and DynamicRendering for modern Vulkan features
@@ -36,10 +48,12 @@ VulkanDevice::VulkanDevice(const vk::raii::Instance& instance, const vk::raii::S
 	device_builder.add_pNext(&features13).add_pNext(&features11).add_pNext(&features2).add_pNext(&featuresExt);
 	auto dev_ret = device_builder.build();
 	if (!dev_ret) {
+		LogSystem::get().error("Failed to build device: {}", dev_ret.error().message());
 		throw std::runtime_error("Failed to build device: " + dev_ret.error().message());
 	}
 
 	_vkbDevice = dev_ret.value();
+	LogSystem::get().info("Logical device created successfully");
 
 	// Initialize volk for this device
 	volkLoadDevice(_vkbDevice.device);
@@ -65,6 +79,9 @@ VulkanDevice::VulkanDevice(const vk::raii::Instance& instance, const vk::raii::S
 
 	_graphicsQueue = vk::raii::Queue(_device, _graphicsQueueFamily, 0);
 	_presentQueue = vk::raii::Queue(_device, present_queue_idx_ret.value(), 0);
+
+	LogSystem::get().info("Graphics queue family: {}", _graphicsQueueFamily);
+	LogSystem::get().info("Present queue family: {}", present_queue_idx_ret.value());
 }
 
 VulkanDevice::~VulkanDevice() {}

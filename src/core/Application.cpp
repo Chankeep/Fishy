@@ -2,6 +2,7 @@
 #include <iostream>
 
 #include "../ui/DebugPanel.h"
+#include "LogSystem.h"
 #include <imgui.h>
 
 namespace Fishy {
@@ -20,13 +21,20 @@ Application::Application()
 	  _device(_context.getInstance(), _window.getSurface()), _resourceManager(_device),
 	  _renderer(_device, _window, _resourceManager) {
 
+
+	LogSystem::get().info("Initializing Application...");
+	LogSystem::get().info("Window created: {}x{}", 1280, 720);
+
 	// Initialize ImGui Layer
 	_imguiLayer = std::make_unique<ImGuiLayer>(_context, _device, _window, _renderer.getSwapChainFormat());
+	LogSystem::get().info("ImGui Layer initialized");
 
 	// Try to load a default model
+	LogSystem::get().info("Loading default model: assets/models/DamagedHelmet.glb");
 	_model = ModelLoader::loadModel("assets/models/DamagedHelmet.glb", &_resourceManager);
 
 	if (!_model) {
+		LogSystem::get().warn("Failed to load model, creating default geometry");
 		std::cout << "No model loaded. Creating default geometry..." << std::endl;
 		// Create a simple default model with two quads
 		_model = std::make_shared<Model>();
@@ -52,16 +60,21 @@ Application::Application()
 
 		_model->addPrimitive({mesh, material});
 	}
+
+	LogSystem::get().info("Application initialization complete");
 }
 
 Application::~Application() {
+	LogSystem::get().info("Shutting down Application...");
 	// Wait for GPU before destroying ImGui resources
 	_device->waitIdle();
 	_imguiLayer.reset();
+	LogSystem::get().info("Application shutdown complete");
 }
 
 // Main application loop
 void Application::Run() {
+	LogSystem::get().info("Starting main render loop");
 	DebugPanel debugPanel;
 
 	while (!_window.ShouldClose()) {
@@ -82,6 +95,7 @@ void Application::Run() {
 		_renderer.render(*_model, [this](VkCommandBuffer cmd) { _imguiLayer->render(cmd); });
 	}
 
+	LogSystem::get().info("Main render loop ended");
 	_device->waitIdle();
 }
 

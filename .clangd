@@ -1,2 +1,8 @@
+CompileFlags:
+  Add:
+    - "-std=c++20"
+
 Diagnostics:
   UnusedIncludes: None
+  Suppress:
+    "invalid_consteval_call"

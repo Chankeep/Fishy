@@ -16,6 +16,7 @@ namespace Fishy {
 
 Renderer::Renderer(VulkanDevice& device, Window& window, ResourceManager& resourceManager)
 	: _device(device), _window(window), _resourceManager(resourceManager) {
+	LogSystem::get().info("Initializing Renderer...");
 	_frames.resize(MAX_FRAMES_IN_FLIGHT);
 	recreateSwapChain();
 	createCommandBuffers();
@@ -29,9 +30,11 @@ Renderer::Renderer(VulkanDevice& device, Window& window, ResourceManager& resour
 
 	// Initialize ResourceManager with material descriptor resources
 	_resourceManager.initMaterialResources(*_materialSetLayout, _descriptorPool);
+	LogSystem::get().info("Renderer initialized successfully");
 }
 
 Renderer::~Renderer() {
+	LogSystem::get().info("Shutting down Renderer...");
 	_device->waitIdle();
 
 	// Clear GPU resources from ResourceManager before destroying the descriptor pool
@@ -167,6 +170,7 @@ void Renderer::recreateSwapChain() {
 		glfwWaitEvents();
 	}
 
+	LogSystem::get().info("Recreating swap chain: {}x{}", extent.width, extent.height);
 	_device->waitIdle();
 
 	if (_swapChain == nullptr) {
@@ -263,6 +267,7 @@ void Renderer::createMaterialSetLayout() {
 }
 
 void Renderer::createGraphicsPipeline() {
+	LogSystem::get().info("Creating graphics pipeline...");
 	const auto& shaderModule = _resourceManager.getShader("shaders/PBRshader.slang.spv");
 
 	auto bindingDescription = Vertex::getBindingDescription();
@@ -285,6 +290,7 @@ void Renderer::createGraphicsPipeline() {
 		.setDepthStencilTest(true, true, vk::CompareOp::eLess, false, vk::CompareOp::eAlways);
 
 	_graphicsPipeline = builder.build(*_device);
+	LogSystem::get().info("Graphics pipeline created successfully");
 }
 
 void Renderer::createUniformBuffers() {
@@ -497,18 +503,24 @@ vk::Format Renderer::findDepthFormat() {
 		vk::FormatProperties props = _device.getPhysicalDevice().getFormatProperties(format);
 
 		if (tiling == vk::ImageTiling::eLinear && (props.linearTilingFeatures & features) == features) {
+			LogSystem::get().trace("Found depth format (linear): {}", vk::to_string(format));
 			return format;
 		} else if (tiling == vk::ImageTiling::eOptimal && (props.optimalTilingFeatures & features) == features) {
+			LogSystem::get().trace("Found depth format (optimal): {}", vk::to_string(format));
 			return format;
 		}
 	}
 
+	LogSystem::get().error("Failed to find supported depth format!");
 	throw std::runtime_error("failed to find supported depth format!");
 }
 
 void Renderer::createDepthResources() {
 	_depthFormat = findDepthFormat();
 	vk::Extent2D extent = getSwapChainExtent();
+
+	LogSystem::get().info("Creating depth resources: {}x{} format:{}",
+		extent.width, extent.height, vk::to_string(_depthFormat));
 
 	vk::ImageCreateInfo imageInfo{.imageType = vk::ImageType::e2D,
 								  .format = _depthFormat,

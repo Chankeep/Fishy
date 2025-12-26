@@ -17,6 +17,7 @@ ResourceManager::~ResourceManager() { clear(); }
 
 void ResourceManager::initMaterialResources(vk::DescriptorSetLayout materialLayout,
 											const vk::raii::DescriptorPool& descriptorPool) {
+	LogSystem::get().info("Initializing ResourceManager material resources...");
 	_materialLayout = materialLayout;
 	_descriptorPool = &descriptorPool;
 
@@ -25,6 +26,8 @@ void ResourceManager::initMaterialResources(vk::DescriptorSetLayout materialLayo
 }
 
 void ResourceManager::createDefaultTextures() {
+	LogSystem::get().info("Creating default textures (white, normal)...");
+
 	// Create 1x1 white texture (RGBA) - sRGB for color data
 	unsigned char whitePixel[] = {255, 255, 255, 255};
 	_defaultWhiteTexture = std::make_shared<Texture>(_device, whitePixel, 1, 1, vk::Format::eR8G8B8A8Srgb);
@@ -35,6 +38,8 @@ void ResourceManager::createDefaultTextures() {
 
 	_textureCache["__default_white__"] = _defaultWhiteTexture;
 	_textureCache["__default_normal__"] = _defaultNormalTexture;
+
+	LogSystem::get().info("Default textures created");
 }
 
 std::shared_ptr<Texture> ResourceManager::getDefaultWhiteTexture() {
@@ -59,6 +64,7 @@ const vk::raii::ShaderModule& ResourceManager::getShader(const std::string& file
 	}
 
 	// Not in cache, load from file
+	LogSystem::get().info("Loading shader: {}", filepath);
 	std::vector<char> code = readFile(filepath);
 	vk::raii::ShaderModule module = createShaderModule(code);
 
@@ -82,11 +88,12 @@ std::shared_ptr<Texture> ResourceManager::getTexture(const std::string& filepath
 
 	// Load new
 	try {
-		std::cout << "Loading texture: " << filepath << std::endl;
+		LogSystem::get().info("Loading texture: {}", filepath);
 		auto texture = std::make_shared<Texture>(_device, filepath, format);
 		_textureCache.emplace(cacheKey, texture);
 		return texture;
 	} catch (const std::exception& e) {
+		LogSystem::get().error("Failed to load texture: {} Error: {}", filepath, e.what());
 		std::cerr << "Failed to load texture: " << filepath << " Error: " << e.what() << std::endl;
 		return nullptr;
 	}
@@ -105,11 +112,12 @@ std::shared_ptr<Texture> ResourceManager::loadTextureFromMemory(const unsigned c
 
 	// Load from memory
 	try {
-		std::cout << "Loading embedded texture: " << cacheKey << std::endl;
+		LogSystem::get().info("Loading embedded texture: {} ({} bytes)", cacheKey, size);
 		auto texture = std::make_shared<Texture>(_device, data, size, format);
 		_textureCache.emplace(fullCacheKey, texture);
 		return texture;
 	} catch (const std::exception& e) {
+		LogSystem::get().error("Failed to load embedded texture: {} Error: {}", cacheKey, e.what());
 		std::cerr << "Failed to load embedded texture: " << cacheKey << " Error: " << e.what() << std::endl;
 		return nullptr;
 	}
@@ -134,6 +142,9 @@ GPUMesh* ResourceManager::getOrCreateGPUMesh(const Mesh* mesh, const vk::raii::C
 
 	vk::DeviceSize vertexSize = sizeof(Vertex) * vertices.size();
 	vk::DeviceSize indexSize = sizeof(uint32_t) * indices.size();
+
+	LogSystem::get().trace("Creating GPU mesh: {} vertices, {} indices ({} MB vertex data, {} MB index data)",
+		vertices.size(), indices.size(), vertexSize / (1024.0 * 1024.0), indexSize / (1024.0 * 1024.0));
 
 	// Vertex buffer
 	gpuMesh->vertexBuffer = std::make_unique<VulkanBuffer>(
@@ -289,6 +300,8 @@ GPUMaterial* ResourceManager::getOrCreateGPUMaterial(const Material* material) {
 }
 
 void ResourceManager::clearGPUResources() {
+	LogSystem::get().info("Clearing GPU resources ({} materials, {} meshes)...",
+		_gpuMaterialCache.size(), _gpuMeshCache.size());
 	// Clear GPU resources that hold descriptor sets from Renderer's pool
 	// Must be called before Renderer destroys its descriptor pool
 	_gpuMaterialCache.clear();
@@ -296,6 +309,7 @@ void ResourceManager::clearGPUResources() {
 }
 
 void ResourceManager::clear() {
+	LogSystem::get().info("Clearing ResourceManager...");
 	// Clear GPU resources first
 	clearGPUResources();
 
@@ -305,6 +319,8 @@ void ResourceManager::clear() {
 
 	_defaultWhiteTexture.reset();
 	_defaultNormalTexture.reset();
+
+	LogSystem::get().info("ResourceManager cleared");
 }
 
 std::vector<char> ResourceManager::readFile(const std::string& filename) {

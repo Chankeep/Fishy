@@ -34,9 +34,12 @@ void Texture::createTextureImage(const std::string& path) {
 	stbi_uc* pixels = stbi_load(path.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
 
 	if (!pixels) {
+		LogSystem::get().error("Failed to load texture image: {}", path);
 		throw std::runtime_error("failed to load texture image: " + path);
 	}
 
+	LogSystem::get().trace("Loaded texture from file: {} ({}x{} {} channels)",
+		path, texWidth, texHeight, texChannels);
 	createTextureFromPixels(pixels, texWidth, texHeight);
 	stbi_image_free(pixels);
 }
@@ -47,9 +50,12 @@ void Texture::createTextureImageFromMemory(const unsigned char* data, size_t siz
 		stbi_load_from_memory(data, static_cast<int>(size), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
 
 	if (!pixels) {
+		LogSystem::get().error("Failed to load texture from memory ({} bytes)", size);
 		throw std::runtime_error("failed to load texture from memory");
 	}
 
+	LogSystem::get().trace("Loaded texture from memory: {}x{} {} channels ({} bytes)",
+		texWidth, texHeight, texChannels, size);
 	createTextureFromPixels(pixels, texWidth, texHeight);
 	stbi_image_free(pixels);
 }

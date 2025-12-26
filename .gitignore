@@ -34,6 +34,7 @@ cmake_install.cmake
 .vs/
 .agent/
 .cache/
+.claude/
 
 # ------------------
 # 系统文件

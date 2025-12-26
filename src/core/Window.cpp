@@ -33,8 +33,12 @@ void Window::Init(const Properties& properties) {
 
 	_window = glfwCreateWindow(properties.width, properties.height, properties.title.c_str(), nullptr, nullptr);
 	if (!_window) {
+		LogSystem::get().error("Failed to create GLFW window: {} ({}x{})",
+			properties.title, properties.width, properties.height);
 		throw std::runtime_error("Failed to create GLFW window");
 	}
+
+	LogSystem::get().info("Created GLFW window: {} ({}x{})", properties.title, properties.width, properties.height);
 
 	glfwSetWindowUserPointer(_window, this);
 	glfwSetKeyCallback(_window, KeyCallback);
@@ -44,10 +48,12 @@ void Window::Init(const Properties& properties) {
 void Window::createSurface(const vk::raii::Instance& instance) {
 	VkSurfaceKHR cSurface;
 	if ((glfwCreateWindowSurface(*instance, _window, nullptr, &cSurface) != 0)) {
+		LogSystem::get().error("Failed to create window surface");
 		throw std::runtime_error("Failed to create window surface!");
 	}
 	// Wrap the C surface handle into RAII wrapper
 	_surface = vk::raii::SurfaceKHR(instance, cSurface);
+	LogSystem::get().info("Vulkan surface created successfully");
 }
 
 void Window::Update() { glfwPollEvents(); }
@@ -60,6 +66,7 @@ void Window::FramebufferResizeCallback(GLFWwindow* window, int width, int height
 	app->_properties.width = width;
 	app->_properties.height = height;
 	app->_framebufferResized = true;
+	LogSystem::get().info("Framebuffer resized: {}x{}", width, height);
 }
 
 void Window::KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
@@ -75,6 +82,7 @@ void Window::KeyCallback(GLFWwindow* window, int key, int scancode, int action, 
 			glfwSetWindowMonitor(window, nullptr, win->_windowedXPos, win->_windowedYPos, win->_windowedWidth,
 								 win->_windowedHeight, 0);
 			win->_isFullscreen = false;
+			LogSystem::get().info("Exited fullscreen mode");
 		} else {
 			glfwGetWindowPos(window, &win->_windowedXPos, &win->_windowedYPos);
 			glfwGetWindowSize(window, &win->_windowedWidth, &win->_windowedHeight);
@@ -84,6 +92,8 @@ void Window::KeyCallback(GLFWwindow* window, int key, int scancode, int action, 
 
 			glfwSetWindowMonitor(window, primaryMonitor, 0, 0, mode->width, mode->height, mode->refreshRate);
 			win->_isFullscreen = true;
+			LogSystem::get().info("Entered fullscreen mode: {}x{} @ {}Hz",
+				mode->width, mode->height, mode->refreshRate);
 		}
 	}
 }

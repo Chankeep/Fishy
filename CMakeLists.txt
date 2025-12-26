@@ -86,6 +86,25 @@ FetchContent_MakeAvailable(volk)
 target_link_libraries(volk PRIVATE Vulkan::Vulkan)
 
 # ------------------------------------------------------------------------------
+# spdlog - 日志库（推荐：编译为静态库 + 使用内置 fmt）
+# ------------------------------------------------------------------------------
+set(SPDLOG_BUILD_SHARED     OFF CACHE BOOL "" FORCE)
+set(SPDLOG_BUILD_TESTS      OFF CACHE BOOL "" FORCE)
+set(SPDLOG_BUILD_EXAMPLE    OFF CACHE BOOL "" FORCE)
+set(SPDLOG_BUILD_BENCH      OFF CACHE BOOL "" FORCE)
+set(SPDLOG_BUILD_WAL        OFF CACHE BOOL "" FORCE)
+set(SPDLOG_COMPILED_LIB     ON  CACHE BOOL "" FORCE)   # 关键：编译成库
+
+FetchContent_Declare(
+    spdlog
+    GIT_REPOSITORY https://github.com/gabime/spdlog.git
+    GIT_TAG        v1.14.1
+    GIT_SHALLOW    TRUE
+    GIT_PROGRESS   TRUE
+)
+FetchContent_MakeAvailable(spdlog)
+
+# ------------------------------------------------------------------------------
 # tinygltf - glTF 模型加载
 # ------------------------------------------------------------------------------
 set(TINYGLTF_HEADER_ONLY ON CACHE INTERNAL "")
@@ -119,6 +138,7 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
     GIT_TAG        docking
     GIT_SHALLOW    TRUE
+    GIT_PROGRESS   TRUE
 )
 FetchContent_MakeAvailable(imgui)
 
@@ -221,6 +241,7 @@ add_executable(${PROJECT_NAME} ${SOURCE_FILES})
 target_include_directories(${PROJECT_NAME} PRIVATE
     src
     ${Vulkan_INCLUDE_DIRS}
+    $<BUILD_INTERFACE:${spdlog_SOURCE_DIR}/include>
 )
 
 # 链接库 (Linking)
@@ -230,10 +251,17 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     glm::glm
     vk-bootstrap::vk-bootstrap
     volk::volk
+    spdlog::spdlog
     tinygltf
     GPUOpen::VulkanMemoryAllocator
     imgui
     ${CMAKE_DL_LIBS}
+)
+
+target_precompile_headers(${PROJECT_NAME} PRIVATE
+    # 这里放你想全局使用的库
+    
+    "${CMAKE_SOURCE_DIR}/src/core/LogSystem.h"
 )
 
 # ==============================================================================

@@ -3,6 +3,32 @@
 
 namespace Fishy {
 
+static std::string getBufferUsageDescription(vk::BufferUsageFlags usage) {
+	// TransferSrc alone is staging buffer
+	if (usage == vk::BufferUsageFlagBits::eTransferSrc) {
+		return "staging";
+	}
+
+	std::vector<std::string> usages;
+
+	if (usage & vk::BufferUsageFlagBits::eVertexBuffer) usages.push_back("vertex");
+	if (usage & vk::BufferUsageFlagBits::eIndexBuffer) usages.push_back("index");
+	if (usage & vk::BufferUsageFlagBits::eUniformBuffer) usages.push_back("uniform");
+	if (usage & vk::BufferUsageFlagBits::eStorageBuffer) usages.push_back("storage");
+	if (usage & vk::BufferUsageFlagBits::eTransferDst) usages.push_back("transfer-dst");
+	if (usage & vk::BufferUsageFlagBits::eIndirectBuffer) usages.push_back("indirect");
+
+	if (usages.empty()) return "unknown";
+
+	// Combine usage descriptions
+	std::string result;
+	for (size_t i = 0; i < usages.size(); ++i) {
+		if (i > 0) result += " + ";
+		result += usages[i];
+	}
+	return result;
+}
+
 VulkanBuffer::VulkanBuffer(const VulkanDevice& device, vk::DeviceSize size, vk::BufferUsageFlags usage,
 						   vk::MemoryPropertyFlags properties)
 	: _device(&device), _size(size) {
@@ -23,8 +49,12 @@ VulkanBuffer::VulkanBuffer(const VulkanDevice& device, vk::DeviceSize size, vk::
 	try {
 		_memory = vk::raii::DeviceMemory(**_device, allocInfo);
 	} catch (const std::exception& e) {
+		LogSystem::get().error("Failed to allocate buffer memory: {} bytes", size);
 		throw std::runtime_error("failed to allocate buffer memory!");
 	}
+
+	std::string usageDesc = getBufferUsageDescription(usage);
+	LogSystem::get().trace("Created {} buffer: {} bytes ({:.2f} MB)", usageDesc, size, size / (1024.0 * 1024.0));
 
 	// 4. Bind Memory
 	_buffer.bindMemory(*_memory, 0);

@@ -1,5 +1,6 @@
 #include "ModelLoader.h"
 #include "ResourceManager.h"
+#include "core/LogSystem.h"
 
 #define TINYGLTF_IMPLEMENTATION
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -7,7 +8,6 @@
 
 #include <filesystem>
 #include <glm/gtc/type_ptr.hpp>
-#include <iostream>
 #include <tiny_gltf.h>
 
 namespace Fishy {
@@ -26,46 +26,46 @@ std::shared_ptr<Model> ModelLoader::loadModel(const std::string& filepath, Resou
 	}
 
 	if (!warn.empty()) {
-		std::cout << "TinyGLTF Warning: " << warn << std::endl;
+		LogSystem::get().info("TinyGLTF Warning: {}", warn);
 	}
 
 	if (!err.empty()) {
-		std::cerr << "TinyGLTF Error: " << err << std::endl;
+		LogSystem::get().error("TinyGLTF Error: {}", err);
 	}
 
 	if (!ret) {
-		std::cerr << "Failed to parse glTF: " << filepath << std::endl;
+		LogSystem::get().error("Failed to parse glTF: {}", filepath);
 		return nullptr;
 	}
 
 	// Log glTF extensions used
 	if (!gltfModel.extensionsUsed.empty()) {
-		std::cout << "glTF extensions used:" << std::endl;
+		LogSystem::get().info("glTF extensions used:");
 		for (const auto& ext : gltfModel.extensionsUsed) {
-			std::cout << "  - " << ext << std::endl;
+			LogSystem::get().info("  - {}", ext);
 		}
 	}
 
 	// Log required extensions and warn about unsupported ones
 	if (!gltfModel.extensionsRequired.empty()) {
-		std::cout << "glTF extensions required:" << std::endl;
+		LogSystem::get().info("glTF extensions required:");
 		for (const auto& ext : gltfModel.extensionsRequired) {
-			std::cout << "  - " << ext;
+			std::string extInfo = "  - " + ext;
 			// Check if extension is supported
 			if (ext == "KHR_materials_clearcoat" || ext == "KHR_materials_transmission" || ext == "KHR_materials_ior" ||
 				ext == "KHR_materials_volume" || ext == "KHR_materials_sheen" || ext == "KHR_materials_specular" ||
 				ext == "KHR_materials_emissive_strength") {
-				std::cout << " (material extension - partial support)";
+				extInfo += " (material extension - partial support)";
 			} else if (ext == "KHR_texture_basisu") {
-				std::cout << " (requires KTX2/Basis Universal - NOT YET SUPPORTED)";
+				extInfo += " (requires KTX2/Basis Universal - NOT YET SUPPORTED)";
 			} else if (ext == "KHR_draco_mesh_compression") {
-				std::cout << " (requires Draco - NOT SUPPORTED)";
+				extInfo += " (requires Draco - NOT SUPPORTED)";
 			} else if (ext == "KHR_mesh_quantization") {
-				std::cout << " (mesh quantization - supported via tinygltf)";
+				extInfo += " (mesh quantization - supported via tinygltf)";
 			} else {
-				std::cout << " (UNKNOWN)";
+				extInfo += " (UNKNOWN)";
 			}
-			std::cout << std::endl;
+			LogSystem::get().info("{}", extInfo);
 		}
 	}
 
@@ -78,7 +78,8 @@ std::shared_ptr<Model> ModelLoader::loadModel(const std::string& filepath, Resou
 	// Helper to load texture (handles both external files and embedded textures)
 	// format should be eR8G8B8A8Srgb for color textures, eR8G8B8A8Unorm for data textures
 	auto loadTexture = [&](int textureIndex,
-						   vk::Format format = vk::Format::eR8G8B8A8Srgb) -> std::shared_ptr<Texture> {
+						   vk::Format format = vk::Format::eR8G8B8A8Srgb,
+						   const std::string& texName = "texture") -> std::shared_ptr<Texture> {
 		if (textureIndex < 0 || textureIndex >= static_cast<int>(gltfModel.textures.size())) {
 			return nullptr;
 		}
@@ -98,6 +99,7 @@ std::shared_ptr<Model> ModelLoader::loadModel(const std::string& filepath, Resou
 			} else {
 				texPath = baseDir + "/" + img.uri;
 			}
+			LogSystem::get().trace("{}: [External file] {}", texName, texPath);
 			return resourceManager->getTexture(texPath, format);
 		} else if (img.bufferView >= 0 && resourceManager) {
 			// Embedded: load from glTF buffer
@@ -107,15 +109,25 @@ std::shared_ptr<Model> ModelLoader::loadModel(const std::string& filepath, Resou
 			size_t size = bufferView.byteLength;
 
 			std::string cacheKey = filepath + "_tex_" + std::to_string(textureIndex);
+			LogSystem::get().trace("{}: [Embedded buffer] {} bytes", texName, size);
 			return resourceManager->loadTextureFromMemory(data, size, cacheKey, format);
 		} else if (!img.image.empty() && resourceManager) {
 			// Image data loaded by tinygltf (decoded in memory)
 			// This happens when tinygltf decodes embedded base64 images
 			std::string cacheKey = filepath + "_tex_" + std::to_string(textureIndex);
+			LogSystem::get().trace("{}: [Decoded image] {} bytes", texName, img.image.size());
 			return resourceManager->loadTextureFromMemory(img.image.data(), img.image.size(), cacheKey, format);
 		}
 
 		return nullptr;
+	};
+
+	// Texture path definition: name -> (getter function, format)
+	using TextureGetter = std::function<int(const tinygltf::Material&)>;
+	struct TexturePath {
+		std::string name;
+		TextureGetter getIndex;
+		vk::Format format;
 	};
 
 	// Helper to load Material
@@ -151,76 +163,114 @@ std::shared_ptr<Model> ModelLoader::loadModel(const std::string& filepath, Resou
 		material->params.normalScale = static_cast<float>(gltfMat.normalTexture.scale);
 		material->params.occlusionStrength = static_cast<float>(gltfMat.occlusionTexture.strength);
 
-		// Core Textures - use appropriate formats:
-		// sRGB for color data (baseColor, emissive)
-		// UNORM for linear/data textures (normal, metallicRoughness, occlusion)
-		material->baseColorMap = loadTexture(pbr.baseColorTexture.index, vk::Format::eR8G8B8A8Srgb);
-		material->metallicRoughnessMap = loadTexture(pbr.metallicRoughnessTexture.index, vk::Format::eR8G8B8A8Srgb);
-		material->normalMap = loadTexture(gltfMat.normalTexture.index, vk::Format::eR8G8B8A8Unorm);
-		material->occlusionMap = loadTexture(gltfMat.occlusionTexture.index, vk::Format::eR8G8B8A8Srgb);
-		material->emissiveMap = loadTexture(gltfMat.emissiveTexture.index, vk::Format::eR8G8B8A8Srgb);
+		// Define all standard glTF texture paths
+		std::vector<TexturePath> texturePaths = {
+			{"pbr.baseColorTexture",
+			 [](const tinygltf::Material& m) { return m.pbrMetallicRoughness.baseColorTexture.index; },
+			 vk::Format::eR8G8B8A8Srgb},
+			{"pbr.metallicRoughnessTexture",
+			 [](const tinygltf::Material& m) { return m.pbrMetallicRoughness.metallicRoughnessTexture.index; },
+			 vk::Format::eR8G8B8A8Srgb},
+			{"normalTexture",
+			 [](const tinygltf::Material& m) { return m.normalTexture.index; },
+			 vk::Format::eR8G8B8A8Unorm},
+			{"occlusionTexture",
+			 [](const tinygltf::Material& m) { return m.occlusionTexture.index; },
+			 vk::Format::eR8G8B8A8Srgb},
+			{"emissiveTexture",
+			 [](const tinygltf::Material& m) { return m.emissiveTexture.index; },
+			 vk::Format::eR8G8B8A8Srgb},
+		};
 
-		// Log texture presence
-		std::cout << "  Material textures:" << std::endl;
-		std::cout << "    baseColorMap:        " << (material->baseColorMap ? "loaded" : "not present") << std::endl;
-		std::cout << "    metallicRoughnessMap:" << (material->metallicRoughnessMap ? "loaded" : "not present")
-				  << std::endl;
-		std::cout << "    normalMap:           " << (material->normalMap ? "loaded" : "not present") << std::endl;
-		std::cout << "    occlusionMap:        " << (material->occlusionMap ? "loaded" : "not present") << std::endl;
-		std::cout << "    emissiveMap:         " << (material->emissiveMap ? "loaded" : "not present") << std::endl;
+		// Helper: set texture from path name
+		auto setMaterialTexture = [&](std::shared_ptr<Material> mat, const std::string& path,
+									  std::shared_ptr<Texture> tex) {
+			if (path == "pbr.baseColorTexture") mat->baseColorMap = tex;
+			else if (path == "pbr.metallicRoughnessTexture") mat->metallicRoughnessMap = tex;
+			else if (path == "normalTexture") mat->normalMap = tex;
+			else if (path == "occlusionTexture") mat->occlusionMap = tex;
+			else if (path == "emissiveTexture") mat->emissiveMap = tex;
+		};
 
-		// Parse material extensions
+		// Dynamically load all standard textures
+		std::vector<std::string> loadedTextureNames;
+		for (const auto& texPath : texturePaths) {
+			int texIdx = texPath.getIndex(gltfMat);
+			if (texIdx >= 0) {
+				auto tex = loadTexture(texIdx, texPath.format, texPath.name);
+				setMaterialTexture(material, texPath.name, tex);
+				if (tex) {
+					loadedTextureNames.push_back(texPath.name);
+				}
+			}
+		}
+
+		// Dynamically process extension textures
 		for (const auto& [extName, extValue] : gltfMat.extensions) {
 			if (extName == "KHR_materials_clearcoat") {
-				if (extValue.Has("clearcoatFactor")) {
+				std::string prefix = "KHR_materials_clearcoat.";
+
+				std::vector<std::pair<std::string, vk::Format>> clearcoatTextures = {
+					{"clearcoatTexture", vk::Format::eR8G8B8A8Srgb},
+					{"clearcoatRoughnessTexture", vk::Format::eR8G8B8A8Srgb},
+					{"clearcoatNormalTexture", vk::Format::eR8G8B8A8Unorm},
+				};
+
+				for (const auto& [texName, format] : clearcoatTextures) {
+					if (extValue.Has(texName)) {
+						int texIdx = extValue.Get(texName).Get("index").GetNumberAsInt();
+						std::string fullName = prefix + texName;
+						auto tex = loadTexture(texIdx, format, fullName);
+
+						if (texName == "clearcoatTexture") material->clearcoatMap = tex;
+						else if (texName == "clearcoatRoughnessTexture") material->clearcoatRoughnessMap = tex;
+						else if (texName == "clearcoatNormalTexture") material->clearcoatNormalMap = tex;
+
+						if (tex) loadedTextureNames.push_back(fullName);
+					}
+				}
+
+				// Extract factors
+				if (extValue.Has("clearcoatFactor"))
 					material->params.clearcoatFactor =
 						static_cast<float>(extValue.Get("clearcoatFactor").GetNumberAsDouble());
-				}
-				if (extValue.Has("clearcoatRoughnessFactor")) {
+				if (extValue.Has("clearcoatRoughnessFactor"))
 					material->params.clearcoatRoughnessFactor =
 						static_cast<float>(extValue.Get("clearcoatRoughnessFactor").GetNumberAsDouble());
-				}
-				if (extValue.Has("clearcoatTexture")) {
-					int texIndex = extValue.Get("clearcoatTexture").Get("index").GetNumberAsInt();
-					material->clearcoatMap = loadTexture(texIndex, vk::Format::eR8G8B8A8Srgb);
-				}
-				if (extValue.Has("clearcoatRoughnessTexture")) {
-					int texIndex = extValue.Get("clearcoatRoughnessTexture").Get("index").GetNumberAsInt();
-					material->clearcoatRoughnessMap = loadTexture(texIndex, vk::Format::eR8G8B8A8Srgb);
-				}
-				if (extValue.Has("clearcoatNormalTexture")) {
-					int texIndex = extValue.Get("clearcoatNormalTexture").Get("index").GetNumberAsInt();
-					material->clearcoatNormalMap = loadTexture(texIndex, vk::Format::eR8G8B8A8Srgb);
-				}
-				std::cout << "    KHR_materials_clearcoat: factor=" << material->params.clearcoatFactor
-						  << ", clearcoatMap=" << (material->clearcoatMap ? "loaded" : "not present")
-						  << ", roughnessMap=" << (material->clearcoatRoughnessMap ? "loaded" : "not present")
-						  << ", normalMap=" << (material->clearcoatNormalMap ? "loaded" : "not present") << std::endl;
+
 			} else if (extName == "KHR_materials_transmission") {
-				if (extValue.Has("transmissionFactor")) {
+				std::string prefix = "KHR_materials_transmission.";
+
+				if (extValue.Has("transmissionTexture")) {
+					int texIdx = extValue.Get("transmissionTexture").Get("index").GetNumberAsInt();
+					auto tex = loadTexture(texIdx, vk::Format::eR8G8B8A8Srgb, prefix + "transmissionTexture");
+					material->transmissionMap = tex;
+					if (tex) loadedTextureNames.push_back(prefix + "transmissionTexture");
+				}
+				if (extValue.Has("transmissionFactor"))
 					material->params.transmissionFactor =
 						static_cast<float>(extValue.Get("transmissionFactor").GetNumberAsDouble());
-				}
-				if (extValue.Has("transmissionTexture")) {
-					int texIndex = extValue.Get("transmissionTexture").Get("index").GetNumberAsInt();
-					material->transmissionMap = loadTexture(texIndex, vk::Format::eR8G8B8A8Srgb);
-				}
-				std::cout << "    KHR_materials_transmission: factor=" << material->params.transmissionFactor
-						  << ", transmissionMap=" << (material->transmissionMap ? "loaded" : "not present")
-						  << std::endl;
+
 			} else if (extName == "KHR_materials_ior") {
-				if (extValue.Has("ior")) {
+				if (extValue.Has("ior"))
 					material->params.ior = static_cast<float>(extValue.Get("ior").GetNumberAsDouble());
-				}
-				std::cout << "    KHR_materials_ior: ior=" << material->params.ior << std::endl;
 			} else if (extName == "KHR_materials_emissive_strength") {
-				if (extValue.Has("emissiveStrength")) {
+				if (extValue.Has("emissiveStrength"))
 					material->params.emissiveStrength =
 						static_cast<float>(extValue.Get("emissiveStrength").GetNumberAsDouble());
-				}
-				std::cout << "    KHR_materials_emissive_strength: strength=" << material->params.emissiveStrength
-						  << std::endl;
 			}
+		}
+
+		// Dynamic texture logging
+		if (!loadedTextureNames.empty()) {
+			std::string texList;
+			for (size_t i = 0; i < loadedTextureNames.size(); ++i) {
+				if (i > 0) texList += ", ";
+				texList += loadedTextureNames[i];
+			}
+			LogSystem::get().info("Material textures loaded: [{}]", texList);
+		} else {
+			LogSystem::get().info("Material textures: none");
 		}
 
 		return material;
@@ -264,57 +314,61 @@ std::shared_ptr<Model> ModelLoader::loadModel(const std::string& filepath, Resou
 					}
 				}
 
-				// Attributes
-				const float* bufferPos = nullptr;
-				const float* bufferNorm = nullptr;
-				const float* bufferTex = nullptr;
-				const float* bufferTan = nullptr;
-
-				int stridePos = 0, strideNorm = 0, strideTex = 0, strideTan = 0;
+				// Attributes - dynamically collect all attributes from glTF
+				std::map<std::string, std::pair<const float*, int>> attributeBuffers;
+				std::vector<std::string> attributeNames;
 				size_t vertexCount = 0;
 
-				auto getAttributeBuffer = [&](const char* name, const float** outBuffer, int* outStride) {
-					if (primitive.attributes.find(name) != primitive.attributes.end()) {
-						const auto& accessor = gltfModel.accessors[primitive.attributes.at(name)];
-						const auto& bufferView = gltfModel.bufferViews[accessor.bufferView];
-						const auto& buffer = gltfModel.buffers[bufferView.buffer];
-						*outBuffer = reinterpret_cast<const float*>(buffer.data.data() + bufferView.byteOffset +
-																	accessor.byteOffset);
-						*outStride = accessor.ByteStride(bufferView) ? accessor.ByteStride(bufferView) / sizeof(float)
-																	 : tinygltf::GetNumComponentsInType(accessor.type);
-						if (vertexCount == 0)
-							vertexCount = accessor.count;
+				for (const auto& [attrName, accessorIdx] : primitive.attributes) {
+					const auto& accessor = gltfModel.accessors[accessorIdx];
+					const auto& bufferView = gltfModel.bufferViews[accessor.bufferView];
+					const auto& buffer = gltfModel.buffers[bufferView.buffer];
+
+					const float* dataPtr = reinterpret_cast<const float*>(
+						buffer.data.data() + bufferView.byteOffset + accessor.byteOffset);
+					int stride = accessor.ByteStride(bufferView)
+									 ? accessor.ByteStride(bufferView) / sizeof(float)
+									 : tinygltf::GetNumComponentsInType(accessor.type);
+
+					attributeBuffers[attrName] = {dataPtr, stride};
+					attributeNames.push_back(attrName);
+
+					if (vertexCount == 0)
+						vertexCount = accessor.count;
+				}
+
+				// Log all found attributes
+				{
+					std::string attrsStr;
+					for (size_t i = 0; i < attributeNames.size(); ++i) {
+						if (i > 0) attrsStr += ", ";
+						attrsStr += attributeNames[i];
 					}
-				};
+					bool hasTangent = attributeBuffers.count("TANGENT") > 0;
+					LogSystem::get().info("Mesh attributes: [{}]{}", attrsStr, hasTangent ? "" : " (TANGENT will be computed)");
+				}
 
-				getAttributeBuffer("POSITION", &bufferPos, &stridePos);
-				getAttributeBuffer("NORMAL", &bufferNorm, &strideNorm);
-				getAttributeBuffer("TEXCOORD_0", &bufferTex, &strideTex);
-				getAttributeBuffer("TANGENT", &bufferTan, &strideTan);
-
-				// Log attribute presence
-				std::cout << "  Mesh primitive attributes:" << std::endl;
-				std::cout << "    POSITION:   " << (bufferPos ? "present" : "MISSING") << std::endl;
-				std::cout << "    NORMAL:     " << (bufferNorm ? "present" : "MISSING") << std::endl;
-				std::cout << "    TEXCOORD_0: " << (bufferTex ? "present" : "MISSING") << std::endl;
-				std::cout << "    TANGENT:    "
-						  << (bufferTan ? "present (will use provided)" : "MISSING (will compute from derivatives)")
-						  << std::endl;
-
+				// Build vertices from collected attributes
 				vertices.reserve(vertexCount);
 				for (size_t i = 0; i < vertexCount; ++i) {
 					Vertex v{};
-					if (bufferPos)
-						v.pos = glm::make_vec3(&bufferPos[i * stridePos]);
-					if (bufferNorm)
-						v.normal = glm::make_vec3(&bufferNorm[i * strideNorm]);
-					if (bufferTex)
-						v.texCoord = glm::make_vec2(&bufferTex[i * strideTex]);
-					if (bufferTan)
-						v.tangent = glm::make_vec4(&bufferTan[i * strideTan]);
-					else
-						v.tangent =
-							glm::vec4(0.0f, 0.0f, 0.0f, 0.0f); // No tangent - shader will compute from derivatives
+
+					// Get known attributes from dynamic map
+					if (auto it = attributeBuffers.find("POSITION"); it != attributeBuffers.end()) {
+						v.pos = glm::make_vec3(&it->second.first[i * it->second.second]);
+					}
+					if (auto it = attributeBuffers.find("NORMAL"); it != attributeBuffers.end()) {
+						v.normal = glm::make_vec3(&it->second.first[i * it->second.second]);
+					}
+					if (auto it = attributeBuffers.find("TEXCOORD_0"); it != attributeBuffers.end()) {
+						v.texCoord = glm::make_vec2(&it->second.first[i * it->second.second]);
+					}
+					if (auto it = attributeBuffers.find("TANGENT"); it != attributeBuffers.end()) {
+						v.tangent = glm::make_vec4(&it->second.first[i * it->second.second]);
+					} else {
+						v.tangent = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f); // No tangent - shader will compute from derivatives
+					}
+
 					vertices.push_back(v);
 				}
 
@@ -334,8 +388,7 @@ std::shared_ptr<Model> ModelLoader::loadModel(const std::string& filepath, Resou
 		processNode(nodeIndex);
 	}
 
-	std::cout << "Loaded model: " << filepath << " with " << model->getPrimitives().size() << " primitives"
-			  << std::endl;
+	LogSystem::get().info("Loaded model: {} with {} primitives", filepath, model->getPrimitives().size());
 
 	return model;
 }

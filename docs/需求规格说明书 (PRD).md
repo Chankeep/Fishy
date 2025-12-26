@@ -19,8 +19,13 @@
   * 必须开启 Validation Layers (在 Debug 模式下)。  
   * 集成 VK\_EXT\_debug\_utils，支持在 RenderDoc 中显示 Debug Marker 和 Label。  
 - [x] **REQ-C-03 (交换链管理):** 实现 Swapchain 的创建与重建（处理窗口大小改变），支持双重缓冲（Double Buffering）或三重缓冲。  
-- [x] **REQ-C-04 (多帧并行架构 \- Frames in Flight):** \* 核心需求：实现至少 2 帧的并发渲染。  
+- [x] **REQ-C-04 (多帧并行架构 \- Frames in Flight):** \* 核心需求：实现至少 2 帧的并发渲染。
   * 为每一帧分配独立的 CommandPool、CommandBuffer、Semaphores (ImageAvailable, RenderFinished) 和 Fence。
+- [x] **REQ-C-05 (日志系统):** 集成 `spdlog` 实现统一日志管理。
+  * 支持多输出目标：控制台（彩色）、文件、循环缓冲区（用于 ImGui 显示）
+  * 支持日志级别：trace, info, warn, error, critical
+  * 使用 `std::source_location` 自动记录日志产生的文件名、行号和函数名
+  * 提供 Vulkan Debug Callback 集成，接收 Validation Layers 调试信息
 
 ### **2.2 渲染管线 (Render Pipeline)**
 
