@@ -5,28 +5,31 @@
 namespace Fishy {
 
 Texture::Texture(const VulkanDevice& device, const std::string& path, vk::Format format)
-	: _device(device), _format(format) {
+	: _device(device), _format(format), _vmaAllocator(device.getVmaAllocator()) {
 	createTextureImage(path);
 	createTextureImageView();
 	createTextureSampler();
 }
 
 Texture::Texture(const VulkanDevice& device, const unsigned char* data, size_t size, vk::Format format)
-	: _device(device), _format(format) {
+	: _device(device), _format(format), _vmaAllocator(device.getVmaAllocator()) {
 	createTextureImageFromMemory(data, size);
 	createTextureImageView();
 	createTextureSampler();
 }
 
 Texture::Texture(const VulkanDevice& device, const unsigned char* pixels, int width, int height, vk::Format format)
-	: _device(device), _format(format) {
+	: _device(device), _format(format), _vmaAllocator(device.getVmaAllocator()) {
 	createTextureFromPixels(pixels, width, height);
 	createTextureImageView();
 	createTextureSampler();
 }
 
 Texture::~Texture() {
-	// RAII handles cleanup
+	if (_vmaAllocation && _vmaAllocator) {
+		vmaDestroyImage(_vmaAllocator, _image, _vmaAllocation);
+	}
+	// RAII handles imageView and sampler cleanup
 }
 
 void Texture::createTextureImage(const std::string& path) {
@@ -65,9 +68,9 @@ void Texture::createTextureFromPixels(const unsigned char* pixels, int texWidth,
 
 	VulkanBuffer stagingBuffer(_device, imageSize, vk::BufferUsageFlagBits::eTransferSrc,
 							   vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
-
 	stagingBuffer.upload((void*)pixels, imageSize);
 
+	// Create Image using VMA (keep vk:: style, convert to Vk for VMA)
 	vk::ImageCreateInfo imageInfo{
 		.imageType = vk::ImageType::e2D,
 		.format = _format,
@@ -80,21 +83,26 @@ void Texture::createTextureFromPixels(const unsigned char* pixels, int texWidth,
 		.sharingMode = vk::SharingMode::eExclusive,
 		.initialLayout = vk::ImageLayout::eUndefined};
 
-	_image = vk::raii::Image(*_device, imageInfo);
+	VmaAllocationCreateInfo allocInfo = {};
+	allocInfo.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
 
-	vk::MemoryRequirements memRequirements = _image.getMemoryRequirements();
-	uint32_t memTypeIndex =
-		_device.findMemoryType(memRequirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal);
+	VkResult result = vmaCreateImage(_vmaAllocator, reinterpret_cast<const VkImageCreateInfo*>(&imageInfo), &allocInfo,
+									 &_image, &_vmaAllocation, nullptr);
 
-	vk::MemoryAllocateInfo allocInfo{
-		.allocationSize = memRequirements.size,
-		.memoryTypeIndex = memTypeIndex,
-	};
+	if (result != VK_SUCCESS) {
+		LogSystem::get().error("Failed to create VMA image: {}x{}", texWidth, texHeight);
+		throw std::runtime_error("Failed to create VMA image!");
+	}
 
-	_imageMemory = vk::raii::DeviceMemory(*_device, allocInfo);
-	_image.bindMemory(*_imageMemory, 0);
+	LogSystem::get().trace("VMA created texture image handle: {}", reinterpret_cast<uintptr_t>(_image));
 
-	// Create temporary command pool/buffer for image operations
+	// Transition layout and copy buffer to image
+	transitionImageLayout(vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
+	copyBufferToImage(stagingBuffer, texWidth, texHeight);
+	transitionImageLayout(vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+}
+
+void Texture::transitionImageLayout(vk::ImageLayout oldLayout, vk::ImageLayout newLayout) {
 	vk::CommandPoolCreateInfo poolInfo{
 		.flags = vk::CommandPoolCreateFlagBits::eTransient,
 		.queueFamilyIndex = _device.getGraphicsQueueFamilyIndex(),
@@ -110,73 +118,92 @@ void Texture::createTextureFromPixels(const unsigned char* pixels, int texWidth,
 	vk::raii::CommandBuffers cmdbuffers(*_device, cmdAllocInfo);
 	vk::raii::CommandBuffer& cmd = cmdbuffers[0];
 
-	// Record Layout Transition: Undefined -> TransferDst
 	cmd.begin(vk::CommandBufferBeginInfo{.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
 
-	{
-		vk::ImageMemoryBarrier barrier{
-			.srcAccessMask = vk::AccessFlagBits::eNone,
-			.dstAccessMask = vk::AccessFlagBits::eTransferWrite,
-			.oldLayout = vk::ImageLayout::eUndefined,
-			.newLayout = vk::ImageLayout::eTransferDstOptimal,
-			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-			.image = *_image,
-			.subresourceRange =
-				{
-					.aspectMask = vk::ImageAspectFlagBits::eColor,
-					.baseMipLevel = 0,
-					.levelCount = 1,
-					.baseArrayLayer = 0,
-					.layerCount = 1,
-				},
-		};
+	vk::PipelineStageFlags srcStage;
+	vk::PipelineStageFlags dstStage;
 
-		cmd.pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe, vk::PipelineStageFlagBits::eTransfer,
-							vk::DependencyFlags(), nullptr, nullptr, barrier);
+	vk::AccessFlags srcAccess;
+	vk::AccessFlags dstAccess;
+
+	// Determine stage and access masks based on layouts
+	if (oldLayout == vk::ImageLayout::eUndefined && newLayout == vk::ImageLayout::eTransferDstOptimal) {
+		srcAccess = vk::AccessFlagBits::eNone;
+		dstAccess = vk::AccessFlagBits::eTransferWrite;
+		srcStage = vk::PipelineStageFlagBits::eTopOfPipe;
+		dstStage = vk::PipelineStageFlagBits::eTransfer;
+	} else if (oldLayout == vk::ImageLayout::eTransferDstOptimal && newLayout == vk::ImageLayout::eShaderReadOnlyOptimal) {
+		srcAccess = vk::AccessFlagBits::eTransferWrite;
+		dstAccess = vk::AccessFlagBits::eShaderRead;
+		srcStage = vk::PipelineStageFlagBits::eTransfer;
+		dstStage = vk::PipelineStageFlagBits::eFragmentShader;
+	} else {
+		throw std::invalid_argument("unsupported layout transition!");
 	}
 
-	// Copy Buffer to Image
+	vk::ImageMemoryBarrier barrier{
+		.srcAccessMask = srcAccess,
+		.dstAccessMask = dstAccess,
+		.oldLayout = oldLayout,
+		.newLayout = newLayout,
+		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.image = _image,
+		.subresourceRange = {
+			.aspectMask = vk::ImageAspectFlagBits::eColor,
+			.baseMipLevel = 0,
+			.levelCount = 1,
+			.baseArrayLayer = 0,
+			.layerCount = 1,
+		},
+	};
+
+	cmd.pipelineBarrier(srcStage, dstStage, vk::DependencyFlags(), nullptr, nullptr, barrier);
+
+	cmd.end();
+
+	vk::SubmitInfo submitInfo{
+		.commandBufferCount = 1,
+		.pCommandBuffers = &(*cmd),
+	};
+
+	_device.getGraphicsQueue().submit(submitInfo, nullptr);
+	_device.getGraphicsQueue().waitIdle();
+}
+
+void Texture::copyBufferToImage(const VulkanBuffer& buffer, uint32_t width, uint32_t height) {
+	vk::CommandPoolCreateInfo poolInfo{
+		.flags = vk::CommandPoolCreateFlagBits::eTransient,
+		.queueFamilyIndex = _device.getGraphicsQueueFamilyIndex(),
+	};
+	vk::raii::CommandPool commandPool(*_device, poolInfo);
+
+	vk::CommandBufferAllocateInfo cmdAllocInfo{
+		.commandPool = *commandPool,
+		.level = vk::CommandBufferLevel::ePrimary,
+		.commandBufferCount = 1,
+	};
+
+	vk::raii::CommandBuffers cmdbuffers(*_device, cmdAllocInfo);
+	vk::raii::CommandBuffer& cmd = cmdbuffers[0];
+
+	cmd.begin(vk::CommandBufferBeginInfo{.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+
 	vk::BufferImageCopy region{
 		.bufferOffset = 0,
 		.bufferRowLength = 0,
 		.bufferImageHeight = 0,
-		.imageSubresource =
-			{
-				.aspectMask = vk::ImageAspectFlagBits::eColor,
-				.mipLevel = 0,
-				.baseArrayLayer = 0,
-				.layerCount = 1,
-			},
+		.imageSubresource = {
+			.aspectMask = vk::ImageAspectFlagBits::eColor,
+			.mipLevel = 0,
+			.baseArrayLayer = 0,
+			.layerCount = 1,
+		},
 		.imageOffset = {0, 0, 0},
-		.imageExtent = {static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight), 1},
+		.imageExtent = {width, height, 1},
 	};
 
-	cmd.copyBufferToImage(*stagingBuffer.getBuffer(), *_image, vk::ImageLayout::eTransferDstOptimal, region);
-
-	// Transition Layout: TransferDst -> ShaderReadOnly
-	{
-		vk::ImageMemoryBarrier barrier{
-			.srcAccessMask = vk::AccessFlagBits::eTransferWrite,
-			.dstAccessMask = vk::AccessFlagBits::eShaderRead,
-			.oldLayout = vk::ImageLayout::eTransferDstOptimal,
-			.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
-			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-			.image = *_image,
-			.subresourceRange =
-				{
-					.aspectMask = vk::ImageAspectFlagBits::eColor,
-					.baseMipLevel = 0,
-					.levelCount = 1,
-					.baseArrayLayer = 0,
-					.layerCount = 1,
-				},
-		};
-
-		cmd.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eFragmentShader,
-							vk::DependencyFlags(), nullptr, nullptr, barrier);
-	}
+	cmd.copyBufferToImage(buffer.getBuffer(), _image, vk::ImageLayout::eTransferDstOptimal, region);
 
 	cmd.end();
 
@@ -191,7 +218,7 @@ void Texture::createTextureFromPixels(const unsigned char* pixels, int texWidth,
 
 void Texture::createTextureImageView() {
 	vk::ImageViewCreateInfo viewInfo{
-		.image = *_image,
+		.image = _image,
 		.viewType = vk::ImageViewType::e2D,
 		.format = _format,
 		.subresourceRange =

@@ -1,3 +1,4 @@
+#define VMA_IMPLEMENTATION
 #include "VulkanDevice.h"
 #include <VkBootstrap.h>
 
@@ -24,10 +25,9 @@ VulkanDevice::VulkanDevice(const vk::raii::Instance& instance, const vk::raii::S
 	auto deviceName = vkb_phys.properties.deviceName;
 	LogSystem::get().info("Selected physical device: {}", deviceName);
 	LogSystem::get().info("  Driver Version: {}", vkb_phys.properties.driverVersion);
-	LogSystem::get().info("  API Version: {}.{}.{}",
-		VK_VERSION_MAJOR(vkb_phys.properties.apiVersion),
-		VK_VERSION_MINOR(vkb_phys.properties.apiVersion),
-		VK_VERSION_PATCH(vkb_phys.properties.apiVersion));
+	LogSystem::get().info("  API Version: {}.{}.{}", VK_VERSION_MAJOR(vkb_phys.properties.apiVersion),
+						  VK_VERSION_MINOR(vkb_phys.properties.apiVersion),
+						  VK_VERSION_PATCH(vkb_phys.properties.apiVersion));
 
 	// Define required features
 	// We need Synchronization2 and DynamicRendering for modern Vulkan features
@@ -82,9 +82,30 @@ VulkanDevice::VulkanDevice(const vk::raii::Instance& instance, const vk::raii::S
 
 	LogSystem::get().info("Graphics queue family: {}", _graphicsQueueFamily);
 	LogSystem::get().info("Present queue family: {}", present_queue_idx_ret.value());
+
+	VmaVulkanFunctions vulkanFunctions = {};
+	vulkanFunctions.vkGetInstanceProcAddr = vkGetInstanceProcAddr;
+	vulkanFunctions.vkGetDeviceProcAddr = vkGetDeviceProcAddr;
+
+	VmaAllocatorCreateInfo allocatorInfo = {};
+	allocatorInfo.physicalDevice = *_physicalDevice;
+	allocatorInfo.device = *_device;
+	allocatorInfo.instance = *_instance;
+	allocatorInfo.vulkanApiVersion = VK_API_VERSION_1_3;
+	allocatorInfo.pVulkanFunctions = &vulkanFunctions;
+
+	auto vma_res = vmaCreateAllocator(&allocatorInfo, &_vmaAllocator);
+
+	if(vma_res != VkResult::VK_SUCCESS){
+		LogSystem::get().error("Create Vma allocator failed!");
+	} else{
+		LogSystem::get().info("Create Vma allocator successfully");
+	}
 }
 
-VulkanDevice::~VulkanDevice() {}
+VulkanDevice::~VulkanDevice() {
+	vmaDestroyAllocator(_vmaAllocator);
+}
 
 uint32_t VulkanDevice::findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties) const {
 	vk::PhysicalDeviceMemoryProperties memProperties = _physicalDevice.getMemoryProperties();

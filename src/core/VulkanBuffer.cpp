@@ -31,50 +31,71 @@ static std::string getBufferUsageDescription(vk::BufferUsageFlags usage) {
 
 VulkanBuffer::VulkanBuffer(const VulkanDevice& device, vk::DeviceSize size, vk::BufferUsageFlags usage,
 						   vk::MemoryPropertyFlags properties)
-	: _device(&device), _size(size) {
+	: _device(device), _size(size), _vmaAllocator(device.getVmaAllocator()) {
 
-	// 1. Create Buffer
-	vk::BufferCreateInfo bufferInfo{.size = size, .usage = usage, .sharingMode = vk::SharingMode::eExclusive};
+	// 1. Create Buffer using VMA
+	VkBufferCreateInfo bufferInfo = {
+		.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+		.size = size,
+		.usage = static_cast<VkBufferUsageFlags>(usage),
+		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+	};
 
-	_buffer = vk::raii::Buffer(**_device, bufferInfo);
+	VmaAllocationCreateInfo allocInfo = {};
 
-	// 2. Get Memory Requirements
-	vk::MemoryRequirements memRequirements = _buffer.getMemoryRequirements();
-
-	// 3. Allocate Memory
-	vk::MemoryAllocateInfo allocInfo{.allocationSize = memRequirements.size,
-									 .memoryTypeIndex =
-										 _device->findMemoryType(memRequirements.memoryTypeBits, properties)};
-
-	try {
-		_memory = vk::raii::DeviceMemory(**_device, allocInfo);
-	} catch (const std::exception& e) {
-		LogSystem::get().error("Failed to allocate buffer memory: {} bytes", size);
-		throw std::runtime_error("failed to allocate buffer memory!");
+	// Determine memory strategy based on requested properties
+	if (properties & vk::MemoryPropertyFlagBits::eHostVisible) {
+		// Strategy: Persistent mapping for frequently updated data (Uniform Buffers)
+		allocInfo.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
+		allocInfo.requiredFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
+		allocInfo.preferredFlags = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+	} else {
+		// Strategy: Device local for static data (Vertex/Index Buffers)
+		allocInfo.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
 	}
+
+	VmaAllocationInfo allocInfoOut;
+
+	VkResult result = vmaCreateBuffer(_vmaAllocator, &bufferInfo, &allocInfo,
+									  &_buffer, &_vmaAllocation, &allocInfoOut);
+
+	if (result != VK_SUCCESS) {
+		LogSystem::get().error("Failed to create VMA buffer: {} bytes", size);
+		throw std::runtime_error("Failed to create VMA buffer!");
+	}
+
+	// VMA already filled _buffer, store mapped pointer if available
+	_mappedData = allocInfoOut.pMappedData;
 
 	std::string usageDesc = getBufferUsageDescription(usage);
 	LogSystem::get().trace("Created {} buffer: {} bytes ({:.2f} MB)", usageDesc, size, size / (1024.0 * 1024.0));
-
-	// 4. Bind Memory
-	_buffer.bindMemory(*_memory, 0);
 }
 
 VulkanBuffer::~VulkanBuffer() {
-	// RAII handles destruction
+	if (_vmaAllocation && _vmaAllocator) {
+		vmaDestroyBuffer(_vmaAllocator, _buffer, _vmaAllocation);
+	}
 }
 
 void* VulkanBuffer::map(vk::DeviceSize offset, vk::DeviceSize size) {
-	if (!_mapped) {
-		_mapped = _memory.mapMemory(offset, size);
+	if (_mappedData) {
+		// Already mapped persistently, return offset pointer
+		return static_cast<char*>(_mappedData) + offset;
 	}
-	return _mapped;
+
+	// Fallback: map on-demand (should not happen with VMA_MAPPING strategy)
+	void* data = nullptr;
+	VkResult result = vmaMapMemory(_vmaAllocator, _vmaAllocation, &data);
+	if (result == VK_SUCCESS) {
+		return static_cast<char*>(data) + offset;
+	}
+	return nullptr;
 }
 
 void VulkanBuffer::unmap() {
-	if (_mapped) {
-		_memory.unmapMemory();
-		_mapped = nullptr;
+	if (!_mappedData) {
+		// Only unmap if not persistently mapped
+		vmaUnmapMemory(_vmaAllocator, _vmaAllocation);
 	}
 }
 
@@ -82,8 +103,7 @@ bool VulkanBuffer::upload(void* data, vk::DeviceSize size) {
 	void* mappedData = map(0, size);
 	if (mappedData) {
 		memcpy(mappedData, data, static_cast<size_t>(size));
-		// If memory is not Coherent, we might need flush here, but assuming Coherent for simplicity for map/write
-		// usually. Or we should check properties.
+		// VMA with HOST_COHERENT doesn't need explicit flush
 		unmap();
 		return true;
 	}
@@ -93,8 +113,8 @@ bool VulkanBuffer::upload(void* data, vk::DeviceSize size) {
 void VulkanBuffer::uploadStaged(const vk::raii::CommandPool& commandPool, const vk::raii::Queue& queue, void* data,
 								vk::DeviceSize size) {
 
-	// 1. Create Staging Buffer (Host Visible | Coherent)
-	VulkanBuffer stagingBuffer(*_device, size, vk::BufferUsageFlagBits::eTransferSrc,
+	// 1. Create Staging Buffer (Host Visible | Coherent with persistent mapping)
+	VulkanBuffer stagingBuffer(_device, size, vk::BufferUsageFlagBits::eTransferSrc,
 							   vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
 
 	// 2. Map and Copy
@@ -104,14 +124,14 @@ void VulkanBuffer::uploadStaged(const vk::raii::CommandPool& commandPool, const 
 	vk::CommandBufferAllocateInfo allocInfo{
 		.commandPool = *commandPool, .level = vk::CommandBufferLevel::ePrimary, .commandBufferCount = 1};
 
-	vk::raii::CommandBuffers cmdbuffers(**_device, allocInfo);
+	vk::raii::CommandBuffers cmdbuffers(*_device, allocInfo);
 	vk::raii::CommandBuffer& cmd = cmdbuffers[0];
 
 	// 4. Record Copy Command
 	vk::CommandBufferBeginInfo beginInfo{.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit};
 	cmd.begin(beginInfo);
 
-	copyBuffer(*_device, cmd, stagingBuffer, *this, size);
+	copyBuffer(_device, cmd, stagingBuffer, *this, size);
 
 	cmd.end();
 
@@ -130,7 +150,7 @@ void VulkanBuffer::copyBuffer(const VulkanDevice& device, const vk::raii::Comman
 	copyRegion.srcOffset = 0;
 	copyRegion.dstOffset = 0;
 	copyRegion.size = size;
-	cmd.copyBuffer(*srcBuffer.getBuffer(), *dstBuffer.getBuffer(), copyRegion);
+	cmd.copyBuffer(srcBuffer.getHandle(), dstBuffer.getHandle(), copyRegion);
 }
 
 } // namespace Fishy

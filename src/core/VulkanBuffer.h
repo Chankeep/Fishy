@@ -13,12 +13,13 @@ public:
 
 	VulkanBuffer(const VulkanBuffer&) = delete;
 	VulkanBuffer& operator=(const VulkanBuffer&) = delete;
-	VulkanBuffer(VulkanBuffer&&) = default;
-	VulkanBuffer& operator=(VulkanBuffer&&) = default;
+	VulkanBuffer(VulkanBuffer&&) = delete;
+	VulkanBuffer& operator=(VulkanBuffer&&) = delete;
 
-	const vk::raii::Buffer& getBuffer() const { return _buffer; }
-	const vk::raii::DeviceMemory& getMemory() const { return _memory; }
+	VkBuffer getHandle() const { return _buffer; }
+	vk::Buffer getBuffer() const { return vk::Buffer(_buffer); }
 	vk::DeviceSize getSize() const { return _size; }
+	void* getMappedPtr() const { return _mappedData; }
 
 	// Maps the memory to a host pointer.
 	// Use for HostVisible memory.
@@ -43,11 +44,12 @@ public:
 						   const VulkanBuffer& srcBuffer, VulkanBuffer& dstBuffer, vk::DeviceSize size);
 
 private:
-	const VulkanDevice* _device;
+	const VulkanDevice& _device;
 	vk::DeviceSize _size;
-	vk::raii::Buffer _buffer = nullptr;
-	vk::raii::DeviceMemory _memory = nullptr;
-	void* _mapped = nullptr;
+	VkBuffer _buffer = VK_NULL_HANDLE;
+	VmaAllocation _vmaAllocation = nullptr;
+	VmaAllocator _vmaAllocator = nullptr;
+	void* _mappedData = nullptr;
 };
 
 } // namespace Fishy

@@ -30,8 +30,9 @@ Application::Application()
 	LogSystem::get().info("ImGui Layer initialized");
 
 	// Try to load a default model
-	LogSystem::get().info("Loading default model: assets/models/DamagedHelmet.glb");
-	_model = ModelLoader::loadModel("assets/models/DamagedHelmet.glb", &_resourceManager);
+	auto modelPath = "assets/models/MultiUVTest.glb";
+	LogSystem::get().info("Loading default model: {}", modelPath);
+	_model = ModelLoader::loadModel(modelPath, &_resourceManager);
 
 	if (!_model) {
 		LogSystem::get().warn("Failed to load model, creating default geometry");

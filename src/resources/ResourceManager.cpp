@@ -273,7 +273,7 @@ GPUMaterial* ResourceManager::getOrCreateGPUMaterial(const Material* material) {
 
 	// Binding 0: Material UBO
 	vk::DescriptorBufferInfo bufferInfo{
-		.buffer = *gpuMaterial->uniformBuffer->getBuffer(), .offset = 0, .range = sizeof(MaterialUBO)};
+		.buffer = gpuMaterial->uniformBuffer->getBuffer(), .offset = 0, .range = sizeof(MaterialUBO)};
 	writes.push_back({.dstSet = *gpuMaterial->descriptorSet,
 					  .dstBinding = 0,
 					  .dstArrayElement = 0,
@@ -300,6 +300,11 @@ GPUMaterial* ResourceManager::getOrCreateGPUMaterial(const Material* material) {
 }
 
 void ResourceManager::clearGPUResources() {
+	// Idempotent: safe to call multiple times
+	if (_gpuMaterialCache.empty() && _gpuMeshCache.empty()) {
+		return;  // Already cleared
+	}
+
 	LogSystem::get().info("Clearing GPU resources ({} materials, {} meshes)...",
 		_gpuMaterialCache.size(), _gpuMeshCache.size());
 	// Clear GPU resources that hold descriptor sets from Renderer's pool

@@ -1,10 +1,10 @@
 # **现代 Vulkan 渲染引擎 MVP 1.0 \- 需求规格说明书 (PRD)**
 
-**版本:** 1.2.1
+**版本:** 1.2.2
 
 **状态:** 活跃
 
-**更新日期:** 2025/12/27 (完成 REQ-I-01 轨道相机 + REQ-I-03 输入屏蔽)
+**更新日期:** 2025/12/27 (完成 REQ-M-00 VMA 内存管理集成)
 
 ## **1\. 项目概述**
 
@@ -45,6 +45,12 @@
 
 ### **2.3 资源管理 (Resource Management)**
 
+- [x] **REQ-M-00 (VMA 内存管理):** 集成 Vulkan Memory Allocator (VMA) 实现自动化显存管理。
+  * 在 `VulkanDevice` 中创建和管理 `VmaAllocator` 生命周期
+  * `VulkanBuffer` 使用 `vmaCreateBuffer()` 分配缓冲区内存
+  * `Texture` 使用 `vmaCreateImage()` 分配图像内存
+  * 支持多种内存类型：HostVisible、DeviceLocal
+  * 提供内存映射和 Staging Buffer 上传机制
 - [x] **REQ-M-01 (Buffer 封装):** 封装 VulkanBuffer 类。  
   * 支持 Staging Buffer 上传机制（Host \-\> Device Local）。  
 - [x] **REQ-M-02 (纹理系统):** \* 加载 .jpg/.png/.ktx2 图片。

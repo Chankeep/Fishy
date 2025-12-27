@@ -36,9 +36,13 @@ public:
 	Texture(const Texture&) = delete;
 	Texture& operator=(const Texture&) = delete;
 
-	const vk::raii::Image& getImage() const { return _image; }
+	VkImage getImage() const { return _image; }
 	const vk::raii::ImageView& getImageView() const { return _imageView; }
 	const vk::raii::Sampler& getSampler() const { return _sampler; }
+
+private:
+	void transitionImageLayout(vk::ImageLayout oldLayout, vk::ImageLayout newLayout);
+	void copyBufferToImage(const VulkanBuffer& buffer, uint32_t width, uint32_t height);
 
 private:
 	void createTextureImage(const std::string& path);
@@ -50,8 +54,9 @@ private:
 	const VulkanDevice& _device;
 	vk::Format _format;
 
-	vk::raii::Image _image = nullptr;
-	vk::raii::DeviceMemory _imageMemory = nullptr;
+	VkImage _image = VK_NULL_HANDLE;
+	VmaAllocation _vmaAllocation = nullptr;
+	VmaAllocator _vmaAllocator = nullptr;
 	vk::raii::ImageView _imageView = nullptr;
 	vk::raii::Sampler _sampler = nullptr;
 };

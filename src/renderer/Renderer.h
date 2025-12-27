@@ -111,8 +111,8 @@ private:
 	std::unique_ptr<SwapChain> _swapChain;
 
 	// Depth resources
-	vk::raii::Image _depthImage = nullptr;
-	vk::raii::DeviceMemory _depthImageMemory = nullptr;
+	VkImage _depthImage = VK_NULL_HANDLE;
+	VmaAllocation _depthAllocation = nullptr;
 	vk::raii::ImageView _depthImageView = nullptr;
 	vk::Format _depthFormat = vk::Format::eUndefined;
 

@@ -44,6 +44,11 @@ Renderer::~Renderer() {
 
 	freeCommandBuffers();
 	_swapChain.reset();
+
+	// Destroy depth image with VMA
+	if (_depthAllocation) {
+		vmaDestroyImage(_device.getVmaAllocator(), _depthImage, _depthAllocation);
+	}
 }
 
 void Renderer::render(const Model& model, std::function<void(VkCommandBuffer)> uiRenderCallback) {
@@ -114,8 +119,8 @@ void Renderer::render(const Model& model, std::function<void(VkCommandBuffer)> u
 		}
 
 		// Bind vertex and index buffers
-		cmd.bindVertexBuffers(0, *gpuMesh->vertexBuffer->getBuffer(), {0});
-		cmd.bindIndexBuffer(*gpuMesh->indexBuffer->getBuffer(), 0, vk::IndexType::eUint32);
+		cmd.bindVertexBuffers(0, gpuMesh->vertexBuffer->getBuffer(), {0});
+		cmd.bindIndexBuffer(gpuMesh->indexBuffer->getBuffer(), 0, vk::IndexType::eUint32);
 
 		// Bind descriptor sets
 		std::vector<vk::DescriptorSet> descriptorSets;
@@ -337,7 +342,7 @@ void Renderer::createDescriptorSets() {
 		_frames[i].descriptorSet = std::move(descriptorSets[i]);
 
 		vk::DescriptorBufferInfo bufferInfo{
-			.buffer = *_frames[i].uniformBuffer->getBuffer(), .offset = 0, .range = sizeof(UniformBufferObject)};
+			.buffer = _frames[i].uniformBuffer->getBuffer(), .offset = 0, .range = sizeof(UniformBufferObject)};
 
 		std::array<vk::WriteDescriptorSet, 1> descriptorWrites{};
 
@@ -513,6 +518,7 @@ void Renderer::createDepthResources() {
 	LogSystem::get().info("Creating depth resources: {}x{} format:{}",
 		extent.width, extent.height, vk::to_string(_depthFormat));
 
+	// Create Image using VMA (keep vk:: style, convert to Vk for VMA)
 	vk::ImageCreateInfo imageInfo{.imageType = vk::ImageType::e2D,
 								  .format = _depthFormat,
 								  .extent = {extent.width, extent.height, 1},
@@ -524,18 +530,20 @@ void Renderer::createDepthResources() {
 								  .sharingMode = vk::SharingMode::eExclusive,
 								  .initialLayout = vk::ImageLayout::eUndefined};
 
-	_depthImage = vk::raii::Image(*_device, imageInfo);
+	VmaAllocationCreateInfo allocInfo = {};
+	allocInfo.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
 
-	vk::MemoryRequirements memRequirements = _depthImage.getMemoryRequirements();
+	VkResult result = vmaCreateImage(_device.getVmaAllocator(), reinterpret_cast<const VkImageCreateInfo*>(&imageInfo),
+									 &allocInfo, &_depthImage, &_depthAllocation, nullptr);
 
-	vk::MemoryAllocateInfo allocInfo{.allocationSize = memRequirements.size,
-									 .memoryTypeIndex = _device.findMemoryType(
-										 memRequirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal)};
+	if (result != VK_SUCCESS) {
+		LogSystem::get().error("Failed to create VMA depth image: {}x{}", extent.width, extent.height);
+		throw std::runtime_error("Failed to create VMA depth image!");
+	}
 
-	_depthImageMemory = vk::raii::DeviceMemory(*_device, allocInfo);
-	_depthImage.bindMemory(*_depthImageMemory, 0);
+	LogSystem::get().trace("VMA created depth image handle: {}", reinterpret_cast<uintptr_t>(_depthImage));
 
-	vk::ImageViewCreateInfo viewInfo{.image = *_depthImage,
+	vk::ImageViewCreateInfo viewInfo{.image = _depthImage,
 									 .viewType = vk::ImageViewType::e2D,
 									 .format = _depthFormat,
 									 .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eDepth,
@@ -565,7 +573,7 @@ void Renderer::createDepthResources() {
 		cmd.begin(beginInfo);
 
 		transitionImage(
-			*cmd, *_depthImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal,
+			*cmd, _depthImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal,
 			vk::AccessFlagBits2::eNone,
 			vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
 			vk::PipelineStageFlagBits2::eTopOfPipe,

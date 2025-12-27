@@ -1,5 +1,6 @@
 #pragma once
 
+#include "vk_mem_alloc.h"
 #include <VkBootstrap.h>
 #include <volk.h>
 
@@ -32,6 +33,7 @@ public:
 	const vk::raii::PhysicalDevice& getPhysicalDevice() const { return _physicalDevice; }
 	const uint32_t getGraphicsQueueFamilyIndex() const { return _graphicsQueueFamily; }
 	const vkb::Device& getVkbDevice() const { return _vkbDevice; }
+	VmaAllocator getVmaAllocator() const { return _vmaAllocator; }
 
 	uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties) const;
 
@@ -42,7 +44,9 @@ private:
 	vk::raii::Queue _graphicsQueue = nullptr;
 	vk::raii::Queue _presentQueue = nullptr;
 	vk::raii::PhysicalDevice _physicalDevice = nullptr;
+
 	vkb::Device _vkbDevice;
+	VmaAllocator _vmaAllocator;
 
 	uint32_t _graphicsQueueFamily;
 };
