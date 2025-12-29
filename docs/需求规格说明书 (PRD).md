@@ -1,10 +1,10 @@
 # **现代 Vulkan 渲染引擎 MVP 1.0 \- 需求规格说明书 (PRD)**
 
-**版本:** 1.2.2
+**版本:** 1.3.0
 
 **状态:** 活跃
 
-**更新日期:** 2025/12/27 (完成 REQ-M-00 VMA 内存管理集成)
+**更新日期:** 2025/12/30 (添加 ECS 架构需求 REQ-E-01 ~ REQ-E-07)
 
 ## **1\. 项目概述**
 
@@ -97,6 +97,77 @@
   * **Asset Browser**: 浏览并加载磁盘上的模型与纹理。
   * **Material Creator**: 创建新材质并分配纹理资源。
 - [x] **REQ-I-03 (输入屏蔽):** 当操作 UI 时，屏蔽相机的鼠标输入。
+
+### **2.7 性能优化 (Performance Optimization)**
+
+- [ ] **REQ-P-01 (Pipeline Cache):** 实现 VkPipelineCache 持久化机制。
+  * 启动时从磁盘加载缓存数据
+  * 退出时保存缓存到磁盘
+  * 避免重复编译相同配置的管线
+
+- [ ] **REQ-P-02 (Transfer Queue 异步上传):** 使用专用 Transfer Queue 进行资源上传。
+  * 避免阻塞图形队列
+  * 支持异步资源加载
+  * 使用信号量同步传输完成
+
+- [ ] **REQ-P-03 (Mipmap 生成):** 为纹理自动生成 Mipmap。
+  * 使用 `vkCmdBlitImage` 逐级生成
+  * 或支持加载预生成 Mipmap 的纹理 (KTX2)
+  * 配置合适的 Sampler minFilter/mipmapMode
+
+- [ ] **REQ-P-04 (Instanced/Indirect Rendering):** 减少 Draw Call 开销。
+  * 相同材质的物体使用 Instanced Rendering 合并
+  * 实现 `vkCmdDrawIndexedIndirect` 支持
+  * 预留 GPU-Driven 扩展接口
+
+- [ ] **REQ-P-05 (Bindless 描述符):** 实现 Bindless/Descriptor Indexing 架构。
+  * 使用纹理数组 + 索引替代多次绑定
+  * 减少描述符集切换开销
+  * 支持动态纹理数量
+
+- [ ] **REQ-P-06 (零分配渲染循环):** 消除渲染循环中的堆分配。
+  * 使用 `std::array` 替代 `std::vector` 存储临时数据
+  * 预分配所有帧级资源
+  * 避免动态容器操作
+
+### **2.8 ECS 架构 (Entity-Component-System)**
+
+> 将 OOP 架构迁移到 ECS，提升数据局部性和扩展性
+
+- [ ] **REQ-E-01 (World/Registry):** 实现 Entity-Component 管理器。
+  * Entity ID 系统 (sparse set 或 generational index)
+  * 高效的 Component 存储和查询
+  * 考虑集成 [entt](https://github.com/skypjack/entt) 库
+
+- [ ] **REQ-E-02 (Core Components):** 实现核心 Components。
+  * `TransformComponent`: position, rotation, scale, worldMatrix, parent
+  * `MeshComponent`: meshHandle, boundingBox
+  * `MaterialComponent`: materialHandle, parameter overrides
+  * `CameraComponent`: fov, nearPlane, farPlane, viewMatrix, projMatrix
+  * `LightComponent`: type, color, intensity, range
+
+- [ ] **REQ-E-03 (TransformSystem):** 层级变换计算系统。
+  * 计算 parent-child 层级变换
+  * 批量更新 dirty 的 worldMatrix
+  * 上传变换数据到 GPU (SSBO)
+
+- [ ] **REQ-E-04 (RenderSystem):** 渲染系统。
+  * 查询具有 Transform + Mesh + Material 的 entities
+  * 按材质排序减少 state changes
+  * 录制绘制命令
+  * Renderer 简化为底层 Vulkan 封装
+
+- [ ] **REQ-E-05 (CullingSystem):** 剔除系统。
+  * 视锥体剔除 (Frustum Culling)
+  * 输出可见 entity 列表
+
+- [ ] **REQ-E-06 (CameraSystem):** 相机系统。
+  * 更新活动相机的 view/projection 矩阵
+  * 处理相机输入控制
+
+- [ ] **REQ-E-07 (LightSystem):** 灯光系统。
+  * 收集场景中的所有灯光
+  * 上传灯光数据到 GPU UBO/SSBO
 
 ## **3\. 非功能性需求 (NFR)**
 
