@@ -12,7 +12,6 @@ struct VSInput {
 
 // Set 0: Global Data
 struct GlobalUBO {
-    float4x4 model;
     float4x4 view;
     float4x4 proj;
     float3 camPos;
@@ -53,6 +52,15 @@ struct MaterialUBO {
 [[vk::binding(7, 1)]] Sampler2D clearcoatRoughnessMap;
 [[vk::binding(8, 1)]] Sampler2D clearcoatNormalMap;
 [[vk::binding(9, 1)]] Sampler2D transmissionMap;
+
+// Set 2: Per-Object Data (SSBO)
+struct ObjectData {
+    float4x4 model;           // Per-object world transform
+    float4x4 normalMatrix;    // transpose(inverse(mat3(model))) for correct normals
+    uint materialIndex;       // For future bindless materials
+    uint3 _padding;
+};
+[[vk::binding(0, 2)]] StructuredBuffer<ObjectData> objectBuffer;
 
 struct VSOutput {
     float4 pos : SV_Position;
@@ -101,6 +109,7 @@ float3 linearToSRGB(float3 linear) {
 // ============================================================================
 
 // Calculate the TBN matrix using either vertex tangents or screen-space derivatives
+// Reference: http://www.thetenthplanet.de/archives/1180
 float3x3 getTBN(VSOutput vertIn) {
     float3 N = normalize(vertIn.worldNormal);
     float3 T, B;
@@ -113,16 +122,28 @@ float3x3 getTBN(VSOutput vertIn) {
         B = cross(N, T) * vertIn.tangentW;
     } else {
         // Perturb normal using screen-space derivatives (no tangent provided)
-        // Note: Vulkan ddy is negated compared to OpenGL dFdy due to flipped Y-axis
+        // This method computes the cotangent frame from screen-space derivatives
         float3 q1 = ddx(vertIn.worldPos);
-        float3 q2 = -ddy(vertIn.worldPos);  // Negate for Vulkan
+        float3 q2 = ddy(vertIn.worldPos);
         float2 st1 = ddx(vertIn.texCoord);
-        float2 st2 = -ddy(vertIn.texCoord); // Negate for Vulkan
+        float2 st2 = ddy(vertIn.texCoord);
         
-        T = normalize(q1 * st2.y - q2 * st1.y);
-        B = -normalize(cross(N, T));
+        // Compute tangent following the reference GLSL implementation
+        // T = normalize(q1 * st2.t - q2 * st1.t) where .t is .y in GLSL
+        float3 t = normalize((q1 * st2.y - q2 * st1.y) / (st1.x * st2.y - st1.y * st2.x));
+
+
+        T = normalize(t - N * dot(N, t));
+        B = cross(B, T);
     }
     
+    // In Slang/HLSL, float3x3(row0, row1, row2) creates a matrix with these as rows.
+    // We want: result = TBN * tangentNormal (column vector, GLSL style)
+    // Using mul(tangentNormal, TBN) with tangentNormal as row vector gives:
+    // [tx, ty, tz] * | T.x T.y T.z |   = tx*T + ty*B + tz*N
+    //                | B.x B.y B.z |
+    //                | N.x N.y N.z |
+    // This is correct transformation from tangent space to world space.
     return float3x3(T, B, N);
 }
 
@@ -238,17 +259,21 @@ float3 evaluateClearcoatBRDF(float3 N, float3 V, float3 L, float clearcoatRoughn
 // ============================================================================
 
 [shader("vertex")]
-VSOutput vertMain(VSInput input) {
+VSOutput vertMain(VSInput input, uint instanceID : SV_InstanceID) {
+    // Get per-object data from SSBO
+    ObjectData obj = objectBuffer[instanceID];
+    
     VSOutput output;
-    float4 worldPos = mul(ubo.model, float4(input.inPosition, 1.0));
+    float4 worldPos = mul(obj.model, float4(input.inPosition, 1.0));
     output.worldPos = worldPos.xyz;
     output.pos = mul(ubo.proj, mul(ubo.view, worldPos));
     output.texCoord = input.inTexCoord;
     
-    // Transform normal and tangent to world space
-    float3x3 normalMatrix = (float3x3)ubo.model;
-    output.worldNormal = normalize(mul(normalMatrix, input.inNormal));
-    output.worldTangent = normalize(mul(normalMatrix, input.inTangent.xyz));
+    // Transform normal and tangent using precomputed normalMatrix
+    // This correctly handles non-uniform scaling
+    float3x3 normalMat = (float3x3)obj.normalMatrix;
+    output.worldNormal = normalize(mul(normalMat, input.inNormal));
+    output.worldTangent = normalize(mul(normalMat, input.inTangent.xyz));
     output.tangentW = input.inTangent.w;
 
     return output;
@@ -285,7 +310,7 @@ float4 fragMain(VSOutput vertIn) : SV_Target
     
     // Roughness is authored as perceptual roughness; as is convention,
     // convert to material roughness by squaring the perceptual roughness
-    float alphaRoughness = perceptualRoughness;
+    float alphaRoughness = perceptualRoughness * perceptualRoughness;
     
     // ========================================================================
     // Calculate reflectance
@@ -435,18 +460,18 @@ float4 fragMain(VSOutput vertIn) : SV_Target
                 color = float3(uv, 0.0);
                 break;
             case 8: // Geometric Normal (interpolated vertex normal)
-                color = normalize(vertIn.worldNormal) * 0.5 + 0.5;
+                color = normalize(vertIn.worldNormal);
                 break;
             case 9: // Tangent
                 {
                     float3x3 TBN = getTBN(vertIn);
-                    color = TBN[0] * 0.5 + 0.5;
+                    color = TBN[0]*0.5+0.5;
                 }
                 break;
             case 10: // Bitangent
                 {
                     float3x3 TBN = getTBN(vertIn);
-                    color = TBN[1] * 0.5 + 0.5;
+                    color = TBN[1]*0.5+0.5;
                 }
                 break;
         }

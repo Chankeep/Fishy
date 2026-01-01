@@ -21,7 +21,6 @@ Application::Application()
 	  _device(_context.getInstance(), _window.getSurface()), _resourceManager(_device),
 	  _renderer(_device, _window, _resourceManager) {
 
-
 	LogSystem::get().info("Initializing Application...");
 	LogSystem::get().info("Window created: {}x{}", 1280, 720);
 
@@ -30,7 +29,7 @@ Application::Application()
 	LogSystem::get().info("ImGui Layer initialized");
 
 	// Try to load a default model
-	auto modelPath = "assets/models/MultiUVTest.glb";
+	auto modelPath = "assets/models/DamagedHelmet.glb";
 	LogSystem::get().info("Loading default model: {}", modelPath);
 	_model = ModelLoader::loadModel(modelPath, &_resourceManager);
 
@@ -93,15 +92,9 @@ void Application::Run() {
 		ImGuiIO& io = ImGui::GetIO();
 		if (!io.WantCaptureMouse) {
 			const auto& mouseState = _window.getMouseState();
-			_renderer.getCamera().update(
-				static_cast<float>(mouseState.deltaX),
-				static_cast<float>(mouseState.deltaY),
-				static_cast<float>(mouseState.scrollDelta),
-				mouseState.rightButton,
-				mouseState.middleButton,
-				mouseState.leftButton,
-				deltaTime
-			);
+			_renderer.getCamera().update(static_cast<float>(mouseState.deltaX), static_cast<float>(mouseState.deltaY),
+										 static_cast<float>(mouseState.scrollDelta), mouseState.rightButton,
+										 mouseState.middleButton, mouseState.leftButton, deltaTime);
 		}
 
 		// Reset mouse delta for next frame

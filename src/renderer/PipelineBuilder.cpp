@@ -123,7 +123,8 @@ PipelineBuilder& PipelineBuilder::setRenderingFormats(const std::vector<vk::Form
 	return *this;
 }
 
-std::unique_ptr<GraphicsPipeline> PipelineBuilder::build(const vk::raii::Device& device, vk::RenderPass renderPass) {
+std::unique_ptr<GraphicsPipeline> PipelineBuilder::build(const vk::raii::Device& device, vk::RenderPass renderPass,
+														 const vk::raii::PipelineCache& pipelineCache) {
 	// 1. Create Pipeline Layout (RAII)
 	vk::PipelineLayoutCreateInfo pipelineLayoutInfo{
 		.setLayoutCount = static_cast<uint32_t>(_descriptorSetLayouts.size()),
@@ -177,9 +178,7 @@ std::unique_ptr<GraphicsPipeline> PipelineBuilder::build(const vk::raii::Device&
 	// device.createGraphicsPipeline returns a std::pair<Result, raii::Pipeline> or directly raii::Pipeline
 	// (depending on if pipeline cache is used) As per vulkan_raii convention, it should be like this:
 
-	vk::raii::Pipeline pipeline(device,
-								nullptr, // pipeline cache, empty for now
-								pipelineInfo);
+	vk::raii::Pipeline pipeline(device, pipelineCache, pipelineInfo);
 
 	// 5. Return wrapper object
 	return std::make_unique<GraphicsPipeline>(std::move(layout), std::move(pipeline));

@@ -123,49 +123,6 @@ std::shared_ptr<Texture> ResourceManager::loadTextureFromMemory(const unsigned c
 	}
 }
 
-GPUMesh* ResourceManager::getOrCreateGPUMesh(const Mesh* mesh, const vk::raii::CommandPool& cmdPool) {
-	if (!mesh) {
-		return nullptr;
-	}
-
-	// Check cache
-	auto it = _gpuMeshCache.find(mesh);
-	if (it != _gpuMeshCache.end()) {
-		return it->second.get();
-	}
-
-	// Create GPU buffers
-	auto gpuMesh = std::make_unique<GPUMesh>();
-
-	const auto& vertices = mesh->getVertices();
-	const auto& indices = mesh->getIndices();
-
-	vk::DeviceSize vertexSize = sizeof(Vertex) * vertices.size();
-	vk::DeviceSize indexSize = sizeof(uint32_t) * indices.size();
-
-	LogSystem::get().trace("Creating GPU mesh: {} vertices, {} indices ({} MB vertex data, {} MB index data)",
-		vertices.size(), indices.size(), vertexSize / (1024.0 * 1024.0), indexSize / (1024.0 * 1024.0));
-
-	// Vertex buffer
-	gpuMesh->vertexBuffer = std::make_unique<VulkanBuffer>(
-		_device, vertexSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eVertexBuffer,
-		vk::MemoryPropertyFlagBits::eDeviceLocal);
-	gpuMesh->vertexBuffer->uploadStaged(cmdPool, _device.getGraphicsQueue(), (void*)vertices.data(), vertexSize);
-
-	// Index buffer
-	gpuMesh->indexBuffer = std::make_unique<VulkanBuffer>(
-		_device, indexSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eIndexBuffer,
-		vk::MemoryPropertyFlagBits::eDeviceLocal);
-	gpuMesh->indexBuffer->uploadStaged(cmdPool, _device.getGraphicsQueue(), (void*)indices.data(), indexSize);
-
-	gpuMesh->indexCount = static_cast<uint32_t>(indices.size());
-
-	auto result = gpuMesh.get();
-	_gpuMeshCache.emplace(mesh, std::move(gpuMesh));
-
-	return result;
-}
-
 GPUMaterial* ResourceManager::getOrCreateGPUMaterial(const Material* material) {
 	if (!material) {
 		return nullptr;
@@ -302,11 +259,11 @@ GPUMaterial* ResourceManager::getOrCreateGPUMaterial(const Material* material) {
 void ResourceManager::clearGPUResources() {
 	// Idempotent: safe to call multiple times
 	if (_gpuMaterialCache.empty() && _gpuMeshCache.empty()) {
-		return;  // Already cleared
+		return; // Already cleared
 	}
 
-	LogSystem::get().info("Clearing GPU resources ({} materials, {} meshes)...",
-		_gpuMaterialCache.size(), _gpuMeshCache.size());
+	LogSystem::get().info("Clearing GPU resources ({} materials, {} meshes)...", _gpuMaterialCache.size(),
+						  _gpuMeshCache.size());
 	// Clear GPU resources that hold descriptor sets from Renderer's pool
 	// Must be called before Renderer destroys its descriptor pool
 	_gpuMaterialCache.clear();

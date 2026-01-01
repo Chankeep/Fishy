@@ -59,7 +59,6 @@ public:
 												   vk::Format format = vk::Format::eR8G8B8A8Srgb);
 
 	// GPU resource management
-	GPUMesh* getOrCreateGPUMesh(const Mesh* mesh, const vk::raii::CommandPool& cmdPool);
 	GPUMaterial* getOrCreateGPUMaterial(const Material* material);
 
 	// Get default white texture for materials without textures

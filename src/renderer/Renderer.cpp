@@ -8,8 +8,10 @@
 #include "resources/ResourceManager.h"
 #include "vulkan/vulkan.hpp"
 
+#include <algorithm>
 #include <array>
 #include <chrono>
+#include <fstream>
 #include <glm/gtc/matrix_transform.hpp>
 #include <stdexcept>
 
@@ -23,9 +25,13 @@ Renderer::Renderer(VulkanDevice& device, Window& window, ResourceManager& resour
 	createCommandBuffers();
 	createGlobalSetLayout();
 	createMaterialSetLayout();
+	createObjectDataSetLayout();
 	createDescriptorPool();
+	loadPipelineCache();
 	createGraphicsPipeline();
 	createUniformBuffers();
+	createObjectDataBuffer();
+	createIndirectBuffer();
 	createDescriptorSets();
 	createSyncObjects();
 
@@ -36,6 +42,7 @@ Renderer::Renderer(VulkanDevice& device, Window& window, ResourceManager& resour
 
 Renderer::~Renderer() {
 	LogSystem::get().info("Shutting down Renderer...");
+	savePipelineCache();
 	_device->waitIdle();
 
 	// Clear GPU resources from ResourceManager before destroying the descriptor pool
@@ -44,6 +51,9 @@ Renderer::~Renderer() {
 
 	freeCommandBuffers();
 	_swapChain.reset();
+
+	_unifiedVertexBuffer.reset();
+	_unifiedIndexBuffer.reset();
 
 	// Destroy depth image with VMA
 	if (_depthAllocation) {
@@ -100,42 +110,22 @@ void Renderer::render(const Model& model, std::function<void(VkCommandBuffer)> u
 		0, vk::Viewport(0.0f, 0.0f, static_cast<float>(extent.width), static_cast<float>(extent.height), 0.0f, 1.0f));
 	cmd.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), extent));
 
-	// Render each primitive in the model
-	for (const auto& primitive : model.getPrimitives()) {
-		if (!primitive.mesh) {
-			continue;
-		}
+	// Bind global descriptor set (Set 0) once - it doesn't change per-primitive
+	cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *_graphicsPipeline->getLayout(), 0,
+						   *_frames[_currentFrameIndex].descriptorSet, nullptr);
 
-		// Get or create GPU resources
-		GPUMesh* gpuMesh = _resourceManager.getOrCreateGPUMesh(primitive.mesh.get(), _commandPool);
-		GPUMaterial* gpuMaterial = nullptr;
+	// Bind object data SSBO (Set 2)
+	cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *_graphicsPipeline->getLayout(), 2,
+						   *_frames[_currentFrameIndex].objectDataSet, nullptr);
 
-		if (primitive.material) {
-			gpuMaterial = _resourceManager.getOrCreateGPUMaterial(primitive.material.get());
-		}
+	// Update object data SSBO with per-object transforms
+	updateObjectData(model);
 
-		if (!gpuMesh) {
-			continue;
-		}
+	// Build draw batches (sorts by material) and upload indirect commands
+	buildDrawBatches(model);
 
-		// Bind vertex and index buffers
-		cmd.bindVertexBuffers(0, gpuMesh->vertexBuffer->getBuffer(), {0});
-		cmd.bindIndexBuffer(gpuMesh->indexBuffer->getBuffer(), 0, vk::IndexType::eUint32);
-
-		// Bind descriptor sets
-		std::vector<vk::DescriptorSet> descriptorSets;
-		descriptorSets.push_back(*_frames[_currentFrameIndex].descriptorSet);
-
-		if (gpuMaterial) {
-			descriptorSets.push_back(*gpuMaterial->descriptorSet);
-		}
-
-		cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *_graphicsPipeline->getLayout(), 0, descriptorSets,
-							   nullptr);
-
-		// Draw indexed
-		cmd.drawIndexed(gpuMesh->indexCount, 1, 0, 0, 0);
-	}
+	// Render using indirect draw calls
+	renderIndirect(cmd);
 
 	cmd.endRendering();
 
@@ -272,6 +262,248 @@ void Renderer::createMaterialSetLayout() {
 	_materialSetLayout = vk::raii::DescriptorSetLayout(*_device, layoutInfo);
 }
 
+void Renderer::createObjectDataSetLayout() {
+	// Set 2: Object Data SSBO for per-object transforms
+	vk::DescriptorSetLayoutBinding ssboBinding{.binding = 0,
+											   .descriptorType = vk::DescriptorType::eStorageBuffer,
+											   .descriptorCount = 1,
+											   .stageFlags = vk::ShaderStageFlagBits::eVertex};
+
+	vk::DescriptorSetLayoutCreateInfo layoutInfo{.bindingCount = 1, .pBindings = &ssboBinding};
+
+	_objectDataSetLayout = vk::raii::DescriptorSetLayout(*_device, layoutInfo);
+	LogSystem::get().trace("Created object data SSBO descriptor set layout");
+}
+
+void Renderer::createObjectDataBuffer() {
+	// Initial size for up to 256 objects (can grow if needed)
+	constexpr uint32_t INITIAL_MAX_OBJECTS = 256;
+	vk::DeviceSize bufferSize = sizeof(ObjectData) * INITIAL_MAX_OBJECTS;
+
+	for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+		_frames[i].objectDataBuffer = std::make_unique<VulkanBuffer>(
+			_device, bufferSize, vk::BufferUsageFlagBits::eStorageBuffer,
+			vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+
+		// Persistent mapping
+		_frames[i].objectDataBuffer->map();
+	}
+	LogSystem::get().trace("Created object data SSBO buffers ({} bytes each)", bufferSize);
+}
+
+void Renderer::updateObjectData(const Model& model) {
+	// Build object data for all primitives
+	std::vector<ObjectData> objectData;
+	objectData.reserve(model.getPrimitives().size());
+
+	// Base transform: Rotate +90 degrees around X to fix model orientation (glTF uses Y-up)
+	glm::mat4 fixRotation = glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+
+	for (size_t i = 0; i < model.getPrimitives().size(); i++) {
+		// For now, all primitives share the same transform
+		// Future: each primitive could have its own transform from scene graph
+		objectData.push_back(ObjectData::fromModelMatrix(fixRotation, static_cast<uint32_t>(i)));
+	}
+
+	// Upload to current frame's SSBO
+	if (!objectData.empty()) {
+		_frames[_currentFrameIndex].objectDataBuffer->upload(objectData.data(), objectData.size() * sizeof(ObjectData));
+	}
+}
+
+void Renderer::createIndirectBuffer() {
+	// Initial size for up to 256 draw commands
+	constexpr uint32_t INITIAL_MAX_COMMANDS = 256;
+	vk::DeviceSize bufferSize = sizeof(vk::DrawIndexedIndirectCommand) * INITIAL_MAX_COMMANDS;
+
+	for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+		_frames[i].indirectBuffer = std::make_unique<VulkanBuffer>(
+			_device, bufferSize, vk::BufferUsageFlagBits::eIndirectBuffer,
+			vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+
+		_frames[i].indirectBuffer->map();
+	}
+	LogSystem::get().trace("Created indirect draw buffers ({} bytes each)", bufferSize);
+}
+
+void Renderer::buildUnifiedBuffers(const Model& model) {
+	// Collect all vertex and index data into unified buffers
+	std::vector<Vertex> allVertices;
+	std::vector<uint32_t> allIndices;
+	_meshRegions.clear();
+	_meshRegions.reserve(model.getPrimitives().size());
+
+	for (const auto& prim : model.getPrimitives()) {
+		if (!prim.mesh) {
+			_meshRegions.push_back({0, 0, 0}); // Placeholder for skipped primitives
+			continue;
+		}
+
+		const auto& vertices = prim.mesh->getVertices();
+		const auto& indices = prim.mesh->getIndices();
+
+		MeshRegion region{
+			.firstIndex = static_cast<uint32_t>(allIndices.size()),
+			.indexCount = static_cast<uint32_t>(indices.size()),
+			.vertexOffset = static_cast<int32_t>(allVertices.size()),
+		};
+		_meshRegions.push_back(region);
+
+		// Append vertices and indices
+		allVertices.insert(allVertices.end(), vertices.begin(), vertices.end());
+		allIndices.insert(allIndices.end(), indices.begin(), indices.end());
+	}
+
+	if (allVertices.empty() || allIndices.empty()) {
+		return;
+	}
+
+	// Create unified vertex buffer
+	vk::DeviceSize vertexBufferSize = allVertices.size() * sizeof(Vertex);
+	_unifiedVertexBuffer = std::make_unique<VulkanBuffer>(
+		_device, vertexBufferSize, vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst,
+		vk::MemoryPropertyFlagBits::eDeviceLocal);
+
+	// Create unified index buffer
+	vk::DeviceSize indexBufferSize = allIndices.size() * sizeof(uint32_t);
+	_unifiedIndexBuffer = std::make_unique<VulkanBuffer>(
+		_device, indexBufferSize, vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst,
+		vk::MemoryPropertyFlagBits::eDeviceLocal);
+
+	// Upload via staging buffer
+	auto stagingVertex =
+		VulkanBuffer(_device, vertexBufferSize, vk::BufferUsageFlagBits::eTransferSrc,
+					 vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+	stagingVertex.map();
+	stagingVertex.upload(allVertices.data(), vertexBufferSize);
+
+	auto stagingIndex =
+		VulkanBuffer(_device, indexBufferSize, vk::BufferUsageFlagBits::eTransferSrc,
+					 vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+	stagingIndex.map();
+	stagingIndex.upload(allIndices.data(), indexBufferSize);
+
+	// Copy using one-time command buffer
+	vk::CommandBufferAllocateInfo cmdAllocInfo{
+		.commandPool = *_commandPool, .level = vk::CommandBufferLevel::ePrimary, .commandBufferCount = 1};
+	auto cmdBuffers = vk::raii::CommandBuffers(*_device, cmdAllocInfo);
+	auto& cmd = cmdBuffers[0];
+
+	cmd.begin(vk::CommandBufferBeginInfo{.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+	cmd.copyBuffer(stagingVertex.getBuffer(), _unifiedVertexBuffer->getBuffer(),
+				   vk::BufferCopy{.size = vertexBufferSize});
+	cmd.copyBuffer(stagingIndex.getBuffer(), _unifiedIndexBuffer->getBuffer(), vk::BufferCopy{.size = indexBufferSize});
+	cmd.end();
+
+	vk::SubmitInfo submitInfo{.commandBufferCount = 1, .pCommandBuffers = &*cmd};
+	_device.getGraphicsQueue().submit(submitInfo, nullptr);
+	_device.getGraphicsQueue().waitIdle();
+
+	_unifiedBuffersDirty = false;
+	LogSystem::get().info("Built unified buffers: {} vertices, {} indices", allVertices.size(), allIndices.size());
+}
+
+void Renderer::buildDrawBatches(const Model& model) {
+	// Build unified buffers on first call or when model changes
+	if (_unifiedBuffersDirty) {
+		buildUnifiedBuffers(model);
+	}
+
+	// Clear previous frame's data
+	_drawBatches.clear();
+	_indirectCommands.clear();
+
+	const auto& primitives = model.getPrimitives();
+	if (primitives.empty() || _meshRegions.empty()) {
+		return;
+	}
+
+	// Build a list of (primitiveIndex, material) for sorting
+	struct PrimitiveInfo {
+		uint32_t index;
+		GPUMaterial* material;
+	};
+	std::vector<PrimitiveInfo> sortedPrimitives;
+	sortedPrimitives.reserve(primitives.size());
+
+	for (uint32_t i = 0; i < primitives.size(); i++) {
+		const auto& prim = primitives[i];
+		if (!prim.mesh || _meshRegions[i].indexCount == 0)
+			continue;
+
+		GPUMaterial* gpuMaterial = nullptr;
+		if (prim.material) {
+			gpuMaterial = _resourceManager.getOrCreateGPUMaterial(prim.material.get());
+		}
+
+		sortedPrimitives.push_back({i, gpuMaterial});
+	}
+
+	// Sort by material pointer (group same materials together)
+	std::sort(sortedPrimitives.begin(), sortedPrimitives.end(),
+			  [](const PrimitiveInfo& a, const PrimitiveInfo& b) { return a.material < b.material; });
+
+	// Build batches and indirect commands
+	GPUMaterial* currentMaterial = nullptr;
+
+	for (const auto& prim : sortedPrimitives) {
+		// Start a new batch when material changes
+		if (prim.material != currentMaterial) {
+			currentMaterial = prim.material;
+			_drawBatches.push_back({
+				.material = currentMaterial,
+				.firstCommand = static_cast<uint32_t>(_indirectCommands.size()),
+				.commandCount = 0,
+			});
+		}
+
+		// Get mesh region for this primitive
+		const auto& region = _meshRegions[prim.index];
+
+		// Add indirect command with proper offsets into unified buffers
+		vk::DrawIndexedIndirectCommand cmd{
+			.indexCount = region.indexCount,
+			.instanceCount = 1,
+			.firstIndex = region.firstIndex,	 // Offset into unified index buffer
+			.vertexOffset = region.vertexOffset, // Offset into unified vertex buffer
+			.firstInstance = prim.index,		 // Used for SSBO lookup
+		};
+		_indirectCommands.push_back(cmd);
+		_drawBatches.back().commandCount++;
+	}
+
+	// Upload indirect commands to GPU
+	if (!_indirectCommands.empty()) {
+		_frames[_currentFrameIndex].indirectBuffer->upload(
+			_indirectCommands.data(), _indirectCommands.size() * sizeof(vk::DrawIndexedIndirectCommand));
+	}
+}
+
+void Renderer::renderIndirect(const vk::raii::CommandBuffer& cmd) {
+	if (!_unifiedVertexBuffer || !_unifiedIndexBuffer || _drawBatches.empty()) {
+		return;
+	}
+
+	// Bind unified vertex and index buffers ONCE for all draw calls
+	cmd.bindVertexBuffers(0, _unifiedVertexBuffer->getBuffer(), {0});
+	cmd.bindIndexBuffer(_unifiedIndexBuffer->getBuffer(), 0, vk::IndexType::eUint32);
+
+	// Render using indirect draw calls, one per batch (material group)
+	for (const auto& batch : _drawBatches) {
+		// Bind material descriptor set (Set 1)
+		if (batch.material) {
+			cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *_graphicsPipeline->getLayout(), 1,
+								   *batch.material->descriptorSet, nullptr);
+		}
+
+		// Issue indirect draw call for all commands in this batch
+		// With unified buffers, this draws all same-material objects efficiently!
+		cmd.drawIndexedIndirect(_frames[_currentFrameIndex].indirectBuffer->getBuffer(),
+								batch.firstCommand * sizeof(vk::DrawIndexedIndirectCommand), batch.commandCount,
+								sizeof(vk::DrawIndexedIndirectCommand));
+	}
+}
+
 void Renderer::createGraphicsPipeline() {
 	LogSystem::get().info("Creating graphics pipeline...");
 	const auto& shaderModule = _resourceManager.getShader("shaders/PBRshader.slang.spv");
@@ -291,11 +523,11 @@ void Renderer::createGraphicsPipeline() {
 		.setVertexInput(vertexInputInfo)
 		.setInputTopology(vk::PrimitiveTopology::eTriangleList)
 		.setCullMode(vk::CullModeFlagBits::eBack, vk::FrontFace::eCounterClockwise)
-		.setLayout({*_globalSetLayout, *_materialSetLayout}, {})
+		.setLayout({*_globalSetLayout, *_materialSetLayout, *_objectDataSetLayout}, {})
 		.setRenderingFormats({_swapChain->getFormat()}, _depthFormat)
 		.setDepthStencilTest(true, true, vk::CompareOp::eLess, false, vk::CompareOp::eAlways);
 
-	_graphicsPipeline = builder.build(*_device);
+	_graphicsPipeline = builder.build(*_device, nullptr, _pipelineCache);
 	LogSystem::get().info("Graphics pipeline created successfully");
 }
 
@@ -313,46 +545,104 @@ void Renderer::createUniformBuffers() {
 }
 
 void Renderer::createDescriptorPool() {
-	std::array<vk::DescriptorPoolSize, 2> poolSizes{
+	std::array<vk::DescriptorPoolSize, 3> poolSizes{
 		vk::DescriptorPoolSize{.type = vk::DescriptorType::eUniformBuffer,
 							   .descriptorCount =
 								   static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT + 100)}, // Extra for materials
 		vk::DescriptorPoolSize{.type = vk::DescriptorType::eCombinedImageSampler,
 							   .descriptorCount =
-								   static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT * 10 + 500)}}; // Extra for materials
+								   static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT * 10 + 500)}, // Extra for materials
+		vk::DescriptorPoolSize{.type = vk::DescriptorType::eStorageBuffer,
+							   .descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT)}}; // SSBO for object data
 
 	vk::DescriptorPoolCreateInfo poolInfo{.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
-										  .maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT + 100),
+										  .maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT * 2 + 100),
 										  .poolSizeCount = static_cast<uint32_t>(poolSizes.size()),
 										  .pPoolSizes = poolSizes.data()};
 
 	_descriptorPool = vk::raii::DescriptorPool(*_device, poolInfo);
 }
 
+void Renderer::loadPipelineCache() {
+	std::vector<char> cacheData;
+	std::ifstream file(PIPELINE_CACHE_FILENAME, std::ios::binary | std::ios::ate);
+	if (file.is_open()) {
+		size_t fileSize = static_cast<size_t>(file.tellg());
+		cacheData.resize(fileSize);
+		file.seekg(0);
+		file.read(cacheData.data(), fileSize);
+		LogSystem::get().info("Loaded pipeline cache: {} bytes", fileSize);
+	} else {
+		LogSystem::get().info("No existing pipeline cache found, creating new one");
+	}
+
+	vk::PipelineCacheCreateInfo cacheInfo{.initialDataSize = cacheData.size(),
+										  .pInitialData = cacheData.empty() ? nullptr : cacheData.data()};
+	_pipelineCache = vk::raii::PipelineCache(*_device, cacheInfo);
+}
+
+void Renderer::savePipelineCache() {
+	if (!*_pipelineCache) {
+		return;
+	}
+	auto cacheData = _pipelineCache.getData();
+	std::ofstream file(PIPELINE_CACHE_FILENAME, std::ios::binary);
+	if (file.is_open()) {
+		file.write(reinterpret_cast<const char*>(cacheData.data()), cacheData.size());
+		LogSystem::get().info("Saved pipeline cache: {} bytes", cacheData.size());
+	} else {
+		LogSystem::get().warn("Failed to save pipeline cache to disk");
+	}
+}
 void Renderer::createDescriptorSets() {
-	std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *_globalSetLayout);
+	// Allocate global descriptor sets (Set 0)
+	std::vector<vk::DescriptorSetLayout> globalLayouts(MAX_FRAMES_IN_FLIGHT, *_globalSetLayout);
 
-	vk::DescriptorSetAllocateInfo allocInfo{.descriptorPool = *_descriptorPool,
-											.descriptorSetCount = static_cast<uint32_t>(layouts.size()),
-											.pSetLayouts = layouts.data()};
+	vk::DescriptorSetAllocateInfo globalAllocInfo{.descriptorPool = *_descriptorPool,
+												  .descriptorSetCount = static_cast<uint32_t>(globalLayouts.size()),
+												  .pSetLayouts = globalLayouts.data()};
 
-	auto descriptorSets = vk::raii::DescriptorSets(*_device, allocInfo);
+	auto globalSets = vk::raii::DescriptorSets(*_device, globalAllocInfo);
+
+	// Allocate object data descriptor sets (Set 2)
+	std::vector<vk::DescriptorSetLayout> objectDataLayouts(MAX_FRAMES_IN_FLIGHT, *_objectDataSetLayout);
+
+	vk::DescriptorSetAllocateInfo objectDataAllocInfo{.descriptorPool = *_descriptorPool,
+													  .descriptorSetCount =
+														  static_cast<uint32_t>(objectDataLayouts.size()),
+													  .pSetLayouts = objectDataLayouts.data()};
+
+	auto objectDataSets = vk::raii::DescriptorSets(*_device, objectDataAllocInfo);
 
 	for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-		_frames[i].descriptorSet = std::move(descriptorSets[i]);
+		_frames[i].descriptorSet = std::move(globalSets[i]);
+		_frames[i].objectDataSet = std::move(objectDataSets[i]);
 
-		vk::DescriptorBufferInfo bufferInfo{
+		// Write global UBO descriptor
+		vk::DescriptorBufferInfo uboInfo{
 			.buffer = _frames[i].uniformBuffer->getBuffer(), .offset = 0, .range = sizeof(UniformBufferObject)};
 
-		std::array<vk::WriteDescriptorSet, 1> descriptorWrites{};
+		// Write object data SSBO descriptor
+		vk::DescriptorBufferInfo ssboInfo{
+			.buffer = _frames[i].objectDataBuffer->getBuffer(), .offset = 0, .range = VK_WHOLE_SIZE};
 
-		// Uniform Buffer
+		std::array<vk::WriteDescriptorSet, 2> descriptorWrites{};
+
+		// Global UBO (Set 0, Binding 0)
 		descriptorWrites[0].dstSet = *_frames[i].descriptorSet;
 		descriptorWrites[0].dstBinding = 0;
 		descriptorWrites[0].dstArrayElement = 0;
 		descriptorWrites[0].descriptorType = vk::DescriptorType::eUniformBuffer;
 		descriptorWrites[0].descriptorCount = 1;
-		descriptorWrites[0].pBufferInfo = &bufferInfo;
+		descriptorWrites[0].pBufferInfo = &uboInfo;
+
+		// Object Data SSBO (Set 2, Binding 0)
+		descriptorWrites[1].dstSet = *_frames[i].objectDataSet;
+		descriptorWrites[1].dstBinding = 0;
+		descriptorWrites[1].dstArrayElement = 0;
+		descriptorWrites[1].descriptorType = vk::DescriptorType::eStorageBuffer;
+		descriptorWrites[1].descriptorCount = 1;
+		descriptorWrites[1].pBufferInfo = &ssboInfo;
 
 		_device->updateDescriptorSets(descriptorWrites, {});
 	}
@@ -364,18 +654,12 @@ void Renderer::updateUniformBuffer(uint32_t frameIndex) {
 
 	// Get camera matrices from Camera class
 	ubo.view = _camera.getViewMatrix();
-	ubo.proj = _camera.getProjectionMatrix(
-		static_cast<float>(extent.width) / static_cast<float>(extent.height));
+	ubo.proj = _camera.getProjectionMatrix(static_cast<float>(extent.width) / static_cast<float>(extent.height));
 	ubo.camPos = _camera.getPosition();
 
 	// Lighting
 	ubo.lightDir = glm::normalize(glm::vec3(1.0f, 1.0f, 1.0f));
 	ubo.lightColor = glm::vec3(1.0f, 1.0f, 1.0f) * 5.0f;
-
-	// Model - no auto-rotation (static)
-	// Rotate +90 degrees around X to fix model orientation (glTF uses Y-up)
-	glm::mat4 fixRotation = glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
-	ubo.model = fixRotation;
 
 	// Debug settings
 	ubo.debugViewInputs = _debugViewInputs;
@@ -515,8 +799,8 @@ void Renderer::createDepthResources() {
 	_depthFormat = findDepthFormat();
 	vk::Extent2D extent = getSwapChainExtent();
 
-	LogSystem::get().info("Creating depth resources: {}x{} format:{}",
-		extent.width, extent.height, vk::to_string(_depthFormat));
+	LogSystem::get().info("Creating depth resources: {}x{} format:{}", extent.width, extent.height,
+						  vk::to_string(_depthFormat));
 
 	// Create Image using VMA (keep vk:: style, convert to Vk for VMA)
 	vk::ImageCreateInfo imageInfo{.imageType = vk::ImageType::e2D,

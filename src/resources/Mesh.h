@@ -27,8 +27,8 @@ struct Vertex {
 };
 
 // Global uniform buffer (camera, lighting, debug)
+// NOTE: model matrix moved to ObjectData SSBO for per-object transforms
 struct UniformBufferObject {
-	glm::mat4 model;
 	glm::mat4 view;
 	glm::mat4 proj;
 	alignas(16) glm::vec3 camPos;

@@ -30,7 +30,10 @@ void SwapChain::createSwapChain(int width, int height) {
 		swapchainBuilder.set_desired_extent(width, height)
 			.set_desired_format(VkSurfaceFormatKHR{VK_FORMAT_B8G8R8A8_SRGB, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR})
 			.add_fallback_format(VkSurfaceFormatKHR{VK_FORMAT_R8G8B8A8_SRGB, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR})
-			.set_desired_present_mode(VK_PRESENT_MODE_MAILBOX_KHR)
+			// Use FIFO (vsync) as default for lower GPU usage.
+			// Falls back to MAILBOX (triple buffer) if FIFO is not available.
+			.set_desired_present_mode(VK_PRESENT_MODE_FIFO_KHR)
+			.add_fallback_present_mode(VK_PRESENT_MODE_MAILBOX_KHR)
 			.set_composite_alpha_flags(VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR)
 			.set_old_swapchain(*_swapChain)
 			.build();

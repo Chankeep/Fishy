@@ -11,6 +11,7 @@ import vulkan_hpp;
 #include "../resources/Mesh.h"
 #include "../resources/Model.h"
 #include "Camera.h"
+#include "DrawTypes.h"
 #include "GraphicsPipeline.h"
 #include "core/SwapChain.h"
 #include "core/VulkanBuffer.h"
@@ -89,6 +90,13 @@ private:
 	void createDescriptorPool();
 	void createDescriptorSets();
 	void createDepthResources();
+	void createObjectDataSetLayout();
+	void createObjectDataBuffer();
+	void updateObjectData(const Model& model);
+	void createIndirectBuffer();
+	void buildUnifiedBuffers(const Model& model);
+	void buildDrawBatches(const Model& model);
+	void renderIndirect(const vk::raii::CommandBuffer& cmd);
 	vk::Format findDepthFormat();
 	void createSwapChainImageViews();
 
@@ -98,6 +106,11 @@ private:
 		vk::raii::Fence inFlightFence = nullptr;
 		std::unique_ptr<VulkanBuffer> uniformBuffer;
 		vk::raii::DescriptorSet descriptorSet = nullptr;
+		// Per-object data SSBO
+		std::unique_ptr<VulkanBuffer> objectDataBuffer;
+		vk::raii::DescriptorSet objectDataSet = nullptr;
+		// Indirect draw buffer
+		std::unique_ptr<VulkanBuffer> indirectBuffer;
 	};
 
 private:
@@ -127,11 +140,18 @@ private:
 
 	// Graphics Pipeline
 	std::unique_ptr<GraphicsPipeline> _graphicsPipeline;
-	vk::raii::DescriptorSetLayout _globalSetLayout = nullptr;
-	vk::raii::DescriptorSetLayout _materialSetLayout = nullptr;
+	vk::raii::DescriptorSetLayout _globalSetLayout = nullptr;	  // Set 0: Global Data
+	vk::raii::DescriptorSetLayout _materialSetLayout = nullptr;	  // Set 1: Material Data
+	vk::raii::DescriptorSetLayout _objectDataSetLayout = nullptr; // Set 2: SSBO
 
 	// Descriptor Pool
 	vk::raii::DescriptorPool _descriptorPool = nullptr;
+
+	// Pipeline Cache (disk-persistent for faster startup)
+	vk::raii::PipelineCache _pipelineCache = nullptr;
+	static constexpr const char* PIPELINE_CACHE_FILENAME = "pipeline_cache.bin";
+	void loadPipelineCache();
+	void savePipelineCache();
 
 	// Frame Data
 	std::vector<FrameData> _frames;
@@ -144,6 +164,16 @@ private:
 	// Debug settings
 	float _debugViewInputs = 0.0f;
 	float _debugViewEquation = 0.0f;
+
+	// Indirect rendering state (rebuilt each frame)
+	std::vector<DrawBatch> _drawBatches;
+	std::vector<vk::DrawIndexedIndirectCommand> _indirectCommands;
+	std::vector<MeshRegion> _meshRegions; // Per-primitive offsets in unified buffers
+
+	// Unified geometry buffers (rebuilt when model changes)
+	std::unique_ptr<VulkanBuffer> _unifiedVertexBuffer;
+	std::unique_ptr<VulkanBuffer> _unifiedIndexBuffer;
+	bool _unifiedBuffersDirty = true;
 };
 
 } // namespace Fishy

@@ -12,6 +12,68 @@
 
 namespace Fishy {
 
+// Compute tangents for vertices when they are not provided by the model
+// Based on the algorithm from "Foundations of Game Engine Development, Volume 2: Rendering"
+// by Eric Lengyel. This provides smooth per-vertex tangents.
+static void computeTangents(std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices) {
+	// Allocate temporary arrays for tangent and bitangent accumulation
+	std::vector<glm::vec3> tan1(vertices.size(), glm::vec3(0.0f));
+	std::vector<glm::vec3> tan2(vertices.size(), glm::vec3(0.0f));
+
+	// Process each triangle
+	for (size_t i = 0; i < indices.size(); i += 3) {
+		uint32_t i0 = indices[i];
+		uint32_t i1 = indices[i + 1];
+		uint32_t i2 = indices[i + 2];
+
+		const glm::vec3& v0 = vertices[i0].pos;
+		const glm::vec3& v1 = vertices[i1].pos;
+		const glm::vec3& v2 = vertices[i2].pos;
+
+		const glm::vec2& uv0 = vertices[i0].texCoord;
+		const glm::vec2& uv1 = vertices[i1].texCoord;
+		const glm::vec2& uv2 = vertices[i2].texCoord;
+
+		// Edge vectors
+		glm::vec3 e1 = v1 - v0;
+		glm::vec3 e2 = v2 - v0;
+
+		// UV deltas
+		glm::vec2 duv1 = uv1 - uv0;
+		glm::vec2 duv2 = uv2 - uv0;
+
+		float r = 1.0f / (duv1.x * duv2.y - duv2.x * duv1.y + 1e-6f);
+
+		glm::vec3 tangent = (e1 * duv2.y - e2 * duv1.y) * r;
+		glm::vec3 bitangent = (e2 * duv1.x - e1 * duv2.x) * r;
+
+		// Accumulate for each vertex of the triangle
+		tan1[i0] += tangent;
+		tan1[i1] += tangent;
+		tan1[i2] += tangent;
+
+		tan2[i0] += bitangent;
+		tan2[i1] += bitangent;
+		tan2[i2] += bitangent;
+	}
+
+	// Orthogonalize and compute handedness for each vertex
+	for (size_t i = 0; i < vertices.size(); ++i) {
+		const glm::vec3& n = vertices[i].normal;
+		const glm::vec3& t = tan1[i];
+
+		// Gram-Schmidt orthogonalize: T' = normalize(T - N * dot(N, T))
+		glm::vec3 tangent = glm::normalize(t - n * glm::dot(n, t));
+
+		// Calculate handedness: sign = dot(cross(N, T), B) < 0 ? -1 : 1
+		float w = (glm::dot(glm::cross(n, t), tan2[i]) < 0.0f) ? -1.0f : 1.0f;
+
+		vertices[i].tangent = glm::vec4(tangent, w);
+	}
+
+	LogSystem::get().trace("Computed {} vertex tangents", vertices.size());
+}
+
 std::shared_ptr<Model> ModelLoader::loadModel(const std::string& filepath, ResourceManager* resourceManager) {
 	tinygltf::Model gltfModel;
 	tinygltf::TinyGLTF loader;
@@ -77,8 +139,7 @@ std::shared_ptr<Model> ModelLoader::loadModel(const std::string& filepath, Resou
 
 	// Helper to load texture (handles both external files and embedded textures)
 	// format should be eR8G8B8A8Srgb for color textures, eR8G8B8A8Unorm for data textures
-	auto loadTexture = [&](int textureIndex,
-						   vk::Format format = vk::Format::eR8G8B8A8Srgb,
+	auto loadTexture = [&](int textureIndex, vk::Format format = vk::Format::eR8G8B8A8Srgb,
 						   const std::string& texName = "texture") -> std::shared_ptr<Texture> {
 		if (textureIndex < 0 || textureIndex >= static_cast<int>(gltfModel.textures.size())) {
 			return nullptr;
@@ -170,26 +231,28 @@ std::shared_ptr<Model> ModelLoader::loadModel(const std::string& filepath, Resou
 			 vk::Format::eR8G8B8A8Srgb},
 			{"pbr.metallicRoughnessTexture",
 			 [](const tinygltf::Material& m) { return m.pbrMetallicRoughness.metallicRoughnessTexture.index; },
-			 vk::Format::eR8G8B8A8Srgb},
-			{"normalTexture",
-			 [](const tinygltf::Material& m) { return m.normalTexture.index; },
 			 vk::Format::eR8G8B8A8Unorm},
-			{"occlusionTexture",
-			 [](const tinygltf::Material& m) { return m.occlusionTexture.index; },
-			 vk::Format::eR8G8B8A8Srgb},
-			{"emissiveTexture",
-			 [](const tinygltf::Material& m) { return m.emissiveTexture.index; },
+			{"normalTexture", [](const tinygltf::Material& m) { return m.normalTexture.index; },
+			 vk::Format::eR8G8B8A8Unorm},
+			{"occlusionTexture", [](const tinygltf::Material& m) { return m.occlusionTexture.index; },
+			 vk::Format::eR8G8B8A8Unorm},
+			{"emissiveTexture", [](const tinygltf::Material& m) { return m.emissiveTexture.index; },
 			 vk::Format::eR8G8B8A8Srgb},
 		};
 
 		// Helper: set texture from path name
 		auto setMaterialTexture = [&](std::shared_ptr<Material> mat, const std::string& path,
 									  std::shared_ptr<Texture> tex) {
-			if (path == "pbr.baseColorTexture") mat->baseColorMap = tex;
-			else if (path == "pbr.metallicRoughnessTexture") mat->metallicRoughnessMap = tex;
-			else if (path == "normalTexture") mat->normalMap = tex;
-			else if (path == "occlusionTexture") mat->occlusionMap = tex;
-			else if (path == "emissiveTexture") mat->emissiveMap = tex;
+			if (path == "pbr.baseColorTexture")
+				mat->baseColorMap = tex;
+			else if (path == "pbr.metallicRoughnessTexture")
+				mat->metallicRoughnessMap = tex;
+			else if (path == "normalTexture")
+				mat->normalMap = tex;
+			else if (path == "occlusionTexture")
+				mat->occlusionMap = tex;
+			else if (path == "emissiveTexture")
+				mat->emissiveMap = tex;
 		};
 
 		// Dynamically load all standard textures
@@ -211,8 +274,8 @@ std::shared_ptr<Model> ModelLoader::loadModel(const std::string& filepath, Resou
 				std::string prefix = "KHR_materials_clearcoat.";
 
 				std::vector<std::pair<std::string, vk::Format>> clearcoatTextures = {
-					{"clearcoatTexture", vk::Format::eR8G8B8A8Srgb},
-					{"clearcoatRoughnessTexture", vk::Format::eR8G8B8A8Srgb},
+					{"clearcoatTexture", vk::Format::eR8G8B8A8Unorm},
+					{"clearcoatRoughnessTexture", vk::Format::eR8G8B8A8Unorm},
 					{"clearcoatNormalTexture", vk::Format::eR8G8B8A8Unorm},
 				};
 
@@ -222,11 +285,15 @@ std::shared_ptr<Model> ModelLoader::loadModel(const std::string& filepath, Resou
 						std::string fullName = prefix + texName;
 						auto tex = loadTexture(texIdx, format, fullName);
 
-						if (texName == "clearcoatTexture") material->clearcoatMap = tex;
-						else if (texName == "clearcoatRoughnessTexture") material->clearcoatRoughnessMap = tex;
-						else if (texName == "clearcoatNormalTexture") material->clearcoatNormalMap = tex;
+						if (texName == "clearcoatTexture")
+							material->clearcoatMap = tex;
+						else if (texName == "clearcoatRoughnessTexture")
+							material->clearcoatRoughnessMap = tex;
+						else if (texName == "clearcoatNormalTexture")
+							material->clearcoatNormalMap = tex;
 
-						if (tex) loadedTextureNames.push_back(fullName);
+						if (tex)
+							loadedTextureNames.push_back(fullName);
 					}
 				}
 
@@ -243,9 +310,10 @@ std::shared_ptr<Model> ModelLoader::loadModel(const std::string& filepath, Resou
 
 				if (extValue.Has("transmissionTexture")) {
 					int texIdx = extValue.Get("transmissionTexture").Get("index").GetNumberAsInt();
-					auto tex = loadTexture(texIdx, vk::Format::eR8G8B8A8Srgb, prefix + "transmissionTexture");
+					auto tex = loadTexture(texIdx, vk::Format::eR8G8B8A8Unorm, prefix + "transmissionTexture");
 					material->transmissionMap = tex;
-					if (tex) loadedTextureNames.push_back(prefix + "transmissionTexture");
+					if (tex)
+						loadedTextureNames.push_back(prefix + "transmissionTexture");
 				}
 				if (extValue.Has("transmissionFactor"))
 					material->params.transmissionFactor =
@@ -265,7 +333,8 @@ std::shared_ptr<Model> ModelLoader::loadModel(const std::string& filepath, Resou
 		if (!loadedTextureNames.empty()) {
 			std::string texList;
 			for (size_t i = 0; i < loadedTextureNames.size(); ++i) {
-				if (i > 0) texList += ", ";
+				if (i > 0)
+					texList += ", ";
 				texList += loadedTextureNames[i];
 			}
 			LogSystem::get().info("Material textures loaded: [{}]", texList);
@@ -324,11 +393,10 @@ std::shared_ptr<Model> ModelLoader::loadModel(const std::string& filepath, Resou
 					const auto& bufferView = gltfModel.bufferViews[accessor.bufferView];
 					const auto& buffer = gltfModel.buffers[bufferView.buffer];
 
-					const float* dataPtr = reinterpret_cast<const float*>(
-						buffer.data.data() + bufferView.byteOffset + accessor.byteOffset);
-					int stride = accessor.ByteStride(bufferView)
-									 ? accessor.ByteStride(bufferView) / sizeof(float)
-									 : tinygltf::GetNumComponentsInType(accessor.type);
+					const float* dataPtr = reinterpret_cast<const float*>(buffer.data.data() + bufferView.byteOffset +
+																		  accessor.byteOffset);
+					int stride = accessor.ByteStride(bufferView) ? accessor.ByteStride(bufferView) / sizeof(float)
+																 : tinygltf::GetNumComponentsInType(accessor.type);
 
 					attributeBuffers[attrName] = {dataPtr, stride};
 					attributeNames.push_back(attrName);
@@ -341,11 +409,13 @@ std::shared_ptr<Model> ModelLoader::loadModel(const std::string& filepath, Resou
 				{
 					std::string attrsStr;
 					for (size_t i = 0; i < attributeNames.size(); ++i) {
-						if (i > 0) attrsStr += ", ";
+						if (i > 0)
+							attrsStr += ", ";
 						attrsStr += attributeNames[i];
 					}
 					bool hasTangent = attributeBuffers.count("TANGENT") > 0;
-					LogSystem::get().info("Mesh attributes: [{}]{}", attrsStr, hasTangent ? "" : " (TANGENT will be computed)");
+					LogSystem::get().info("Mesh attributes: [{}]{}", attrsStr,
+										  hasTangent ? "" : " (TANGENT will be computed)");
 				}
 
 				// Build vertices from collected attributes
@@ -365,11 +435,16 @@ std::shared_ptr<Model> ModelLoader::loadModel(const std::string& filepath, Resou
 					}
 					if (auto it = attributeBuffers.find("TANGENT"); it != attributeBuffers.end()) {
 						v.tangent = glm::make_vec4(&it->second.first[i * it->second.second]);
-					} else {
-						v.tangent = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f); // No tangent - shader will compute from derivatives
 					}
+					// Tangent will be computed after vertex loop if not provided
 
 					vertices.push_back(v);
+				}
+
+				// Compute tangents on CPU if not provided by the model
+				bool hasTangent = attributeBuffers.count("TANGENT") > 0;
+				if (!hasTangent && !indices.empty()) {
+					computeTangents(vertices, indices);
 				}
 
 				auto mesh = std::make_shared<Mesh>(vertices, indices);

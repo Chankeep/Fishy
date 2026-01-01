@@ -29,7 +29,8 @@ public:
 							   const std::vector<vk::PushConstantRange>& pushConstants);
 	PipelineBuilder& setVertexInput(const vk::PipelineVertexInputStateCreateInfo& info);
 	PipelineBuilder& setRenderingFormats(const std::vector<vk::Format>& colorFormats, vk::Format depthFormat);
-	std::unique_ptr<GraphicsPipeline> build(const vk::raii::Device& device, vk::RenderPass renderPass = nullptr);
+	std::unique_ptr<GraphicsPipeline> build(const vk::raii::Device& device, vk::RenderPass renderPass,
+											const vk::raii::PipelineCache& pipelineCache);
 
 private:
 	std::vector<vk::PipelineShaderStageCreateInfo> _shaderStages;
