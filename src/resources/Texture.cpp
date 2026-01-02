@@ -1,34 +1,33 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "Texture.h"
 #include "../core/CommandPool.h"
-#include <iostream>
 
 namespace Fishy {
 
 Texture::Texture(const VulkanDevice& device, const std::string& path, vk::Format format)
-	: _device(device), _format(format), _vmaAllocator(device.getVmaAllocator()) {
+	: _device(device), _format(format) {
 	createTextureImage(path);
 	createTextureImageView();
 	createTextureSampler();
 }
 
 Texture::Texture(const VulkanDevice& device, const unsigned char* data, size_t size, vk::Format format)
-	: _device(device), _format(format), _vmaAllocator(device.getVmaAllocator()) {
+	: _device(device), _format(format) {
 	createTextureImageFromMemory(data, size);
 	createTextureImageView();
 	createTextureSampler();
 }
 
 Texture::Texture(const VulkanDevice& device, const unsigned char* pixels, int width, int height, vk::Format format)
-	: _device(device), _format(format), _vmaAllocator(device.getVmaAllocator()) {
+	: _device(device), _format(format) {
 	createTextureFromPixels(pixels, width, height);
 	createTextureImageView();
 	createTextureSampler();
 }
 
 Texture::~Texture() {
-	if (_vmaAllocation && _vmaAllocator) {
-		vmaDestroyImage(_vmaAllocator, _image, _vmaAllocation);
+	if (_vmaAllocation && _device.getVmaAllocator()) {
+		vmaDestroyImage(_device.getVmaAllocator(), _image, _vmaAllocation);
 	}
 	// RAII handles imageView and sampler cleanup
 }
@@ -84,7 +83,7 @@ void Texture::createTextureFromPixels(const unsigned char* pixels, int texWidth,
 
 	VulkanBuffer stagingBuffer(_device, imageSize, vk::BufferUsageFlagBits::eTransferSrc,
 							   vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
-	stagingBuffer.upload((void*)pixels, imageSize);
+	stagingBuffer.upload(pixels, imageSize);
 
 	// Create Image using VMA (keep vk:: style, convert to Vk for VMA)
 	vk::ImageCreateInfo imageInfo{
@@ -102,8 +101,8 @@ void Texture::createTextureFromPixels(const unsigned char* pixels, int texWidth,
 	VmaAllocationCreateInfo allocInfo = {};
 	allocInfo.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
 
-	VkResult result = vmaCreateImage(_vmaAllocator, reinterpret_cast<const VkImageCreateInfo*>(&imageInfo), &allocInfo,
-									 &_image, &_vmaAllocation, nullptr);
+	VkResult result = vmaCreateImage(_device.getVmaAllocator(), reinterpret_cast<const VkImageCreateInfo*>(&imageInfo),
+									 &allocInfo, &_image, &_vmaAllocation, nullptr);
 
 	if (result != VK_SUCCESS) {
 		LogSystem::get().error("Failed to create VMA image: {}x{}", texWidth, texHeight);
@@ -119,16 +118,7 @@ void Texture::createTextureFromPixels(const unsigned char* pixels, int texWidth,
 }
 
 void Texture::transitionImageLayout(vk::ImageLayout oldLayout, vk::ImageLayout newLayout) {
-	const CommandPool& commandPool = _device.getTransferCommandPool();
-
-	vk::CommandBufferAllocateInfo cmdAllocInfo{
-		.commandPool = *commandPool.getCommandPool(),
-		.level = vk::CommandBufferLevel::ePrimary,
-		.commandBufferCount = 1,
-	};
-
-	vk::raii::CommandBuffers cmdbuffers(*_device, cmdAllocInfo);
-	vk::raii::CommandBuffer& cmd = cmdbuffers[0];
+	auto cmd = _device.getTransferCommandPool().allocateBuffer(true);
 
 	cmd.begin(vk::CommandBufferBeginInfo{.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
 

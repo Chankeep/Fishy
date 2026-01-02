@@ -10,7 +10,7 @@ std::unique_ptr<IBLEnvironment> IBLEnvironment::load(const VulkanDevice& device,
 
 	std::string irradiancePath = directory + "/diffuse.ktx2";
 	std::string prefilteredPath = directory + "/specular.ktx2";
-	std::string brdfCachePath = directory + "assets/environments/brdf_lut.bin";
+	std::string brdfCachePath = directory + "/brdf_lut.bin";
 
 	LogSystem::get().info("Loading IBL environment from: {}", directory);
 
@@ -65,7 +65,6 @@ std::unique_ptr<Texture> IBLEnvironment::loadOrGenerateBRDFLUT(const VulkanDevic
 		// Validate that the file represents a valid square texture
 		if (lutSize * lutSize * BYTES_PER_PIXEL != fileSize || lutSize <= 0) {
 			LogSystem::get().warn("BRDF LUT cache has invalid size ({} bytes). Regenerating...", fileSize);
-			file.close();
 		} else {
 			LogSystem::get().trace("BRDF LUT cache: {} bytes -> {}x{} texture", fileSize, lutSize, lutSize);
 
@@ -112,7 +111,8 @@ std::unique_ptr<Texture> IBLEnvironment::loadOrGenerateBRDFLUT(const VulkanDevic
 					float v = (j + 0.5f) / SAMPLE_COUNT;
 
 					// Importance sample GGX
-					float phi = 2.0f * 3.14159265f * u;
+					constexpr float PI = 3.14159265358979323846f;
+					float phi = 2.0f * PI * u;
 					float cosTheta = sqrtf((1.0f - v) / (1.0f + (a2 - 1.0f) * v));
 					float sinTheta = sqrtf(1.0f - cosTheta * cosTheta);
 

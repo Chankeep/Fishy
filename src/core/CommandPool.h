@@ -17,7 +17,7 @@ public:
 	CommandPool(const CommandPool&) = delete;
 	CommandPool& operator=(const CommandPool&) = delete;
 
-	[[nodiscard]] vk::raii::CommandBuffer allocateBuffer(bool isPrimary = true);
+	[[nodiscard]] vk::raii::CommandBuffer allocateBuffer(bool isPrimary = true) const;
 
 	[[nodiscard]] vk::raii::CommandPool& getCommandPool() { return _pool; }
 	[[nodiscard]] const vk::raii::CommandPool& getCommandPool() const { return _pool; }

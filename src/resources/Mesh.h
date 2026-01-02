@@ -14,11 +14,11 @@ struct Vertex {
 	glm::vec2 texCoord;
 	glm::vec4 tangent; // W component is handedness (+1 or -1)
 
-	static vk::VertexInputBindingDescription getBindingDescription() {
+	[[nodiscard]] static vk::VertexInputBindingDescription getBindingDescription() {
 		return {.binding = 0, .stride = sizeof(Vertex), .inputRate = vk::VertexInputRate::eVertex};
 	}
 
-	static std::array<vk::VertexInputAttributeDescription, 4> getAttributeDescriptions() {
+	[[nodiscard]] static std::array<vk::VertexInputAttributeDescription, 4> getAttributeDescriptions() {
 		return {vk::VertexInputAttributeDescription{0, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, pos)},
 				vk::VertexInputAttributeDescription{1, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, normal)},
 				vk::VertexInputAttributeDescription{2, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, texCoord)},
@@ -45,11 +45,13 @@ struct UniformBufferObject {
 // Mesh class - pure data container for geometry
 class Mesh {
 public:
-	Mesh(const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices);
+	Mesh(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices);
 	~Mesh() = default;
 
-	const std::vector<Vertex>& getVertices() const { return _vertices; }
-	const std::vector<uint32_t>& getIndices() const { return _indices; }
+	[[nodiscard]] const std::vector<Vertex>& getVertices() const { return _vertices; }
+	[[nodiscard]] const std::vector<uint32_t>& getIndices() const { return _indices; }
+	[[nodiscard]] size_t getVertexCount() const { return _vertices.size(); }
+	[[nodiscard]] size_t getIndexCount() const { return _indices.size(); }
 
 private:
 	std::vector<Vertex> _vertices;

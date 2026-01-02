@@ -9,14 +9,12 @@ CommandPool::CommandPool(const VulkanDevice& device, uint32_t queueFamilyIndex) 
 	_pool = vk::raii::CommandPool(*_device, poolInfo);
 }
 
-vk::raii::CommandBuffer CommandPool::allocateBuffer(bool isPrimary) {
+vk::raii::CommandBuffer CommandPool::allocateBuffer(bool isPrimary) const {
 	vk::CommandBufferAllocateInfo allocInfo{.commandPool = *_pool,
 											.level = isPrimary ? vk::CommandBufferLevel::ePrimary
 															   : vk::CommandBufferLevel::eSecondary,
 											.commandBufferCount = 1};
-	vk::raii::CommandBuffer commandBuffer = std::move(_device->allocateCommandBuffers(allocInfo).front());
-
-	return commandBuffer;
+	return std::move(_device->allocateCommandBuffers(allocInfo).front());
 }
 
 } // namespace Fishy

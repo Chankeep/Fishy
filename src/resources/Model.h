@@ -18,7 +18,10 @@ public:
 	~Model() = default;
 
 	void addPrimitive(const Primitive& primitive) { _primitives.push_back(primitive); }
-	const std::vector<Primitive>& getPrimitives() const { return _primitives; }
+	void addPrimitive(Primitive&& primitive) { _primitives.push_back(std::move(primitive)); }
+	[[nodiscard]] const std::vector<Primitive>& getPrimitives() const { return _primitives; }
+	[[nodiscard]] size_t getPrimitiveCount() const { return _primitives.size(); }
+	[[nodiscard]] bool empty() const { return _primitives.empty(); }
 
 private:
 	std::vector<Primitive> _primitives;

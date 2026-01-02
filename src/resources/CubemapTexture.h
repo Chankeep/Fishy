@@ -30,12 +30,12 @@ public:
 	/**
 	 * @brief Create a minimal 1x1 black cubemap for placeholder bindings.
 	 */
-	static std::shared_ptr<CubemapTexture> createDefault(const VulkanDevice& device);
+	[[nodiscard]] static std::shared_ptr<CubemapTexture> createDefault(const VulkanDevice& device);
 
-	VkImage getImage() const { return _image; }
-	const vk::raii::ImageView& getImageView() const { return _imageView; }
-	const vk::raii::Sampler& getSampler() const { return _sampler; }
-	uint32_t getMipLevels() const { return _mipLevels; }
+	[[nodiscard]] VkImage getImage() const { return _image; }
+	[[nodiscard]] const vk::raii::ImageView& getImageView() const { return _imageView; }
+	[[nodiscard]] const vk::raii::Sampler& getSampler() const { return _sampler; }
+	[[nodiscard]] uint32_t getMipLevels() const { return _mipLevels; }
 
 private:
 	// Private constructor for createDefault factory
@@ -46,7 +46,6 @@ private:
 	void createImageView();
 	void createSampler();
 
-private:
 	const VulkanDevice& _device;
 	vk::Format _format = vk::Format::eUndefined;
 	uint32_t _width = 0;
@@ -55,7 +54,6 @@ private:
 
 	VkImage _image = VK_NULL_HANDLE;
 	VmaAllocation _vmaAllocation = nullptr;
-	VmaAllocator _vmaAllocator = nullptr;
 	vk::raii::ImageView _imageView = nullptr;
 	vk::raii::Sampler _sampler = nullptr;
 };

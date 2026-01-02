@@ -9,19 +9,18 @@
 
 namespace Fishy {
 
-CubemapTexture::CubemapTexture(const VulkanDevice& device, const std::string& path)
-	: _device(device), _vmaAllocator(device.getVmaAllocator()) {
+CubemapTexture::CubemapTexture(const VulkanDevice& device, const std::string& path) : _device(device) {
 	loadFromKTX2(path);
 	createImageView();
 	createSampler();
 }
 
 // Private constructor for createDefault factory
-CubemapTexture::CubemapTexture(const VulkanDevice& device) : _device(device), _vmaAllocator(device.getVmaAllocator()) {}
+CubemapTexture::CubemapTexture(const VulkanDevice& device) : _device(device) {}
 
 CubemapTexture::~CubemapTexture() {
-	if (_vmaAllocation && _vmaAllocator) {
-		vmaDestroyImage(_vmaAllocator, _image, _vmaAllocation);
+	if (_vmaAllocation && _device.getVmaAllocator()) {
+		vmaDestroyImage(_device.getVmaAllocator(), _image, _vmaAllocation);
 	}
 }
 
@@ -127,8 +126,9 @@ void CubemapTexture::loadFromKTX2(const std::string& path) {
 	allocInfo.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
 	allocInfo.priority = 1.0f;
 
-	VkResult vkResult = vmaCreateImage(_vmaAllocator, reinterpret_cast<const VkImageCreateInfo*>(&imageInfo),
-									   &allocInfo, &_image, &_vmaAllocation, nullptr);
+	VkResult vkResult =
+		vmaCreateImage(_device.getVmaAllocator(), reinterpret_cast<const VkImageCreateInfo*>(&imageInfo), &allocInfo,
+					   &_image, &_vmaAllocation, nullptr);
 
 	if (vkResult != VK_SUCCESS) {
 		ktxTexture_Destroy(ktxTexture(ktxTex));
@@ -136,16 +136,7 @@ void CubemapTexture::loadFromKTX2(const std::string& path) {
 	}
 
 	// Use shared transfer command pool from VulkanDevice
-	const CommandPool& commandPool = _device.getTransferCommandPool();
-
-	vk::CommandBufferAllocateInfo cmdAllocInfo{
-		.commandPool = *commandPool.getCommandPool(),
-		.level = vk::CommandBufferLevel::ePrimary,
-		.commandBufferCount = 1,
-	};
-
-	vk::raii::CommandBuffers cmdbuffers(*_device, cmdAllocInfo);
-	vk::raii::CommandBuffer& cmd = cmdbuffers[0];
+	auto cmd = _device.getTransferCommandPool().allocateBuffer(true);
 
 	cmd.begin(vk::CommandBufferBeginInfo{.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
 
@@ -316,24 +307,14 @@ void CubemapTexture::createFromData(const uint8_t* data, uint32_t size, vk::Form
 	VmaAllocationCreateInfo allocInfo = {};
 	allocInfo.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
 
-	VkResult result = vmaCreateImage(_vmaAllocator, reinterpret_cast<const VkImageCreateInfo*>(&imageInfo), &allocInfo,
-									 &_image, &_vmaAllocation, nullptr);
+	VkResult result = vmaCreateImage(_device.getVmaAllocator(), reinterpret_cast<const VkImageCreateInfo*>(&imageInfo),
+									 &allocInfo, &_image, &_vmaAllocation, nullptr);
 
 	if (result != VK_SUCCESS) {
 		throw std::runtime_error("Failed to create VMA image for default cubemap");
 	}
 
-	// Use shared transfer command pool
-	const CommandPool& commandPool = _device.getTransferCommandPool();
-
-	vk::CommandBufferAllocateInfo cmdAllocInfo{
-		.commandPool = *commandPool.getCommandPool(),
-		.level = vk::CommandBufferLevel::ePrimary,
-		.commandBufferCount = 1,
-	};
-
-	vk::raii::CommandBuffers cmdbuffers(*_device, cmdAllocInfo);
-	vk::raii::CommandBuffer& cmd = cmdbuffers[0];
+	auto cmd = _device.getTransferCommandPool().allocateBuffer(true);
 
 	cmd.begin(vk::CommandBufferBeginInfo{.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
 

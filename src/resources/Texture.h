@@ -36,15 +36,13 @@ public:
 	Texture(const Texture&) = delete;
 	Texture& operator=(const Texture&) = delete;
 
-	VkImage getImage() const { return _image; }
-	const vk::raii::ImageView& getImageView() const { return _imageView; }
-	const vk::raii::Sampler& getSampler() const { return _sampler; }
+	[[nodiscard]] VkImage getImage() const { return _image; }
+	[[nodiscard]] const vk::raii::ImageView& getImageView() const { return _imageView; }
+	[[nodiscard]] const vk::raii::Sampler& getSampler() const { return _sampler; }
 
 private:
 	void transitionImageLayout(vk::ImageLayout oldLayout, vk::ImageLayout newLayout);
 	void copyBufferToImage(const VulkanBuffer& buffer, uint32_t width, uint32_t height);
-
-private:
 	void createTextureImage(const std::string& path);
 	void createTextureImageFromMemory(const unsigned char* data, size_t size);
 	void createTextureFromPixels(const unsigned char* pixels, int texWidth, int texHeight);
@@ -56,7 +54,6 @@ private:
 
 	VkImage _image = VK_NULL_HANDLE;
 	VmaAllocation _vmaAllocation = nullptr;
-	VmaAllocator _vmaAllocator = nullptr;
 	vk::raii::ImageView _imageView = nullptr;
 	vk::raii::Sampler _sampler = nullptr;
 };

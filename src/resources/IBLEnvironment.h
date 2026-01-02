@@ -25,17 +25,18 @@ struct IBLEnvironment {
 	 * Expects: diffuse.ktx2, specular.ktx2
 	 * BRDF LUT is generated if not cached.
 	 */
-	static std::unique_ptr<IBLEnvironment> load(const VulkanDevice& device, const std::string& directory);
+	[[nodiscard]] static std::unique_ptr<IBLEnvironment> load(const VulkanDevice& device, const std::string& directory);
 
 	/**
 	 * @brief Check if BRDF LUT cache exists.
 	 */
-	static bool hasCachedBRDFLUT(const std::string& cachePath);
+	[[nodiscard]] static bool hasCachedBRDFLUT(const std::string& cachePath);
 
 	/**
 	 * @brief Load BRDF LUT from cache or generate and save.
 	 */
-	static std::unique_ptr<Texture> loadOrGenerateBRDFLUT(const VulkanDevice& device, const std::string& cachePath);
+	[[nodiscard]] static std::unique_ptr<Texture> loadOrGenerateBRDFLUT(const VulkanDevice& device,
+																		const std::string& cachePath);
 };
 
 } // namespace Fishy

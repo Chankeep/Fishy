@@ -35,6 +35,8 @@ class ResourceManager {
 public:
 	explicit ResourceManager(VulkanDevice& device);
 	~ResourceManager();
+	ResourceManager(const ResourceManager&) = delete;
+	ResourceManager& operator=(const ResourceManager&) = delete;
 
 	/**
 	 * @brief Initialize material descriptor resources.
@@ -43,7 +45,7 @@ public:
 	void initMaterialResources(vk::DescriptorSetLayout materialLayout, const vk::raii::DescriptorPool& descriptorPool);
 
 	// Shader loading
-	const vk::raii::ShaderModule& getShader(const std::string& filepath);
+	[[nodiscard]] const vk::raii::ShaderModule& getShader(const std::string& filepath);
 
 	// Texture loading
 	[[nodiscard]] std::shared_ptr<Texture> getTexture(const std::string& filepath,
