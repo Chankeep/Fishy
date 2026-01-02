@@ -8,23 +8,7 @@
 namespace Fishy {
 
 // Forward declarations
-struct GPUMesh;
 struct GPUMaterial;
-
-// =============================================================================
-// Indirect Draw Types (vulkan-hpp compatible)
-// =============================================================================
-
-/// Type alias for vulkan-hpp indirect draw command
-using IndirectCommand = vk::DrawIndexedIndirectCommand;
-// Fields: indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
-
-/// Unreal-style DrawCommand: pairs GPU draw args with CPU metadata
-struct DrawCommand {
-	IndirectCommand indirect; ///< GPU-side draw parameters
-	uint32_t objectIndex;	  ///< Index into ObjectData SSBO
-	GPUMesh* mesh;			  ///< CPU reference for buffer binding (may be null for batched)
-};
 
 // =============================================================================
 // Per-Object Data (SSBO layout)

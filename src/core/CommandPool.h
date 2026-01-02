@@ -13,12 +13,14 @@ class VulkanDevice;
 class CommandPool {
 public:
 	CommandPool(const VulkanDevice& device, uint32_t queueFamilyIndex);
-	~CommandPool();
+	~CommandPool() = default;
+	CommandPool(const CommandPool&) = delete;
+	CommandPool& operator=(const CommandPool&) = delete;
 
-	vk::raii::CommandBuffer allocateBuffer(bool isPrimary = true);
+	[[nodiscard]] vk::raii::CommandBuffer allocateBuffer(bool isPrimary = true);
 
-	vk::raii::CommandPool& getCommandPool() { return _pool; }
-	const vk::raii::CommandPool& getCommandPool() const { return _pool; }
+	[[nodiscard]] vk::raii::CommandPool& getCommandPool() { return _pool; }
+	[[nodiscard]] const vk::raii::CommandPool& getCommandPool() const { return _pool; }
 
 private:
 	const VulkanDevice& _device;

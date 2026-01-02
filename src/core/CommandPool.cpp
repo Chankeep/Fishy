@@ -1,5 +1,5 @@
 #include "CommandPool.h"
-#include "core/VulkanDevice.h"
+#include "VulkanDevice.h"
 
 namespace Fishy {
 
@@ -8,8 +8,6 @@ CommandPool::CommandPool(const VulkanDevice& device, uint32_t queueFamilyIndex) 
 									   .queueFamilyIndex = queueFamilyIndex};
 	_pool = vk::raii::CommandPool(*_device, poolInfo);
 }
-
-CommandPool::~CommandPool() {}
 
 vk::raii::CommandBuffer CommandPool::allocateBuffer(bool isPrimary) {
 	vk::CommandBufferAllocateInfo allocInfo{.commandPool = *_pool,

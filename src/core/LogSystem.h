@@ -7,11 +7,11 @@
 #include <vulkan/vulkan.h>
 
 #include <source_location>
+#include <spdlog/fmt/fmt.h>
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/sinks/ringbuffer_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
-#include <spdlog/fmt/fmt.h> 
 
 namespace Fishy {
 
@@ -39,13 +39,14 @@ public:
 	void init(const std::string& log_filename = "vulkan_app.log");
 
 	// 获取 spdlog 对象指针 (用于 vk-bootstrap callback 的 user_data)
-	std::shared_ptr<spdlog::logger> logger() { return m_logger; }
+	[[nodiscard]] std::shared_ptr<spdlog::logger> logger() { return m_logger; }
+	[[nodiscard]] std::shared_ptr<spdlog::logger> logger() const { return m_logger; }
 
 	// 获取 RingBuffer Sink (用于 GUI 显示，如 ImGui)
 	// 返回类型需要你在 cpp 中包含具体的 spdlog 头文件，或者这里使用 auto/template
 	// 为了接口干净，这里返回 void* 或者你需要包含 ringbuffer_sink.h
 	// 建议：直接获取最近的日志文本
-	std::vector<std::string> get_ringbuffer_logs(size_t count);
+	[[nodiscard]] std::vector<std::string> get_ringbuffer_logs(size_t count);
 
 	// 静态 Vulkan Debug 回调函数 (符合 vulkan.h 签名)
 	static VKAPI_ATTR VkBool32 VKAPI_CALL vulkan_debug_callback(
@@ -86,8 +87,6 @@ private:
 	}
 
 	std::shared_ptr<spdlog::logger> m_logger;
-	// 使用 void* 存储 sink 指针以保持头文件清洁，或者在此处包含 implementation header
-	// 这里为了编译方便，假设 cpp 内部处理类型转换
-	void* m_ringbuffer_sink_ptr = nullptr;
+	std::shared_ptr<spdlog::sinks::ringbuffer_sink_mt> m_ringbuffer_sink;
 };
 } // namespace Fishy

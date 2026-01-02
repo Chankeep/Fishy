@@ -122,7 +122,7 @@
 
 ## 🎨 Graphics Features (Future)
 
-- [ ] **Image-Based Lighting (IBL)**
+- [x] **Image-Based Lighting (IBL)**
   - Add environment cubemap support
   - Pre-filtered environment map for specular
   - Irradiance map for diffuse

@@ -30,7 +30,7 @@ void LogSystem::init(const std::string& log_filename) {
 		auto ring_sink = std::make_shared<spdlog::sinks::ringbuffer_sink_mt>(128);
 		ring_sink->set_level(spdlog::level::trace);
 		// 保存原始指针以便 get_ringbuffer_logs 使用
-		m_ringbuffer_sink_ptr = ring_sink.get();
+		m_ringbuffer_sink = ring_sink;
 		sinks.push_back(ring_sink);
 
 		// 创建 logger
@@ -51,10 +51,10 @@ void LogSystem::init(const std::string& log_filename) {
 }
 
 std::vector<std::string> LogSystem::get_ringbuffer_logs(size_t count) {
-	if (!m_ringbuffer_sink_ptr)
+	if (!m_ringbuffer_sink)
 		return {};
 
-	auto sink = static_cast<spdlog::sinks::ringbuffer_sink_mt*>(m_ringbuffer_sink_ptr);
+	auto sink = m_ringbuffer_sink;
 	return sink->last_formatted(count);
 }
 

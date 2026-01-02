@@ -45,13 +45,12 @@ void SwapChain::createSwapChain(int width, int height) {
 
 	vkb::Swapchain vkbSwapchain = swap_ret.value();
 
-	LogSystem::get().info("Swapchain created: {}x{} format:{} images:{}",
-		vkbSwapchain.extent.width, vkbSwapchain.extent.height,
-		vk::to_string(static_cast<vk::Format>(vkbSwapchain.image_format)),
-		vkbSwapchain.image_count);
+	LogSystem::get().info("Swapchain created: {}x{} format:{} images:{}", vkbSwapchain.extent.width,
+						  vkbSwapchain.extent.height, vk::to_string(static_cast<vk::Format>(vkbSwapchain.image_format)),
+						  vkbSwapchain.image_count);
 
 	// Wrap in RAII
-	// The previous swapchain in _swapChain will be destroyed automatically when corrected assigned.
+	// The previous swapchain will be destroyed automatically when reassigned.
 	_swapChain = vk::raii::SwapchainKHR(*_device, vkbSwapchain.swapchain);
 
 	_swapChainExtent = vkbSwapchain.extent;

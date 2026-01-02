@@ -7,7 +7,6 @@
 #include <VkBootstrap.h>
 #include <algorithm>
 #include <cstring>
-#include <iostream>
 #include <vector>
 
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
@@ -15,19 +14,19 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 namespace Fishy {
 
 // Define validation layers
-const std::vector<char const*> validationLayers = {"VK_LAYER_KHRONOS_validation"};
+constexpr std::array validationLayers = {"VK_LAYER_KHRONOS_validation"};
 
 #ifdef NDEBUG
-const bool enableValidationLayers = false;
+constexpr bool enableValidationLayers = false;
 #else
-const bool enableValidationLayers = true;
+constexpr bool enableValidationLayers = true;
 #endif
 
-VulkanContext::VulkanContext() { Init(); }
+VulkanContext::VulkanContext() { init(); }
 
-VulkanContext::~VulkanContext() { Cleanup(); }
+VulkanContext::~VulkanContext() { cleanup(); }
 
-void VulkanContext::Init() {
+void VulkanContext::init() {
 	LogSystem::get().info("Initializing Vulkan context...");
 
 	// Initialize volk
@@ -42,7 +41,7 @@ void VulkanContext::Init() {
 	createInstance();
 }
 
-void VulkanContext::Cleanup() {
+void VulkanContext::cleanup() {
 	LogSystem::get().info("Cleaning up Vulkan context...");
 
 	// Must explicitly destroy vk-bootstrap's debug messenger before the RAII instance destructs
@@ -64,7 +63,11 @@ void VulkanContext::createInstance() {
 
 	if (enableValidationLayers) {
 		LogSystem::get().info("Validation layers enabled");
-		builder.request_validation_layers().use_default_debug_messenger().set_debug_callback(LogSystem::vulkan_debug_callback).set_debug_callback_user_data_pointer(LogSystem::get().logger().get()); // Let vk-bootstrap handle debug messenger
+		builder.request_validation_layers()
+			.use_default_debug_messenger()
+			.set_debug_callback(LogSystem::vulkan_debug_callback)
+			.set_debug_callback_user_data_pointer(
+				LogSystem::get().logger().get()); // Let vk-bootstrap handle debug messenger
 	}
 
 	auto system_info_ret = vkb::SystemInfo::get_system_info();

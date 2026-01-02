@@ -16,22 +16,6 @@ struct GLFWwindow;
 namespace Fishy {
 
 /**
- * @brief Vulkan debug callback that uses our Log system
- *
- * Maps Vulkan validation messages to appropriate log levels.
- * @param messageSeverity Severity of the message (VK_DEBUG_UTILS_MESSAGE_SEVERITY_*)
- * @param messageType Type of the message (VK_DEBUG_UTILS_MESSAGE_TYPE_*)
- * @param pCallbackData Debug message data
- * @param pUserData User data (unused)
- * @return VK_FALSE to not bail out of the validation layer
- */
-VKAPI_ATTR VkBool32 VKAPI_CALL VulkanDebugCallback(
-    VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
-    VkDebugUtilsMessageTypeFlagsEXT messageType,
-    const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
-    void* pUserData);
-
-/**
  * @brief Manages the Vulkan Instance and Debug Messenger.
  *
  * Initializes the Vulkan loader (volk), creates the Vulkan instance,
@@ -41,20 +25,22 @@ class VulkanContext {
 public:
 	VulkanContext();
 	~VulkanContext();
+	VulkanContext(const VulkanContext&) = delete;
+	VulkanContext& operator=(const VulkanContext&) = delete;
 
-	vk::raii::Instance& getInstance() { return _instance; }
+	[[nodiscard]] vk::raii::Instance& getInstance() { return _instance; }
+	[[nodiscard]] const vk::raii::Instance& getInstance() const { return _instance; }
 
 private:
-	void Init();
-	void Cleanup();
+	void init();
+	void cleanup();
 
 	// Helper functions
 	void createInstance();
 
 	vk::raii::Context _context;
 	vk::raii::Instance _instance = nullptr;
-	vkb::Instance _vkbInstance;  // Stores vk-bootstrap instance for debug messenger cleanup
-	VkDebugUtilsMessengerEXT _debugMessenger = VK_NULL_HANDLE;  // Custom debug messenger
+	vkb::Instance _vkbInstance; // Stores vk-bootstrap instance for debug messenger cleanup
 };
 
 } // namespace Fishy

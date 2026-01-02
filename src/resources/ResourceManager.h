@@ -21,15 +21,6 @@ class Mesh;
 class Material;
 
 /**
- * @brief GPU representation of a Mesh.
- */
-struct GPUMesh {
-	std::unique_ptr<VulkanBuffer> vertexBuffer;
-	std::unique_ptr<VulkanBuffer> indexBuffer;
-	uint32_t indexCount = 0;
-};
-
-/**
  * @brief GPU representation of a Material.
  */
 struct GPUMaterial {
@@ -55,19 +46,21 @@ public:
 	const vk::raii::ShaderModule& getShader(const std::string& filepath);
 
 	// Texture loading
-	std::shared_ptr<Texture> getTexture(const std::string& filepath, vk::Format format = vk::Format::eR8G8B8A8Srgb);
-	std::shared_ptr<Texture> loadTextureFromMemory(const unsigned char* data, size_t size, const std::string& cacheKey,
-												   vk::Format format = vk::Format::eR8G8B8A8Srgb);
+	[[nodiscard]] std::shared_ptr<Texture> getTexture(const std::string& filepath,
+													  vk::Format format = vk::Format::eR8G8B8A8Srgb);
+	[[nodiscard]] std::shared_ptr<Texture> loadTextureFromMemory(const unsigned char* data, size_t size,
+																 const std::string& cacheKey,
+																 vk::Format format = vk::Format::eR8G8B8A8Srgb);
 
 	// GPU resource management
-	GPUMaterial* getOrCreateGPUMaterial(const Material* material);
+	[[nodiscard]] GPUMaterial* getOrCreateGPUMaterial(const Material* material);
 
 	// Get default white texture for materials without textures
-	std::shared_ptr<Texture> getDefaultWhiteTexture();
-	std::shared_ptr<Texture> getDefaultNormalTexture();
+	[[nodiscard]] std::shared_ptr<Texture> getDefaultWhiteTexture();
+	[[nodiscard]] std::shared_ptr<Texture> getDefaultNormalTexture();
 
 	// Get default cubemap for IBL placeholder bindings
-	std::shared_ptr<CubemapTexture> getDefaultCubemap();
+	[[nodiscard]] std::shared_ptr<CubemapTexture> getDefaultCubemap();
 
 	// Clear GPU resources (call before Renderer destroys descriptor pool)
 	void clearGPUResources();
@@ -76,25 +69,17 @@ public:
 	void clear();
 
 private:
-	// Helper to load binary data from file
+	// Helper functions
 	static std::vector<char> readFile(const std::string& filename);
-
-	// Helper to create shader module
 	vk::raii::ShaderModule createShaderModule(const std::vector<char>& code);
-
-	// Create default textures
 	void createDefaultTextures();
 
-private:
+	// Core dependency
 	VulkanDevice& _device;
 
-	// Shader cache
+	// Caches
 	std::unordered_map<std::string, vk::raii::ShaderModule> _shaderCache;
-
-	// Texture cache
 	std::unordered_map<std::string, std::shared_ptr<Texture>> _textureCache;
-
-	// GPU resource caches (keyed by raw pointer for fast lookup)
 	std::unordered_map<const Material*, std::unique_ptr<GPUMaterial>> _gpuMaterialCache;
 
 	// Material descriptor allocation

@@ -1,5 +1,4 @@
 #include "Application.h"
-#include <iostream>
 
 #include "../ui/DebugPanel.h"
 #include "LogSystem.h"
@@ -22,7 +21,7 @@ Application::Application()
 	  _renderer(_device, _window, _resourceManager) {
 
 	LogSystem::get().info("Initializing Application...");
-	LogSystem::get().info("Window created: {}x{}", 1280, 720);
+	LogSystem::get().info("Window created: {}x{}", _window.getWidth(), _window.getHeight());
 
 	// Initialize ImGui Layer
 	_imguiLayer = std::make_unique<ImGuiLayer>(_context, _device, _window, _renderer.getSwapChainFormat());
@@ -35,30 +34,7 @@ Application::Application()
 
 	if (!_model) {
 		LogSystem::get().warn("Failed to load model, creating default geometry");
-		std::cout << "No model loaded. Creating default geometry..." << std::endl;
-		// Create a simple default model with two quads
-		_model = std::make_shared<Model>();
-
-		std::vector<Vertex> vertices = {
-			// Front quad
-			{{-0.5f, -0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
-			{{0.5f, -0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
-			{{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
-			{{-0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
-
-			// Back quad
-			{{-0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {0.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
-			{{0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {1.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
-			{{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {1.0f, 1.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
-			{{-0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {0.0f, 1.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
-		};
-
-		std::vector<uint32_t> indices = {0, 1, 2, 2, 3, 0, 4, 5, 6, 6, 7, 4};
-
-		auto mesh = std::make_shared<Mesh>(vertices, indices);
-		auto material = std::make_shared<Material>();
-
-		_model->addPrimitive({mesh, material});
+		_model = createDefaultModel();
 	}
 
 	// Load IBL environment
@@ -81,20 +57,20 @@ Application::~Application() {
 }
 
 // Main application loop
-void Application::Run() {
+void Application::run() {
 	LogSystem::get().info("Starting main render loop");
 	DebugPanel debugPanel;
 
 	// Frame timing
-	static auto lastFrameTime = std::chrono::high_resolution_clock::now();
+	auto lastFrameTime = std::chrono::high_resolution_clock::now();
 
-	while (!_window.ShouldClose()) {
+	while (!_window.shouldClose()) {
 		// Calculate delta time
 		auto currentTime = std::chrono::high_resolution_clock::now();
 		float deltaTime = std::chrono::duration<float>(currentTime - lastFrameTime).count();
 		lastFrameTime = currentTime;
 
-		_window.Update();
+		_window.update();
 
 		// Update camera from mouse input (only if ImGui is not capturing mouse)
 		ImGuiIO& io = ImGui::GetIO();
@@ -125,6 +101,33 @@ void Application::Run() {
 
 	LogSystem::get().info("Main render loop ended");
 	_device->waitIdle();
+}
+
+std::shared_ptr<Model> Application::createDefaultModel() { // Create a simple default model with two quads
+	auto model = std::make_shared<Model>();
+
+	std::vector<Vertex> vertices = {
+		// Front quad
+		{{-0.5f, -0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+		{{0.5f, -0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+		{{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+		{{-0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+
+		// Back quad
+		{{-0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {0.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+		{{0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {1.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+		{{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {1.0f, 1.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+		{{-0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {0.0f, 1.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+	};
+
+	std::vector<uint32_t> indices = {0, 1, 2, 2, 3, 0, 4, 5, 6, 6, 7, 4};
+
+	auto mesh = std::make_shared<Mesh>(vertices, indices);
+	auto material = std::make_shared<Material>();
+
+	model->addPrimitive({mesh, material});
+
+	return model;
 }
 
 } // namespace Fishy

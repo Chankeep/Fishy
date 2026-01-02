@@ -15,12 +15,12 @@ namespace Fishy {
  * @brief Mouse input state for camera controls
  */
 struct MouseState {
-	double deltaX = 0.0;      // Mouse X movement since last frame
-	double deltaY = 0.0;      // Mouse Y movement since last frame
-	double scrollDelta = 0.0; // Mouse wheel scroll delta
-	bool rightButton = false; // Right mouse button held
-	bool middleButton = false;// Middle mouse button held
-	bool leftButton = false;  // Left mouse button held
+	double deltaX = 0.0;	   // Mouse X movement since last frame
+	double deltaY = 0.0;	   // Mouse Y movement since last frame
+	double scrollDelta = 0.0;  // Mouse wheel scroll delta
+	bool rightButton = false;  // Right mouse button held
+	bool middleButton = false; // Middle mouse button held
+	bool leftButton = false;   // Left mouse button held
 
 	// Reset per-frame deltas
 	void reset() {
@@ -47,26 +47,28 @@ public:
 
 	Window(const Properties& properties, const vk::raii::Instance& instance);
 	~Window();
+	Window(const Window&) = delete;
+	Window& operator=(const Window&) = delete;
 
-	void Update();
-	bool ShouldClose() const;
-	GLFWwindow* getNativeWindow() const { return _window; }
+	void update();
+	[[nodiscard]] bool shouldClose() const;
+	[[nodiscard]] GLFWwindow* getNativeWindow() const { return _window; }
 
-	uint32_t getWidth() const { return _properties.width; }
-	uint32_t getHeight() const { return _properties.height; }
-	vk::Extent2D getExtent() const { return {_properties.width, _properties.height}; }
+	[[nodiscard]] uint32_t getWidth() const { return _properties.width; }
+	[[nodiscard]] uint32_t getHeight() const { return _properties.height; }
+	[[nodiscard]] vk::Extent2D getExtent() const { return {_properties.width, _properties.height}; }
 
-	bool wasWindowResized() const { return _framebufferResized; }
+	[[nodiscard]] bool wasWindowResized() const { return _framebufferResized; }
+
+	[[nodiscard]] vk::raii::SurfaceKHR& getSurface() { return _surface; }
+	[[nodiscard]] const vk::raii::SurfaceKHR& getSurface() const { return _surface; }
+
+	[[nodiscard]] const MouseState& getMouseState() const { return _mouseState; }
 	void resetWindowResizedFlag() { _framebufferResized = false; }
-
-	vk::raii::SurfaceKHR& getSurface() { return _surface; }
-
-	// Mouse state accessors
-	const MouseState& getMouseState() const { return _mouseState; }
 	void resetMouseDelta() { _mouseState.reset(); }
 
 private:
-	void Init(const Properties& properties);
+	void init(const Properties& properties);
 	void createSurface(const vk::raii::Instance& instance);
 	static void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods);
 	static void FramebufferResizeCallback(GLFWwindow* window, int width, int height);

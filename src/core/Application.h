@@ -10,7 +10,6 @@
 #include "VulkanDevice.h"
 #include "Window.h"
 
-
 #include <memory>
 
 namespace Fishy {
@@ -25,40 +24,28 @@ class Application {
 public:
 	Application();
 	~Application();
+	Application(const Application&) = delete;
+	Application& operator=(const Application&) = delete;
 
-	void Run();
+	void run();
 
 private:
+	std::shared_ptr<Model> createDefaultModel();
+
 	// Order matters for RAII destruction!
 	// Destruction order is reverse of declaration order.
-
 	struct GlfwInitializer {
 		GlfwInitializer();
 		~GlfwInitializer();
 	} _glfwInitializer;
 
-	// 1. Context (Instance) - Last to be destroyed
 	Fishy::VulkanContext _context;
-
-	// 2. Window (Surface) - Destroyed before Instance
 	Fishy::Window _window;
-
-	// 3. Device - Destroyed before Surface
 	Fishy::VulkanDevice _device;
-
-	// 4. Resource Manager - Destroyed before Device
 	Fishy::ResourceManager _resourceManager;
-
-	// 5. Renderer - Owns SwapChain, destroyed before Device
 	Fishy::Renderer _renderer;
-
-	// 6. ImGui Layer - Destroyed before Renderer
 	std::unique_ptr<ImGuiLayer> _imguiLayer;
-
-	// 7. Loaded model
 	std::shared_ptr<Model> _model;
-
-	// 8. IBL Environment
 	std::unique_ptr<IBLEnvironment> _iblEnvironment;
 };
 

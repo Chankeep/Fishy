@@ -1,34 +1,32 @@
 #include "VulkanBuffer.h"
 #include "CommandPool.h"
+#include "LogSystem.h"
+#include <format>
 #include <iostream>
 
 namespace Fishy {
 
 static std::string getBufferUsageDescription(vk::BufferUsageFlags usage) {
-	// TransferSrc alone is staging buffer
 	if (usage == vk::BufferUsageFlagBits::eTransferSrc) {
 		return "staging";
 	}
-
-	std::vector<std::string> usages;
-
+	std::vector<std::string_view> usages;
 	if (usage & vk::BufferUsageFlagBits::eVertexBuffer)
-		usages.push_back("vertex");
+		usages.emplace_back("vertex");
 	if (usage & vk::BufferUsageFlagBits::eIndexBuffer)
-		usages.push_back("index");
+		usages.emplace_back("index");
 	if (usage & vk::BufferUsageFlagBits::eUniformBuffer)
-		usages.push_back("uniform");
+		usages.emplace_back("uniform");
 	if (usage & vk::BufferUsageFlagBits::eStorageBuffer)
-		usages.push_back("storage");
+		usages.emplace_back("storage");
 	if (usage & vk::BufferUsageFlagBits::eTransferDst)
-		usages.push_back("transfer-dst");
+		usages.emplace_back("transfer-dst");
 	if (usage & vk::BufferUsageFlagBits::eIndirectBuffer)
-		usages.push_back("indirect");
-
+		usages.emplace_back("indirect");
 	if (usages.empty())
 		return "unknown";
-
-	// Combine usage descriptions
+	// Future: C++23 std::format("{}", std::views::join_with(usages, " + "))
+	// C++20 workaround:
 	std::string result;
 	for (size_t i = 0; i < usages.size(); ++i) {
 		if (i > 0)
@@ -40,7 +38,7 @@ static std::string getBufferUsageDescription(vk::BufferUsageFlags usage) {
 
 VulkanBuffer::VulkanBuffer(const VulkanDevice& device, vk::DeviceSize size, vk::BufferUsageFlags usage,
 						   vk::MemoryPropertyFlags properties)
-	: _device(device), _size(size), _vmaAllocator(device.getVmaAllocator()) {
+	: _device(device), _size(size) {
 
 	// 1. Create Buffer using VMA
 	VkBufferCreateInfo bufferInfo = {
@@ -65,7 +63,8 @@ VulkanBuffer::VulkanBuffer(const VulkanDevice& device, vk::DeviceSize size, vk::
 
 	VmaAllocationInfo allocInfoOut;
 
-	VkResult result = vmaCreateBuffer(_vmaAllocator, &bufferInfo, &allocInfo, &_buffer, &_vmaAllocation, &allocInfoOut);
+	VkResult result =
+		vmaCreateBuffer(_device.getVmaAllocator(), &bufferInfo, &allocInfo, &_buffer, &_vmaAllocation, &allocInfoOut);
 
 	if (result != VK_SUCCESS) {
 		LogSystem::get().error("Failed to create VMA buffer: {} bytes", size);
@@ -80,8 +79,8 @@ VulkanBuffer::VulkanBuffer(const VulkanDevice& device, vk::DeviceSize size, vk::
 }
 
 VulkanBuffer::~VulkanBuffer() {
-	if (_vmaAllocation && _vmaAllocator) {
-		vmaDestroyBuffer(_vmaAllocator, _buffer, _vmaAllocation);
+	if (_vmaAllocation && _device.getVmaAllocator()) {
+		vmaDestroyBuffer(_device.getVmaAllocator(), _buffer, _vmaAllocation);
 	}
 }
 
@@ -93,7 +92,7 @@ void* VulkanBuffer::map(vk::DeviceSize offset, vk::DeviceSize size) {
 
 	// Fallback: map on-demand (should not happen with VMA_MAPPING strategy)
 	void* data = nullptr;
-	VkResult result = vmaMapMemory(_vmaAllocator, _vmaAllocation, &data);
+	VkResult result = vmaMapMemory(_device.getVmaAllocator(), _vmaAllocation, &data);
 	if (result == VK_SUCCESS) {
 		return static_cast<char*>(data) + offset;
 	}
@@ -103,44 +102,39 @@ void* VulkanBuffer::map(vk::DeviceSize offset, vk::DeviceSize size) {
 void VulkanBuffer::unmap() {
 	if (!_mappedData) {
 		// Only unmap if not persistently mapped
-		vmaUnmapMemory(_vmaAllocator, _vmaAllocation);
+		vmaUnmapMemory(_device.getVmaAllocator(), _vmaAllocation);
 	}
 }
 
-bool VulkanBuffer::upload(void* data, vk::DeviceSize size) {
-	void* mappedData = map(0, size);
+void VulkanBuffer::upload(std::span<const std::byte> data) {
+	void* mappedData = map(0, data.size());
 	if (mappedData) {
-		memcpy(mappedData, data, static_cast<size_t>(size));
-		// VMA with HOST_COHERENT doesn't need explicit flush
+		memcpy(mappedData, data.data(), data.size());
 		unmap();
-		return true;
+		return;
 	}
-	return false;
+	LogSystem::get().error("Failed to upload {} bytes to buffer", data.size());
+	throw std::runtime_error("Failed to upload data to buffer!");
 }
 
-void VulkanBuffer::uploadStaged(CommandPool& commandPool, const vk::raii::Queue& queue, void* data,
-								vk::DeviceSize size) {
+void VulkanBuffer::uploadStaged(CommandPool& commandPool, const vk::raii::Queue& queue,
+								std::span<const std::byte> data) {
 
 	// 1. Create Staging Buffer (Host Visible | Coherent with persistent mapping)
-	VulkanBuffer stagingBuffer(_device, size, vk::BufferUsageFlagBits::eTransferSrc,
+	VulkanBuffer stagingBuffer(_device, data.size(), vk::BufferUsageFlagBits::eTransferSrc,
 							   vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
 
 	// 2. Map and Copy
-	stagingBuffer.upload(data, size);
+	stagingBuffer.upload(data);
 
 	// 3. Allocate Temporary Command Buffer
-	vk::CommandBufferAllocateInfo allocInfo{.commandPool = *commandPool.getCommandPool(),
-											.level = vk::CommandBufferLevel::ePrimary,
-											.commandBufferCount = 1};
-
-	vk::raii::CommandBuffers cmdbuffers(*_device, allocInfo);
-	vk::raii::CommandBuffer& cmd = cmdbuffers[0];
+	vk::raii::CommandBuffer cmd = commandPool.allocateBuffer(true);
 
 	// 4. Record Copy Command
 	vk::CommandBufferBeginInfo beginInfo{.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit};
 	cmd.begin(beginInfo);
 
-	copyBuffer(_device, cmd, stagingBuffer, *this, size);
+	copyBuffer(cmd, stagingBuffer, *this, data.size());
 
 	cmd.end();
 
@@ -153,8 +147,8 @@ void VulkanBuffer::uploadStaged(CommandPool& commandPool, const vk::raii::Queue&
 	// stagingBuffer handles and temporary cmd buffers are destroyed here (RAII)
 }
 
-void VulkanBuffer::copyBuffer(const VulkanDevice& device, const vk::raii::CommandBuffer& cmd,
-							  const VulkanBuffer& srcBuffer, VulkanBuffer& dstBuffer, vk::DeviceSize size) {
+void VulkanBuffer::copyBuffer(const vk::raii::CommandBuffer& cmd, const VulkanBuffer& srcBuffer,
+							  VulkanBuffer& dstBuffer, vk::DeviceSize size) {
 	vk::BufferCopy copyRegion{};
 	copyRegion.srcOffset = 0;
 	copyRegion.dstOffset = 0;

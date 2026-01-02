@@ -12,6 +12,20 @@
 
 namespace Fishy {
 
+namespace MaterialFlags {
+constexpr uint32_t DoubleSided = 1u << 0;
+constexpr uint32_t AlphaModeShift = 1;
+constexpr uint32_t HasBaseColorMap = 1u << 3;
+constexpr uint32_t HasMetallicRoughnessMap = 1u << 4;
+constexpr uint32_t HasNormalMap = 1u << 5;
+constexpr uint32_t HasOcclusionMap = 1u << 6;
+constexpr uint32_t HasEmissiveMap = 1u << 7;
+constexpr uint32_t HasClearcoatMap = 1u << 8;
+constexpr uint32_t HasClearcoatRoughnessMap = 1u << 9;
+constexpr uint32_t HasClearcoatNormalMap = 1u << 10;
+constexpr uint32_t HasTransmissionMap = 1u << 11;
+} // namespace MaterialFlags
+
 ResourceManager::ResourceManager(VulkanDevice& device) : _device(device) {}
 
 ResourceManager::~ResourceManager() { clear(); }
@@ -105,7 +119,6 @@ std::shared_ptr<Texture> ResourceManager::getTexture(const std::string& filepath
 		return texture;
 	} catch (const std::exception& e) {
 		LogSystem::get().error("Failed to load texture: {} Error: {}", filepath, e.what());
-		std::cerr << "Failed to load texture: " << filepath << " Error: " << e.what() << std::endl;
 		return nullptr;
 	}
 }
@@ -129,7 +142,6 @@ std::shared_ptr<Texture> ResourceManager::loadTextureFromMemory(const unsigned c
 		return texture;
 	} catch (const std::exception& e) {
 		LogSystem::get().error("Failed to load embedded texture: {} Error: {}", cacheKey, e.what());
-		std::cerr << "Failed to load embedded texture: " << cacheKey << " Error: " << e.what() << std::endl;
 		return nullptr;
 	}
 }
@@ -176,26 +188,26 @@ GPUMaterial* ResourceManager::getOrCreateGPUMaterial(const Material* material) {
 	// Flags: bit 0 = doubleSided, bits 1-2 = alphaMode, bits 3+ = texture presence
 	uint32_t flags = 0;
 	if (material->params.doubleSided)
-		flags |= (1 << 0);
-	flags |= (static_cast<uint32_t>(material->params.alphaMode) << 1);
+		flags |= MaterialFlags::DoubleSided;
+	flags |= static_cast<uint32_t>(material->params.alphaMode) << MaterialFlags::AlphaModeShift;
 	if (material->baseColorMap)
-		flags |= (1 << 3);
+		flags |= MaterialFlags::HasBaseColorMap;
 	if (material->metallicRoughnessMap)
-		flags |= (1 << 4);
+		flags |= MaterialFlags::HasMetallicRoughnessMap;
 	if (material->normalMap)
-		flags |= (1 << 5);
+		flags |= MaterialFlags::HasNormalMap;
 	if (material->occlusionMap)
-		flags |= (1 << 6);
+		flags |= MaterialFlags::HasOcclusionMap;
 	if (material->emissiveMap)
-		flags |= (1 << 7);
+		flags |= MaterialFlags::HasEmissiveMap;
 	if (material->clearcoatMap)
-		flags |= (1 << 8);
+		flags |= MaterialFlags::HasClearcoatMap;
 	if (material->clearcoatRoughnessMap)
-		flags |= (1 << 9);
+		flags |= MaterialFlags::HasClearcoatRoughnessMap;
 	if (material->clearcoatNormalMap)
-		flags |= (1 << 10);
+		flags |= MaterialFlags::HasClearcoatNormalMap;
 	if (material->transmissionMap)
-		flags |= (1 << 11);
+		flags |= MaterialFlags::HasTransmissionMap;
 	ubo.flags = flags;
 
 	gpuMaterial->uniformBuffer->upload(&ubo, sizeof(ubo));
@@ -205,20 +217,25 @@ GPUMaterial* ResourceManager::getOrCreateGPUMaterial(const Material* material) {
 		.descriptorPool = **_descriptorPool, .descriptorSetCount = 1, .pSetLayouts = &_materialLayout};
 	gpuMaterial->descriptorSet = std::move(vk::raii::DescriptorSets(*_device, allocInfo)[0]);
 
+	auto getOrDefault = [this](const std::shared_ptr<Texture>& tex, bool useNormalDefault = false) {
+		if (tex)
+			return tex;
+		return useNormalDefault ? _defaultNormalTexture : _defaultWhiteTexture;
+	};
+
 	// Get textures (use defaults if not present)
 	// Core PBR textures
-	auto baseColorTex = material->baseColorMap ? material->baseColorMap : _defaultWhiteTexture;
-	auto metallicRoughnessTex = material->metallicRoughnessMap ? material->metallicRoughnessMap : _defaultWhiteTexture;
-	auto normalTex = material->normalMap ? material->normalMap : _defaultNormalTexture;
-	auto occlusionTex = material->occlusionMap ? material->occlusionMap : _defaultWhiteTexture;
-	auto emissiveTex = material->emissiveMap ? material->emissiveMap : _defaultWhiteTexture;
+	auto baseColorTex = getOrDefault(material->baseColorMap);
+	auto metallicRoughnessTex = getOrDefault(material->metallicRoughnessMap);
+	auto normalTex = getOrDefault(material->normalMap, true);
+	auto occlusionTex = getOrDefault(material->occlusionMap);
+	auto emissiveTex = getOrDefault(material->emissiveMap);
 
 	// Extension textures (clearcoat, transmission)
-	auto clearcoatTex = material->clearcoatMap ? material->clearcoatMap : _defaultWhiteTexture;
-	auto clearcoatRoughnessTex =
-		material->clearcoatRoughnessMap ? material->clearcoatRoughnessMap : _defaultWhiteTexture;
-	auto clearcoatNormalTex = material->clearcoatNormalMap ? material->clearcoatNormalMap : _defaultNormalTexture;
-	auto transmissionTex = material->transmissionMap ? material->transmissionMap : _defaultWhiteTexture;
+	auto clearcoatTex = getOrDefault(material->clearcoatMap);
+	auto clearcoatRoughnessTex = getOrDefault(material->clearcoatRoughnessMap);
+	auto clearcoatNormalTex = getOrDefault(material->clearcoatNormalMap, true);
+	auto transmissionTex = getOrDefault(material->transmissionMap);
 
 	// Write descriptor set - 9 textures at bindings 1-9
 	std::vector<vk::DescriptorImageInfo> imageInfos = {
@@ -268,6 +285,7 @@ GPUMaterial* ResourceManager::getOrCreateGPUMaterial(const Material* material) {
 }
 
 void ResourceManager::clearGPUResources() {
+	_descriptorPool = nullptr;
 	// Idempotent: safe to call multiple times
 	if (_gpuMaterialCache.empty()) {
 		return; // Already cleared
@@ -290,8 +308,38 @@ void ResourceManager::clear() {
 
 	_defaultWhiteTexture.reset();
 	_defaultNormalTexture.reset();
+	_defaultCubemap.reset();
 
 	LogSystem::get().info("ResourceManager cleared");
+}
+
+uint32_t buildMaterialFlags(const Material* material) {
+	uint32_t flags = 0;
+
+	if (material->params.doubleSided)
+		flags |= MaterialFlags::DoubleSided;
+
+	flags |= (static_cast<uint32_t>(material->params.alphaMode) << MaterialFlags::AlphaModeShift);
+
+	// Texture presence flags using structured bindings
+	const std::pair<const std::shared_ptr<Texture>&, uint32_t> textureFlags[] = {
+		{material->baseColorMap, MaterialFlags::HasBaseColorMap},
+		{material->metallicRoughnessMap, MaterialFlags::HasMetallicRoughnessMap},
+		{material->normalMap, MaterialFlags::HasNormalMap},
+		{material->occlusionMap, MaterialFlags::HasOcclusionMap},
+		{material->emissiveMap, MaterialFlags::HasEmissiveMap},
+		{material->clearcoatMap, MaterialFlags::HasClearcoatMap},
+		{material->clearcoatRoughnessMap, MaterialFlags::HasClearcoatRoughnessMap},
+		{material->clearcoatNormalMap, MaterialFlags::HasClearcoatNormalMap},
+		{material->transmissionMap, MaterialFlags::HasTransmissionMap},
+	};
+
+	for (const auto& [texture, flag] : textureFlags) {
+		if (texture)
+			flags |= flag;
+	}
+
+	return flags;
 }
 
 std::vector<char> ResourceManager::readFile(const std::string& filename) {
@@ -302,13 +350,11 @@ std::vector<char> ResourceManager::readFile(const std::string& filename) {
 		throw std::runtime_error("failed to open file: " + filename + " (cwd: " + cwd + ")");
 	}
 
-	size_t fileSize = (size_t)file.tellg();
+	auto fileSize = static_cast<size_t>(file.tellg());
 	std::vector<char> buffer(fileSize);
 
 	file.seekg(0);
 	file.read(buffer.data(), fileSize);
-
-	file.close();
 
 	return buffer;
 }
