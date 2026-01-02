@@ -1,8 +1,10 @@
 #include "VulkanBuffer.h"
 #include "CommandPool.h"
 #include "LogSystem.h"
+#include "VulkanUtils.h"
 #include <format>
 #include <iostream>
+
 
 namespace Fishy {
 
@@ -119,7 +121,6 @@ void VulkanBuffer::upload(std::span<const std::byte> data) {
 
 void VulkanBuffer::uploadStaged(CommandPool& commandPool, const vk::raii::Queue& queue,
 								std::span<const std::byte> data) {
-
 	// 1. Create Staging Buffer (Host Visible | Coherent with persistent mapping)
 	VulkanBuffer stagingBuffer(_device, data.size(), vk::BufferUsageFlagBits::eTransferSrc,
 							   vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
@@ -127,24 +128,10 @@ void VulkanBuffer::uploadStaged(CommandPool& commandPool, const vk::raii::Queue&
 	// 2. Map and Copy
 	stagingBuffer.upload(data);
 
-	// 3. Allocate Temporary Command Buffer
-	vk::raii::CommandBuffer cmd = commandPool.allocateBuffer(true);
+	// 3. Execute copy using one-time command buffer
+	VulkanUtils::executeImmediate(_device, [&](auto& cmd) { copyBuffer(cmd, stagingBuffer, *this, data.size()); });
 
-	// 4. Record Copy Command
-	vk::CommandBufferBeginInfo beginInfo{.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit};
-	cmd.begin(beginInfo);
-
-	copyBuffer(cmd, stagingBuffer, *this, data.size());
-
-	cmd.end();
-
-	// 5. Submit and Wait
-	vk::SubmitInfo submitInfo{.commandBufferCount = 1, .pCommandBuffers = &(*cmd)};
-
-	queue.submit(submitInfo, nullptr); // No fence, simply wait idle
-	queue.waitIdle();
-
-	// stagingBuffer handles and temporary cmd buffers are destroyed here (RAII)
+	// stagingBuffer is destroyed here (RAII)
 }
 
 void VulkanBuffer::copyBuffer(const vk::raii::CommandBuffer& cmd, const VulkanBuffer& srcBuffer,

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../renderer/Renderer.h"
+#include "../rendering/Renderer.h"
 #include "../resources/IBLEnvironment.h"
 #include "../resources/Model.h"
 #include "../resources/ModelLoader.h"

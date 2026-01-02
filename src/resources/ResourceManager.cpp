@@ -1,6 +1,6 @@
 #include "ResourceManager.h"
 #include "../core/VulkanDevice.h"
-#include "../renderer/Material.h"
+#include "../rendering/Material.h"
 #include "CubemapTexture.h"
 #include "Mesh.h"
 #include "Texture.h"

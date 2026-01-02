@@ -1,11 +1,11 @@
 #include "Renderer.h"
-#include <iostream>
 
 #include "Camera.h"
 #include "PipelineBuilder.h"
 #include "core/CommandPool.h"
 #include "core/LogSystem.h"
 #include "core/VulkanDevice.h"
+#include "core/VulkanUtils.h"
 #include "core/Window.h"
 #include "resources/ResourceManager.h"
 #include "vulkan/vulkan.hpp"
@@ -18,6 +18,8 @@
 #include <stdexcept>
 
 namespace Fishy {
+
+static constexpr uint64_t FENCE_TIMEOUT = std::numeric_limits<uint64_t>::max();
 
 Renderer::Renderer(VulkanDevice& device, Window& window, ResourceManager& resourceManager)
 	: _device(device), _window(window), _resourceManager(resourceManager) {
@@ -77,10 +79,10 @@ void Renderer::render(const Model& model, std::function<void(VkCommandBuffer)> u
 	updateUniformBuffer(_currentFrameIndex);
 
 	// Transition image to COLOR_ATTACHMENT_OPTIMAL
-	transitionImage(*cmd, _swapChain->getImages()[_currentImageIndex], vk::ImageLayout::eUndefined,
-					vk::ImageLayout::eColorAttachmentOptimal, {}, vk::AccessFlagBits2::eColorAttachmentWrite,
-					vk::PipelineStageFlagBits2::eTopOfPipe, vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-					vk::ImageAspectFlagBits::eColor);
+	VulkanUtils::transitionImage(*cmd, _swapChain->getImages()[_currentImageIndex], vk::ImageLayout::eUndefined,
+								 vk::ImageLayout::eColorAttachmentOptimal, {},
+								 vk::AccessFlagBits2::eColorAttachmentWrite, vk::PipelineStageFlagBits2::eTopOfPipe,
+								 vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::ImageAspectFlagBits::eColor);
 
 	// Begin dynamic rendering
 	vk::ClearValue clearColor{.color = {.float32 = {{0.01f, 0.01f, 0.02f, 1.0f}}}};
@@ -156,10 +158,11 @@ void Renderer::render(const Model& model, std::function<void(VkCommandBuffer)> u
 	}
 
 	// Transition image to PRESENT_SRC
-	transitionImage(*cmd, _swapChain->getImages()[_currentImageIndex], vk::ImageLayout::eColorAttachmentOptimal,
-					vk::ImageLayout::ePresentSrcKHR, vk::AccessFlagBits2::eColorAttachmentWrite, {},
-					vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::PipelineStageFlagBits2::eBottomOfPipe,
-					vk::ImageAspectFlagBits::eColor);
+	VulkanUtils::transitionImage(*cmd, _swapChain->getImages()[_currentImageIndex],
+								 vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::ePresentSrcKHR,
+								 vk::AccessFlagBits2::eColorAttachmentWrite, {},
+								 vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+								 vk::PipelineStageFlagBits2::eBottomOfPipe, vk::ImageAspectFlagBits::eColor);
 
 	endFrame();
 }
@@ -298,8 +301,7 @@ void Renderer::createObjectDataSetLayout() {
 }
 
 void Renderer::createObjectDataBuffer() {
-	// Initial size for up to 256 objects (can grow if needed)
-	constexpr uint32_t INITIAL_MAX_OBJECTS = 256;
+	// Use header constant for initial buffer size
 	vk::DeviceSize bufferSize = sizeof(ObjectData) * INITIAL_MAX_OBJECTS;
 
 	for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
@@ -334,8 +336,7 @@ void Renderer::updateObjectData(const Model& model) {
 }
 
 void Renderer::createIndirectBuffer() {
-	// Initial size for up to 256 draw commands
-	constexpr uint32_t INITIAL_MAX_COMMANDS = 256;
+	// Use header constant for initial buffer size
 	vk::DeviceSize bufferSize = sizeof(vk::DrawIndexedIndirectCommand) * INITIAL_MAX_COMMANDS;
 
 	for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
@@ -406,21 +407,12 @@ void Renderer::buildUnifiedBuffers(const Model& model) {
 	stagingIndex.upload(allIndices.data(), indexBufferSize);
 
 	// Copy using one-time command buffer
-	vk::CommandBufferAllocateInfo cmdAllocInfo{.commandPool = *_commandPool->getCommandPool(),
-											   .level = vk::CommandBufferLevel::ePrimary,
-											   .commandBufferCount = 1};
-	auto cmdBuffers = vk::raii::CommandBuffers(*_device, cmdAllocInfo);
-	auto& cmd = cmdBuffers[0];
-
-	cmd.begin(vk::CommandBufferBeginInfo{.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
-	cmd.copyBuffer(stagingVertex.getBuffer(), _unifiedVertexBuffer->getBuffer(),
-				   vk::BufferCopy{.size = vertexBufferSize});
-	cmd.copyBuffer(stagingIndex.getBuffer(), _unifiedIndexBuffer->getBuffer(), vk::BufferCopy{.size = indexBufferSize});
-	cmd.end();
-
-	vk::SubmitInfo submitInfo{.commandBufferCount = 1, .pCommandBuffers = &*cmd};
-	_device.getGraphicsQueue().submit(submitInfo, nullptr);
-	_device.getGraphicsQueue().waitIdle();
+	VulkanUtils::executeImmediate(_device, [&](auto& cmd) {
+		cmd.copyBuffer(stagingVertex.getBuffer(), _unifiedVertexBuffer->getBuffer(),
+					   vk::BufferCopy{.size = vertexBufferSize});
+		cmd.copyBuffer(stagingIndex.getBuffer(), _unifiedIndexBuffer->getBuffer(),
+					   vk::BufferCopy{.size = indexBufferSize});
+	});
 
 	_unifiedBuffersDirty = false;
 	LogSystem::get().info("Built unified buffers: {} vertices, {} indices", allVertices.size(), allIndices.size());
@@ -617,8 +609,14 @@ void Renderer::savePipelineCache() {
 		LogSystem::get().warn("Failed to save pipeline cache to disk");
 	}
 }
+
 void Renderer::createDescriptorSets() {
-	// Allocate global descriptor sets (Set 0)
+	createGlobalDescriptorSets();
+	createObjectDataDescriptorSets();
+}
+
+void Renderer::createGlobalDescriptorSets() {
+	// Allocate global descriptor sets (Set 0: UBO + IBL textures)
 	std::vector<vk::DescriptorSetLayout> globalLayouts(MAX_FRAMES_IN_FLIGHT, *_globalSetLayout);
 
 	vk::DescriptorSetAllocateInfo globalAllocInfo{.descriptorPool = *_descriptorPool,
@@ -627,7 +625,71 @@ void Renderer::createDescriptorSets() {
 
 	auto globalSets = vk::raii::DescriptorSets(*_device, globalAllocInfo);
 
-	// Allocate object data descriptor sets (Set 2)
+	// Get default textures for placeholders
+	auto defaultTex = _resourceManager.getDefaultWhiteTexture();
+	auto defaultCubemap = _resourceManager.getDefaultCubemap();
+
+	for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+		_frames[i].descriptorSet = std::move(globalSets[i]);
+
+		// UBO descriptor
+		vk::DescriptorBufferInfo uboInfo{
+			.buffer = _frames[i].uniformBuffer->getBuffer(), .offset = 0, .range = sizeof(UniformBufferObject)};
+
+		// IBL placeholders (cubemaps)
+		vk::DescriptorImageInfo cubemapImageInfo{
+			.sampler = *defaultCubemap->getSampler(),
+			.imageView = *defaultCubemap->getImageView(),
+			.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+		};
+
+		// BRDF LUT placeholder (2D texture)
+		vk::DescriptorImageInfo brdfLutImageInfo{
+			.sampler = *defaultTex->getSampler(),
+			.imageView = *defaultTex->getImageView(),
+			.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+		};
+
+		std::array<vk::WriteDescriptorSet, 4> descriptorWrites{};
+
+		// Binding 0: Global UBO
+		descriptorWrites[0].dstSet = *_frames[i].descriptorSet;
+		descriptorWrites[0].dstBinding = 0;
+		descriptorWrites[0].dstArrayElement = 0;
+		descriptorWrites[0].descriptorType = vk::DescriptorType::eUniformBuffer;
+		descriptorWrites[0].descriptorCount = 1;
+		descriptorWrites[0].pBufferInfo = &uboInfo;
+
+		// Binding 1: IBL irradiance map
+		descriptorWrites[1].dstSet = *_frames[i].descriptorSet;
+		descriptorWrites[1].dstBinding = 1;
+		descriptorWrites[1].dstArrayElement = 0;
+		descriptorWrites[1].descriptorType = vk::DescriptorType::eCombinedImageSampler;
+		descriptorWrites[1].descriptorCount = 1;
+		descriptorWrites[1].pImageInfo = &cubemapImageInfo;
+
+		// Binding 2: IBL prefiltered map
+		descriptorWrites[2].dstSet = *_frames[i].descriptorSet;
+		descriptorWrites[2].dstBinding = 2;
+		descriptorWrites[2].dstArrayElement = 0;
+		descriptorWrites[2].descriptorType = vk::DescriptorType::eCombinedImageSampler;
+		descriptorWrites[2].descriptorCount = 1;
+		descriptorWrites[2].pImageInfo = &cubemapImageInfo;
+
+		// Binding 3: BRDF LUT
+		descriptorWrites[3].dstSet = *_frames[i].descriptorSet;
+		descriptorWrites[3].dstBinding = 3;
+		descriptorWrites[3].dstArrayElement = 0;
+		descriptorWrites[3].descriptorType = vk::DescriptorType::eCombinedImageSampler;
+		descriptorWrites[3].descriptorCount = 1;
+		descriptorWrites[3].pImageInfo = &brdfLutImageInfo;
+
+		_device->updateDescriptorSets(descriptorWrites, {});
+	}
+}
+
+void Renderer::createObjectDataDescriptorSets() {
+	// Allocate object data descriptor sets (Set 2: SSBO for per-object transforms)
 	std::vector<vk::DescriptorSetLayout> objectDataLayouts(MAX_FRAMES_IN_FLIGHT, *_objectDataSetLayout);
 
 	vk::DescriptorSetAllocateInfo objectDataAllocInfo{.descriptorPool = *_descriptorPool,
@@ -637,79 +699,23 @@ void Renderer::createDescriptorSets() {
 
 	auto objectDataSets = vk::raii::DescriptorSets(*_device, objectDataAllocInfo);
 
-	// Get default texture for IBL placeholder (prevents validation errors)
-	auto defaultTex = _resourceManager.getDefaultWhiteTexture();
-
 	for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-		_frames[i].descriptorSet = std::move(globalSets[i]);
 		_frames[i].objectDataSet = std::move(objectDataSets[i]);
 
-		// Write global UBO descriptor
-		vk::DescriptorBufferInfo uboInfo{
-			.buffer = _frames[i].uniformBuffer->getBuffer(), .offset = 0, .range = sizeof(UniformBufferObject)};
-
-		// Write object data SSBO descriptor
+		// SSBO descriptor
 		vk::DescriptorBufferInfo ssboInfo{
 			.buffer = _frames[i].objectDataBuffer->getBuffer(), .offset = 0, .range = VK_WHOLE_SIZE};
 
-		// Default cubemap for IBL cubemap bindings (irradiance/prefiltered)
-		auto defaultCubemap = _resourceManager.getDefaultCubemap();
-		vk::DescriptorImageInfo cubemapImageInfo{
-			.sampler = *defaultCubemap->getSampler(),
-			.imageView = *defaultCubemap->getImageView(),
-			.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+		vk::WriteDescriptorSet ssboWrite{
+			.dstSet = *_frames[i].objectDataSet,
+			.dstBinding = 0,
+			.dstArrayElement = 0,
+			.descriptorCount = 1,
+			.descriptorType = vk::DescriptorType::eStorageBuffer,
+			.pBufferInfo = &ssboInfo,
 		};
 
-		// Default 2D texture for BRDF LUT binding
-		vk::DescriptorImageInfo brdfLutImageInfo{
-			.sampler = *defaultTex->getSampler(),
-			.imageView = *defaultTex->getImageView(),
-			.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
-		};
-
-		std::array<vk::WriteDescriptorSet, 5> descriptorWrites{};
-
-		// Global UBO (Set 0, Binding 0)
-		descriptorWrites[0].dstSet = *_frames[i].descriptorSet;
-		descriptorWrites[0].dstBinding = 0;
-		descriptorWrites[0].dstArrayElement = 0;
-		descriptorWrites[0].descriptorType = vk::DescriptorType::eUniformBuffer;
-		descriptorWrites[0].descriptorCount = 1;
-		descriptorWrites[0].pBufferInfo = &uboInfo;
-
-		// IBL irradiance map placeholder (Set 0, Binding 1) - cubemap
-		descriptorWrites[1].dstSet = *_frames[i].descriptorSet;
-		descriptorWrites[1].dstBinding = 1;
-		descriptorWrites[1].dstArrayElement = 0;
-		descriptorWrites[1].descriptorType = vk::DescriptorType::eCombinedImageSampler;
-		descriptorWrites[1].descriptorCount = 1;
-		descriptorWrites[1].pImageInfo = &cubemapImageInfo;
-
-		// IBL prefiltered map placeholder (Set 0, Binding 2) - cubemap
-		descriptorWrites[2].dstSet = *_frames[i].descriptorSet;
-		descriptorWrites[2].dstBinding = 2;
-		descriptorWrites[2].dstArrayElement = 0;
-		descriptorWrites[2].descriptorType = vk::DescriptorType::eCombinedImageSampler;
-		descriptorWrites[2].descriptorCount = 1;
-		descriptorWrites[2].pImageInfo = &cubemapImageInfo;
-
-		// BRDF LUT placeholder (Set 0, Binding 3) - 2D texture
-		descriptorWrites[3].dstSet = *_frames[i].descriptorSet;
-		descriptorWrites[3].dstBinding = 3;
-		descriptorWrites[3].dstArrayElement = 0;
-		descriptorWrites[3].descriptorType = vk::DescriptorType::eCombinedImageSampler;
-		descriptorWrites[3].descriptorCount = 1;
-		descriptorWrites[3].pImageInfo = &brdfLutImageInfo;
-
-		// Object Data SSBO (Set 2, Binding 0)
-		descriptorWrites[4].dstSet = *_frames[i].objectDataSet;
-		descriptorWrites[4].dstBinding = 0;
-		descriptorWrites[4].dstArrayElement = 0;
-		descriptorWrites[4].descriptorType = vk::DescriptorType::eStorageBuffer;
-		descriptorWrites[4].descriptorCount = 1;
-		descriptorWrites[4].pBufferInfo = &ssboInfo;
-
-		_device->updateDescriptorSets(descriptorWrites, {});
+		_device->updateDescriptorSets(ssboWrite, {});
 	}
 }
 
@@ -742,34 +748,12 @@ void Renderer::updateUniformBuffer(uint32_t frameIndex) {
 	_frames[frameIndex].uniformBuffer->upload(&ubo, sizeof(ubo));
 }
 
-void Renderer::transitionImage(vk::CommandBuffer cmd, vk::Image image, vk::ImageLayout oldLayout,
-							   vk::ImageLayout newLayout, vk::AccessFlags2 srcAccessMask,
-							   vk::AccessFlags2 dstAccessMask, vk::PipelineStageFlags2 srcStageMask,
-							   vk::PipelineStageFlags2 dstStageMask, vk::ImageAspectFlags aspectMask) {
-	vk::ImageMemoryBarrier2 barrier{
-		.srcStageMask = srcStageMask,
-		.srcAccessMask = srcAccessMask,
-		.dstStageMask = dstStageMask,
-		.dstAccessMask = dstAccessMask,
-		.oldLayout = oldLayout,
-		.newLayout = newLayout,
-		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-		.image = image,
-		.subresourceRange = {
-			.aspectMask = aspectMask, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1}};
-
-	vk::DependencyInfo dependencyInfo{.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier};
-
-	cmd.pipelineBarrier2(dependencyInfo);
-}
-
 bool Renderer::beginFrame() {
 	if (_isFrameStarted) {
 		throw std::runtime_error("Can't call beginFrame while already in progress");
 	}
 
-	auto result = _device->waitForFences(*_frames[_currentFrameIndex].inFlightFence, vk::True, UINT64_MAX);
+	auto result = _device->waitForFences(*_frames[_currentFrameIndex].inFlightFence, vk::True, FENCE_TIMEOUT);
 	if (result != vk::Result::eSuccess) {
 		throw std::runtime_error("WaitForFences failed");
 	}
@@ -778,7 +762,7 @@ bool Renderer::beginFrame() {
 	uint32_t imageIndex;
 	try {
 		auto [result, idx] = _swapChain->get().acquireNextImage(
-			UINT64_MAX, *_frames[_currentFrameIndex].imageAvailableSemaphore, nullptr);
+			FENCE_TIMEOUT, *_frames[_currentFrameIndex].imageAvailableSemaphore, nullptr);
 		acquireResult = result;
 		imageIndex = idx;
 	} catch (const vk::OutOfDateKHRError&) {
@@ -811,12 +795,12 @@ void Renderer::endFrame() {
 
 	_frames[_currentFrameIndex].commandBuffer.end();
 
-	vk::PipelineStageFlags waitStages[] = {vk::PipelineStageFlagBits::eColorAttachmentOutput};
+	std::array<vk::PipelineStageFlags, 1> waitStages = {vk::PipelineStageFlagBits::eColorAttachmentOutput};
 	vk::CommandBuffer rawCmd = *_frames[_currentFrameIndex].commandBuffer;
 
 	vk::SubmitInfo submitInfo{.waitSemaphoreCount = 1,
 							  .pWaitSemaphores = &*_frames[_currentFrameIndex].imageAvailableSemaphore,
-							  .pWaitDstStageMask = waitStages,
+							  .pWaitDstStageMask = waitStages.data(),
 							  .commandBufferCount = 1,
 							  .pCommandBuffers = &rawCmd,
 							  .signalSemaphoreCount = 1,
@@ -845,7 +829,9 @@ void Renderer::endFrame() {
 	_currentFrameIndex = (_currentFrameIndex + 1) % MAX_FRAMES_IN_FLIGHT;
 }
 
-float Renderer::getAspectRatio() const { return _swapChain->getExtent().width / (float)_swapChain->getExtent().height; }
+float Renderer::getAspectRatio() const {
+	return static_cast<float>(_swapChain->getExtent().width) / static_cast<float>(_swapChain->getExtent().height);
+}
 
 vk::Format Renderer::findDepthFormat() {
 	std::vector<vk::Format> candidates = {vk::Format::eD32Sfloat, vk::Format::eD32SfloatS8Uint,
@@ -928,31 +914,18 @@ void Renderer::createDepthResources() {
 	// Perform explicit layout transition Undefined -> DepthStencilAttachmentOptimal
 	{
 		LogSystem::get().trace("Performing layout transition for depth image");
-		// Get command pool directly from device since _commandPool might not be initialized yet
-		// during initial swapchain creation
-		CommandPool& cmdPool = _device.getTransferCommandPool();
-		vk::CommandBufferAllocateInfo cmdAllocInfo{.commandPool = *cmdPool.getCommandPool(),
-												   .level = vk::CommandBufferLevel::ePrimary,
-												   .commandBufferCount = 1};
-		auto commandBuffers = vk::raii::CommandBuffers(*_device, cmdAllocInfo);
-		vk::raii::CommandBuffer& cmd = commandBuffers[0];
+		auto aspectMask = viewInfo.subresourceRange.aspectMask;
 
-		vk::CommandBufferBeginInfo beginInfo{.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit};
-		cmd.begin(beginInfo);
+		VulkanUtils::executeImmediate(_device, [&](auto& cmd) {
+			VulkanUtils::transitionImage(
+				*cmd, _depthImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal,
+				vk::AccessFlagBits2::eNone,
+				vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+				vk::PipelineStageFlagBits2::eTopOfPipe,
+				vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
+				aspectMask);
+		});
 
-		transitionImage(
-			*cmd, _depthImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal,
-			vk::AccessFlagBits2::eNone,
-			vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
-			vk::PipelineStageFlagBits2::eTopOfPipe,
-			vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
-			viewInfo.subresourceRange.aspectMask);
-
-		cmd.end();
-
-		vk::SubmitInfo submitInfo{.commandBufferCount = 1, .pCommandBuffers = &*cmd};
-		_device.getGraphicsQueue().submit(submitInfo, nullptr);
-		_device.getGraphicsQueue().waitIdle();
 		LogSystem::get().trace("Layout transition for depth image completed");
 	}
 }

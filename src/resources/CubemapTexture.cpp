@@ -1,6 +1,7 @@
 #include "CubemapTexture.h"
 #include "../core/CommandPool.h"
 #include "../core/VulkanBuffer.h"
+#include "../core/VulkanUtils.h"
 
 #include <cstring>
 #include <ktx.h>
@@ -135,81 +136,51 @@ void CubemapTexture::loadFromKTX2(const std::string& path) {
 		throw std::runtime_error("Failed to create VMA image for cubemap");
 	}
 
-	// Use shared transfer command pool from VulkanDevice
-	auto cmd = _device.getTransferCommandPool().allocateBuffer(true);
+	// Execute all GPU commands in a single submission
+	VulkanUtils::executeImmediate(_device, [&](auto& cmd) {
+		// Transition to transfer dst
+		VulkanUtils::transitionImage(*cmd, _image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal,
+									 vk::AccessFlagBits2::eNone, vk::AccessFlagBits2::eTransferWrite,
+									 vk::PipelineStageFlagBits2::eTopOfPipe, vk::PipelineStageFlagBits2::eTransfer,
+									 vk::ImageAspectFlagBits::eColor, _mipLevels, 6);
 
-	cmd.begin(vk::CommandBufferBeginInfo{.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+		// Copy buffer to image for each mip level and face
+		std::vector<vk::BufferImageCopy> copyRegions;
 
-	// Transition to transfer dst
-	vk::ImageMemoryBarrier barrier{
-		.srcAccessMask = vk::AccessFlagBits::eNone,
-		.dstAccessMask = vk::AccessFlagBits::eTransferWrite,
-		.oldLayout = vk::ImageLayout::eUndefined,
-		.newLayout = vk::ImageLayout::eTransferDstOptimal,
-		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-		.image = _image,
-		.subresourceRange =
-			{
-				.aspectMask = vk::ImageAspectFlagBits::eColor,
-				.baseMipLevel = 0,
-				.levelCount = _mipLevels,
-				.baseArrayLayer = 0,
-				.layerCount = 6,
-			},
-	};
+		for (uint32_t level = 0; level < _mipLevels; level++) {
+			uint32_t mipWidth = std::max(1u, _width >> level);
+			uint32_t mipHeight = std::max(1u, _height >> level);
 
-	cmd.pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe, vk::PipelineStageFlagBits::eTransfer,
-						vk::DependencyFlags(), nullptr, nullptr, barrier);
+			for (uint32_t face = 0; face < 6; face++) {
+				ktx_size_t offset;
+				ktxTexture_GetImageOffset(ktxTex, level, 0, face, &offset);
 
-	// Copy buffer to image for each mip level and face
-	std::vector<vk::BufferImageCopy> copyRegions;
-
-	for (uint32_t level = 0; level < _mipLevels; level++) {
-		uint32_t mipWidth = std::max(1u, _width >> level);
-		uint32_t mipHeight = std::max(1u, _height >> level);
-
-		for (uint32_t face = 0; face < 6; face++) {
-			ktx_size_t offset;
-			ktxTexture_GetImageOffset(ktxTex, level, 0, face, &offset);
-
-			copyRegions.push_back({
-				.bufferOffset = offset,
-				.bufferRowLength = 0,
-				.bufferImageHeight = 0,
-				.imageSubresource =
-					{
-						.aspectMask = vk::ImageAspectFlagBits::eColor,
-						.mipLevel = level,
-						.baseArrayLayer = face,
-						.layerCount = 1,
-					},
-				.imageOffset = {0, 0, 0},
-				.imageExtent = {mipWidth, mipHeight, 1},
-			});
+				copyRegions.push_back({
+					.bufferOffset = offset,
+					.bufferRowLength = 0,
+					.bufferImageHeight = 0,
+					.imageSubresource =
+						{
+							.aspectMask = vk::ImageAspectFlagBits::eColor,
+							.mipLevel = level,
+							.baseArrayLayer = face,
+							.layerCount = 1,
+						},
+					.imageOffset = {0, 0, 0},
+					.imageExtent = {mipWidth, mipHeight, 1},
+				});
+			}
 		}
-	}
 
-	cmd.copyBufferToImage(stagingBuffer.getBuffer(), _image, vk::ImageLayout::eTransferDstOptimal, copyRegions);
+		cmd.copyBufferToImage(stagingBuffer.getBuffer(), _image, vk::ImageLayout::eTransferDstOptimal, copyRegions);
 
-	// Transition to shader read
-	barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
-	barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
-	barrier.oldLayout = vk::ImageLayout::eTransferDstOptimal;
-	barrier.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-
-	cmd.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eFragmentShader,
-						vk::DependencyFlags(), nullptr, nullptr, barrier);
-
-	cmd.end();
-
-	vk::SubmitInfo submitInfo{
-		.commandBufferCount = 1,
-		.pCommandBuffers = &(*cmd),
-	};
-
-	_device.getGraphicsQueue().submit(submitInfo, nullptr);
-	_device.getGraphicsQueue().waitIdle();
+		// Transition to shader read
+		VulkanUtils::transitionImage(*cmd, _image, vk::ImageLayout::eTransferDstOptimal,
+									 vk::ImageLayout::eShaderReadOnlyOptimal, vk::AccessFlagBits2::eTransferWrite,
+									 vk::AccessFlagBits2::eShaderRead, vk::PipelineStageFlagBits2::eTransfer,
+									 vk::PipelineStageFlagBits2::eFragmentShader, vk::ImageAspectFlagBits::eColor,
+									 _mipLevels, 6);
+	});
 
 	ktxTexture_Destroy(ktxTex);
 
@@ -314,71 +285,42 @@ void CubemapTexture::createFromData(const uint8_t* data, uint32_t size, vk::Form
 		throw std::runtime_error("Failed to create VMA image for default cubemap");
 	}
 
-	auto cmd = _device.getTransferCommandPool().allocateBuffer(true);
+	// Execute all GPU commands in a single submission
+	VulkanUtils::executeImmediate(_device, [&](auto& cmd) {
+		// Transition to transfer dst
+		VulkanUtils::transitionImage(*cmd, _image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal,
+									 vk::AccessFlagBits2::eNone, vk::AccessFlagBits2::eTransferWrite,
+									 vk::PipelineStageFlagBits2::eTopOfPipe, vk::PipelineStageFlagBits2::eTransfer,
+									 vk::ImageAspectFlagBits::eColor, 1, 6);
 
-	cmd.begin(vk::CommandBufferBeginInfo{.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+		// Copy buffer to image (all 6 faces)
+		std::vector<vk::BufferImageCopy> copyRegions;
+		for (uint32_t face = 0; face < 6; face++) {
+			copyRegions.push_back({
+				.bufferOffset = face * faceSize,
+				.bufferRowLength = 0,
+				.bufferImageHeight = 0,
+				.imageSubresource =
+					{
+						.aspectMask = vk::ImageAspectFlagBits::eColor,
+						.mipLevel = 0,
+						.baseArrayLayer = face,
+						.layerCount = 1,
+					},
+				.imageOffset = {0, 0, 0},
+				.imageExtent = {_width, _height, 1},
+			});
+		}
 
-	// Transition to transfer dst
-	vk::ImageMemoryBarrier barrier{
-		.srcAccessMask = vk::AccessFlagBits::eNone,
-		.dstAccessMask = vk::AccessFlagBits::eTransferWrite,
-		.oldLayout = vk::ImageLayout::eUndefined,
-		.newLayout = vk::ImageLayout::eTransferDstOptimal,
-		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-		.image = _image,
-		.subresourceRange =
-			{
-				.aspectMask = vk::ImageAspectFlagBits::eColor,
-				.baseMipLevel = 0,
-				.levelCount = 1,
-				.baseArrayLayer = 0,
-				.layerCount = 6,
-			},
-	};
+		cmd.copyBufferToImage(stagingBuffer.getBuffer(), _image, vk::ImageLayout::eTransferDstOptimal, copyRegions);
 
-	cmd.pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe, vk::PipelineStageFlagBits::eTransfer,
-						vk::DependencyFlags(), nullptr, nullptr, barrier);
-
-	// Copy buffer to image (all 6 faces)
-	std::vector<vk::BufferImageCopy> copyRegions;
-	for (uint32_t face = 0; face < 6; face++) {
-		copyRegions.push_back({
-			.bufferOffset = face * faceSize,
-			.bufferRowLength = 0,
-			.bufferImageHeight = 0,
-			.imageSubresource =
-				{
-					.aspectMask = vk::ImageAspectFlagBits::eColor,
-					.mipLevel = 0,
-					.baseArrayLayer = face,
-					.layerCount = 1,
-				},
-			.imageOffset = {0, 0, 0},
-			.imageExtent = {_width, _height, 1},
-		});
-	}
-
-	cmd.copyBufferToImage(stagingBuffer.getBuffer(), _image, vk::ImageLayout::eTransferDstOptimal, copyRegions);
-
-	// Transition to shader read
-	barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
-	barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
-	barrier.oldLayout = vk::ImageLayout::eTransferDstOptimal;
-	barrier.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-
-	cmd.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eFragmentShader,
-						vk::DependencyFlags(), nullptr, nullptr, barrier);
-
-	cmd.end();
-
-	vk::SubmitInfo submitInfo{
-		.commandBufferCount = 1,
-		.pCommandBuffers = &(*cmd),
-	};
-
-	_device.getGraphicsQueue().submit(submitInfo, nullptr);
-	_device.getGraphicsQueue().waitIdle();
+		// Transition to shader read
+		VulkanUtils::transitionImage(*cmd, _image, vk::ImageLayout::eTransferDstOptimal,
+									 vk::ImageLayout::eShaderReadOnlyOptimal, vk::AccessFlagBits2::eTransferWrite,
+									 vk::AccessFlagBits2::eShaderRead, vk::PipelineStageFlagBits2::eTransfer,
+									 vk::PipelineStageFlagBits2::eFragmentShader, vk::ImageAspectFlagBits::eColor, 1,
+									 6);
+	});
 }
 
 } // namespace Fishy

@@ -85,6 +85,11 @@ PipelineBuilder& PipelineBuilder::setDepthStencilTest(bool depthWriteEnable, boo
 	_depthStencil.depthWriteEnable = depthWriteEnable ? vk::True : vk::False;
 	_depthStencil.depthCompareOp = compareOp;
 	_depthStencil.stencilTestEnable = stencilTestEnable ? vk::True : vk::False;
+
+	if (stencilTestEnable) {
+		_depthStencil.front.compareOp = stencilCompareOp;
+		_depthStencil.back.compareOp = stencilCompareOp;
+	}
 	return *this;
 }
 

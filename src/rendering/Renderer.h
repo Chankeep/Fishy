@@ -31,6 +31,10 @@ class CommandPool;
 
 constexpr int MAX_FRAMES_IN_FLIGHT = 2;
 
+// Initial buffer sizes for indirect rendering
+static constexpr uint32_t INITIAL_MAX_OBJECTS = 256;
+static constexpr uint32_t INITIAL_MAX_COMMANDS = 256;
+
 /**
  * @brief Main renderer class.
  *
@@ -41,6 +45,8 @@ class Renderer {
 public:
 	Renderer(VulkanDevice& device, Window& window, ResourceManager& resourceManager);
 	~Renderer();
+	Renderer(const Renderer&) = delete;
+	Renderer& operator=(const Renderer&) = delete;
 
 	/**
 	 * @brief Render a model with optional UI callback.
@@ -60,17 +66,17 @@ public:
 	}
 
 	// Accessors
-	float getAspectRatio() const;
-	vk::Format getSwapChainFormat() const { return _swapChain->getFormat(); }
-	vk::Extent2D getSwapChainExtent() const { return _swapChain->getExtent(); }
+	[[nodiscard]] float getAspectRatio() const;
+	[[nodiscard]] vk::Format getSwapChainFormat() const { return _swapChain->getFormat(); }
+	[[nodiscard]] vk::Extent2D getSwapChainExtent() const { return _swapChain->getExtent(); }
 
 	// Camera access
-	Camera& getCamera() { return _camera; }
-	const Camera& getCamera() const { return _camera; }
+	[[nodiscard]] Camera& getCamera() { return _camera; }
+	[[nodiscard]] const Camera& getCamera() const { return _camera; }
 
 	// IBL environment
 	void setIBLEnvironment(IBLEnvironment* ibl);
-	IBLEnvironment* getIBLEnvironment() const { return _iblEnvironment; }
+	[[nodiscard]] IBLEnvironment* getIBLEnvironment() const { return _iblEnvironment; }
 
 private:
 	// Frame management
@@ -79,10 +85,6 @@ private:
 
 	// Rendering helpers
 	void updateUniformBuffer(uint32_t frameIndex);
-	static void transitionImage(vk::CommandBuffer cmd, vk::Image image, vk::ImageLayout oldLayout,
-								vk::ImageLayout newLayout, vk::AccessFlags2 srcAccessMask,
-								vk::AccessFlags2 dstAccessMask, vk::PipelineStageFlags2 srcStageMask,
-								vk::PipelineStageFlags2 dstStageMask, vk::ImageAspectFlags aspectMask);
 
 	// Initialization
 	void createCommandBuffers();
@@ -95,6 +97,8 @@ private:
 	void createMaterialSetLayout();
 	void createDescriptorPool();
 	void createDescriptorSets();
+	void createGlobalDescriptorSets();
+	void createObjectDataDescriptorSets();
 	void createDepthResources();
 	void createObjectDataSetLayout();
 	void createObjectDataBuffer();
@@ -103,7 +107,7 @@ private:
 	void buildUnifiedBuffers(const Model& model);
 	void buildDrawBatches(const Model& model);
 	void renderIndirect(const vk::raii::CommandBuffer& cmd);
-	vk::Format findDepthFormat();
+	[[nodiscard]] vk::Format findDepthFormat();
 	void createSwapChainImageViews();
 	void writeIBLDescriptors();
 
@@ -120,7 +124,6 @@ private:
 		std::unique_ptr<VulkanBuffer> indirectBuffer;
 	};
 
-private:
 	VulkanDevice& _device;
 	Window& _window;
 	ResourceManager& _resourceManager;

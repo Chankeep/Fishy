@@ -1,12 +1,12 @@
 #include "Camera.h"
-#include <glm/gtc/matrix_transform.hpp>
 #include <algorithm>
+#include <glm/gtc/matrix_transform.hpp>
+
 
 namespace Fishy {
 
-void Camera::update(float mouseDeltaX, float mouseDeltaY, float scrollDelta,
-					bool mouseButtonRight, bool mouseButtonMiddle, bool mouseButtonLeft,
-					float deltaTime) {
+void Camera::update(float mouseDeltaX, float mouseDeltaY, float scrollDelta, bool mouseButtonRight,
+					bool mouseButtonMiddle, bool mouseButtonLeft, float deltaTime) {
 	// Rotate only with right mouse button
 	if (mouseButtonRight) {
 		rotate(mouseDeltaX, mouseDeltaY);
@@ -66,9 +66,9 @@ void Camera::updatePosition() {
 	float pitchRad = glm::radians(_pitch);
 
 	// Spherical to Cartesian conversion
-	float x = _distance * cos(pitchRad) * sin(yawRad);
-	float y = _distance * sin(pitchRad);
-	float z = _distance * cos(pitchRad) * cos(yawRad);
+	float x = _distance * glm::cos(pitchRad) * glm::sin(yawRad);
+	float y = _distance * glm::sin(pitchRad);
+	float z = _distance * glm::cos(pitchRad) * glm::cos(yawRad);
 
 	_position = _target + glm::vec3(x, y, z);
 }
@@ -85,9 +85,7 @@ glm::mat4 Camera::getProjectionMatrix(float aspect, float fov, float nearPlane, 
 	return proj;
 }
 
-glm::vec3 Camera::getForward() const {
-	return glm::normalize(_target - _position);
-}
+glm::vec3 Camera::getForward() const { return glm::normalize(_target - _position); }
 
 glm::vec3 Camera::getUp() const {
 	glm::vec3 forward = getForward();

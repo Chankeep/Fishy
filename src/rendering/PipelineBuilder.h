@@ -13,6 +13,8 @@ namespace Fishy {
 class PipelineBuilder {
 public:
 	explicit PipelineBuilder(vk::Device device);
+	PipelineBuilder(const PipelineBuilder&) = delete;
+	PipelineBuilder& operator=(const PipelineBuilder&) = delete;
 
 	void clear();
 
@@ -29,8 +31,8 @@ public:
 							   const std::vector<vk::PushConstantRange>& pushConstants);
 	PipelineBuilder& setVertexInput(const vk::PipelineVertexInputStateCreateInfo& info);
 	PipelineBuilder& setRenderingFormats(const std::vector<vk::Format>& colorFormats, vk::Format depthFormat);
-	std::unique_ptr<GraphicsPipeline> build(const vk::raii::Device& device, vk::RenderPass renderPass,
-											const vk::raii::PipelineCache& pipelineCache);
+	[[nodiscard]] std::unique_ptr<GraphicsPipeline> build(const vk::raii::Device& device, vk::RenderPass renderPass,
+														  const vk::raii::PipelineCache& pipelineCache);
 
 private:
 	std::vector<vk::PipelineShaderStageCreateInfo> _shaderStages;
@@ -38,7 +40,7 @@ private:
 	std::vector<vk::PushConstantRange> _pushConstantRanges;
 	std::vector<vk::DynamicState> _dynamicStates;
 	std::vector<vk::Format> _colorAttachmentFormats;
-	vk::Format _depthAttachmentFormat;
+	vk::Format _depthAttachmentFormat = vk::Format::eUndefined;
 
 	vk::PipelineInputAssemblyStateCreateInfo _inputAssembly;
 	vk::PipelineRasterizationStateCreateInfo _rasterizer;

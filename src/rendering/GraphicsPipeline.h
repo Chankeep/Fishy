@@ -11,24 +11,23 @@ namespace Fishy {
 class GraphicsPipeline {
 public:
 	GraphicsPipeline(vk::raii::PipelineLayout layout, vk::raii::Pipeline pipeline)
-		: layout(std::move(layout)), pipeline(std::move(pipeline)) {}
+		: _layout(std::move(layout)), _pipeline(std::move(pipeline)) {}
 
 	GraphicsPipeline(const GraphicsPipeline&) = delete;
 	GraphicsPipeline& operator=(const GraphicsPipeline&) = delete;
-
 	GraphicsPipeline(GraphicsPipeline&&) = default;
 	GraphicsPipeline& operator=(GraphicsPipeline&&) = default;
 
 	void bind(const vk::raii::CommandBuffer& cmd) const;
 
-	const vk::raii::PipelineLayout& getLayout() const { return layout; }
-	const vk::raii::Pipeline& getPipeline() const { return pipeline; }
+	[[nodiscard]] const vk::raii::PipelineLayout& getLayout() const { return _layout; }
+	[[nodiscard]] const vk::raii::Pipeline& getPipeline() const { return _pipeline; }
 
 private:
 	// Destruction order is reverse of declaration: Pipeline depends on Layout (usually), so Pipeline destroyed first,
 	// Layout last
-	vk::raii::PipelineLayout layout;
-	vk::raii::Pipeline pipeline;
+	vk::raii::PipelineLayout _layout;
+	vk::raii::Pipeline _pipeline;
 };
 
 } // namespace Fishy

@@ -17,13 +17,13 @@ struct GPUMaterial;
 /// Per-object data stored in SSBO for GPU access
 /// Layout must match shader ObjectData struct (std430)
 struct alignas(16) ObjectData {
-	glm::mat4 model;		///< Per-object model matrix (world transform)
-	glm::mat4 normalMatrix; ///< transpose(inverse(mat3(model))) for correct normals
-	uint32_t materialIndex; ///< Index into material array (future bindless)
-	uint32_t padding[3];	///< Align to 16 bytes
+	glm::mat4 model;				   ///< Per-object model matrix (world transform)
+	glm::mat4 normalMatrix;			   ///< transpose(inverse(mat3(model))) for correct normals
+	uint32_t materialIndex;			   ///< Index into material array (future bindless)
+	std::array<uint32_t, 3> padding{}; ///< Align to 16 bytes
 
 	/// Compute ObjectData from a model matrix
-	static ObjectData fromModelMatrix(const glm::mat4& modelMat, uint32_t matIndex = 0) {
+	[[nodiscard]] static ObjectData fromModelMatrix(const glm::mat4& modelMat, uint32_t matIndex = 0) {
 		ObjectData data{};
 		data.model = modelMat;
 		// Compute normalMatrix: transpose(inverse(mat3(model)))

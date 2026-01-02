@@ -52,6 +52,11 @@ public:
 	Material() = default;
 	~Material() = default;
 
+	Material(const Material&) = default;
+	Material& operator=(const Material&) = default;
+	Material(Material&&) = default;
+	Material& operator=(Material&&) = default;
+
 	// Core PBR Textures (glTF naming convention)
 	std::shared_ptr<Texture> baseColorMap;		   // RGBA base color
 	std::shared_ptr<Texture> metallicRoughnessMap; // G=roughness, B=metallic (glTF spec)

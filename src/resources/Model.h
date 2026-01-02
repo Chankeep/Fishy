@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../renderer/Material.h"
+#include "../rendering/Material.h"
 #include "Mesh.h"
 #include <memory>
 #include <vector>

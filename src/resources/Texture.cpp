@@ -1,6 +1,7 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "Texture.h"
 #include "../core/CommandPool.h"
+#include "../core/VulkanUtils.h"
 
 namespace Fishy {
 
@@ -118,103 +119,52 @@ void Texture::createTextureFromPixels(const unsigned char* pixels, int texWidth,
 }
 
 void Texture::transitionImageLayout(vk::ImageLayout oldLayout, vk::ImageLayout newLayout) {
-	auto cmd = _device.getTransferCommandPool().allocateBuffer(true);
-
-	cmd.begin(vk::CommandBufferBeginInfo{.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
-
-	vk::PipelineStageFlags srcStage;
-	vk::PipelineStageFlags dstStage;
-
-	vk::AccessFlags srcAccess;
-	vk::AccessFlags dstAccess;
+	vk::PipelineStageFlags2 srcStage;
+	vk::PipelineStageFlags2 dstStage;
+	vk::AccessFlags2 srcAccess;
+	vk::AccessFlags2 dstAccess;
 
 	// Determine stage and access masks based on layouts
 	if (oldLayout == vk::ImageLayout::eUndefined && newLayout == vk::ImageLayout::eTransferDstOptimal) {
-		srcAccess = vk::AccessFlagBits::eNone;
-		dstAccess = vk::AccessFlagBits::eTransferWrite;
-		srcStage = vk::PipelineStageFlagBits::eTopOfPipe;
-		dstStage = vk::PipelineStageFlagBits::eTransfer;
+		srcAccess = vk::AccessFlagBits2::eNone;
+		dstAccess = vk::AccessFlagBits2::eTransferWrite;
+		srcStage = vk::PipelineStageFlagBits2::eTopOfPipe;
+		dstStage = vk::PipelineStageFlagBits2::eTransfer;
 	} else if (oldLayout == vk::ImageLayout::eTransferDstOptimal &&
 			   newLayout == vk::ImageLayout::eShaderReadOnlyOptimal) {
-		srcAccess = vk::AccessFlagBits::eTransferWrite;
-		dstAccess = vk::AccessFlagBits::eShaderRead;
-		srcStage = vk::PipelineStageFlagBits::eTransfer;
-		dstStage = vk::PipelineStageFlagBits::eFragmentShader;
+		srcAccess = vk::AccessFlagBits2::eTransferWrite;
+		dstAccess = vk::AccessFlagBits2::eShaderRead;
+		srcStage = vk::PipelineStageFlagBits2::eTransfer;
+		dstStage = vk::PipelineStageFlagBits2::eFragmentShader;
 	} else {
 		throw std::invalid_argument("unsupported layout transition!");
 	}
 
-	vk::ImageMemoryBarrier barrier{
-		.srcAccessMask = srcAccess,
-		.dstAccessMask = dstAccess,
-		.oldLayout = oldLayout,
-		.newLayout = newLayout,
-		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-		.image = _image,
-		.subresourceRange =
-			{
-				.aspectMask = vk::ImageAspectFlagBits::eColor,
-				.baseMipLevel = 0,
-				.levelCount = 1,
-				.baseArrayLayer = 0,
-				.layerCount = 1,
-			},
-	};
-
-	cmd.pipelineBarrier(srcStage, dstStage, vk::DependencyFlags(), nullptr, nullptr, barrier);
-
-	cmd.end();
-
-	vk::SubmitInfo submitInfo{
-		.commandBufferCount = 1,
-		.pCommandBuffers = &(*cmd),
-	};
-
-	_device.getGraphicsQueue().submit(submitInfo, nullptr);
-	_device.getGraphicsQueue().waitIdle();
+	VulkanUtils::executeImmediate(_device, [&](auto& cmd) {
+		VulkanUtils::transitionImage(*cmd, _image, oldLayout, newLayout, srcAccess, dstAccess, srcStage, dstStage,
+									 vk::ImageAspectFlagBits::eColor);
+	});
 }
 
 void Texture::copyBufferToImage(const VulkanBuffer& buffer, uint32_t width, uint32_t height) {
-	const CommandPool& commandPool = _device.getTransferCommandPool();
+	VulkanUtils::executeImmediate(_device, [&](auto& cmd) {
+		vk::BufferImageCopy region{
+			.bufferOffset = 0,
+			.bufferRowLength = 0,
+			.bufferImageHeight = 0,
+			.imageSubresource =
+				{
+					.aspectMask = vk::ImageAspectFlagBits::eColor,
+					.mipLevel = 0,
+					.baseArrayLayer = 0,
+					.layerCount = 1,
+				},
+			.imageOffset = {0, 0, 0},
+			.imageExtent = {width, height, 1},
+		};
 
-	vk::CommandBufferAllocateInfo cmdAllocInfo{
-		.commandPool = *commandPool.getCommandPool(),
-		.level = vk::CommandBufferLevel::ePrimary,
-		.commandBufferCount = 1,
-	};
-
-	vk::raii::CommandBuffers cmdbuffers(*_device, cmdAllocInfo);
-	vk::raii::CommandBuffer& cmd = cmdbuffers[0];
-
-	cmd.begin(vk::CommandBufferBeginInfo{.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
-
-	vk::BufferImageCopy region{
-		.bufferOffset = 0,
-		.bufferRowLength = 0,
-		.bufferImageHeight = 0,
-		.imageSubresource =
-			{
-				.aspectMask = vk::ImageAspectFlagBits::eColor,
-				.mipLevel = 0,
-				.baseArrayLayer = 0,
-				.layerCount = 1,
-			},
-		.imageOffset = {0, 0, 0},
-		.imageExtent = {width, height, 1},
-	};
-
-	cmd.copyBufferToImage(buffer.getBuffer(), _image, vk::ImageLayout::eTransferDstOptimal, region);
-
-	cmd.end();
-
-	vk::SubmitInfo submitInfo{
-		.commandBufferCount = 1,
-		.pCommandBuffers = &(*cmd),
-	};
-
-	_device.getGraphicsQueue().submit(submitInfo, nullptr);
-	_device.getGraphicsQueue().waitIdle();
+		cmd.copyBufferToImage(buffer.getBuffer(), _image, vk::ImageLayout::eTransferDstOptimal, region);
+	});
 }
 
 void Texture::createTextureImageView() {
