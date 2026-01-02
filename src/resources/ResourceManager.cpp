@@ -1,6 +1,7 @@
 #include "ResourceManager.h"
 #include "../core/VulkanDevice.h"
 #include "../renderer/Material.h"
+#include "CubemapTexture.h"
 #include "Mesh.h"
 #include "Texture.h"
 
@@ -39,6 +40,9 @@ void ResourceManager::createDefaultTextures() {
 	_textureCache["__default_white__"] = _defaultWhiteTexture;
 	_textureCache["__default_normal__"] = _defaultNormalTexture;
 
+	// Create default cubemap for IBL placeholder (1x1 black cubemap)
+	_defaultCubemap = CubemapTexture::createDefault(_device);
+
 	LogSystem::get().info("Default textures created");
 }
 
@@ -54,6 +58,13 @@ std::shared_ptr<Texture> ResourceManager::getDefaultNormalTexture() {
 		createDefaultTextures();
 	}
 	return _defaultNormalTexture;
+}
+
+std::shared_ptr<CubemapTexture> ResourceManager::getDefaultCubemap() {
+	if (!_defaultCubemap) {
+		createDefaultTextures();
+	}
+	return _defaultCubemap;
 }
 
 const vk::raii::ShaderModule& ResourceManager::getShader(const std::string& filepath) {
@@ -258,16 +269,14 @@ GPUMaterial* ResourceManager::getOrCreateGPUMaterial(const Material* material) {
 
 void ResourceManager::clearGPUResources() {
 	// Idempotent: safe to call multiple times
-	if (_gpuMaterialCache.empty() && _gpuMeshCache.empty()) {
+	if (_gpuMaterialCache.empty()) {
 		return; // Already cleared
 	}
 
-	LogSystem::get().info("Clearing GPU resources ({} materials, {} meshes)...", _gpuMaterialCache.size(),
-						  _gpuMeshCache.size());
+	LogSystem::get().info("Clearing GPU resources ({} materials)...", _gpuMaterialCache.size());
 	// Clear GPU resources that hold descriptor sets from Renderer's pool
 	// Must be called before Renderer destroys its descriptor pool
 	_gpuMaterialCache.clear();
-	_gpuMeshCache.clear();
 }
 
 void ResourceManager::clear() {

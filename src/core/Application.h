@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../renderer/Renderer.h"
+#include "../resources/IBLEnvironment.h"
 #include "../resources/Model.h"
 #include "../resources/ModelLoader.h"
 #include "../resources/ResourceManager.h"
@@ -8,6 +9,7 @@
 #include "VulkanContext.h"
 #include "VulkanDevice.h"
 #include "Window.h"
+
 
 #include <memory>
 
@@ -55,6 +57,9 @@ private:
 
 	// 7. Loaded model
 	std::shared_ptr<Model> _model;
+
+	// 8. IBL Environment
+	std::unique_ptr<IBLEnvironment> _iblEnvironment;
 };
 
 } // namespace Fishy

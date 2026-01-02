@@ -8,6 +8,7 @@
 import vulkan_hpp;
 #endif
 
+#include "../resources/IBLEnvironment.h"
 #include "../resources/Mesh.h"
 #include "../resources/Model.h"
 #include "Camera.h"
@@ -26,6 +27,7 @@ class VulkanDevice;
 class Window;
 class SwapChain;
 class ResourceManager;
+class CommandPool;
 
 constexpr int MAX_FRAMES_IN_FLIGHT = 2;
 
@@ -66,6 +68,10 @@ public:
 	Camera& getCamera() { return _camera; }
 	const Camera& getCamera() const { return _camera; }
 
+	// IBL environment
+	void setIBLEnvironment(IBLEnvironment* ibl);
+	IBLEnvironment* getIBLEnvironment() const { return _iblEnvironment; }
+
 private:
 	// Frame management
 	bool beginFrame();
@@ -99,6 +105,7 @@ private:
 	void renderIndirect(const vk::raii::CommandBuffer& cmd);
 	vk::Format findDepthFormat();
 	void createSwapChainImageViews();
+	void writeIBLDescriptors();
 
 	struct FrameData {
 		vk::raii::CommandBuffer commandBuffer = nullptr;
@@ -135,8 +142,8 @@ private:
 	// Sync objects
 	std::vector<vk::raii::Semaphore> _renderFinishedSemaphores;
 
-	// Command Pool
-	vk::raii::CommandPool _commandPool = nullptr;
+	// Command Pool (borrowed from VulkanDevice)
+	CommandPool* _commandPool = nullptr;
 
 	// Graphics Pipeline
 	std::unique_ptr<GraphicsPipeline> _graphicsPipeline;
@@ -174,6 +181,9 @@ private:
 	std::unique_ptr<VulkanBuffer> _unifiedVertexBuffer;
 	std::unique_ptr<VulkanBuffer> _unifiedIndexBuffer;
 	bool _unifiedBuffersDirty = true;
+
+	// IBL environment (externally owned)
+	IBLEnvironment* _iblEnvironment = nullptr;
 };
 
 } // namespace Fishy

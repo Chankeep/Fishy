@@ -20,9 +20,16 @@ struct GlobalUBO {
     // Debug visualization controls
     float debugViewInputs;   // 0=off, 1=baseColor, 2=normal, 3=AO, 4=emissive, 5=metallic, 6=roughness
     float debugViewEquation; // 0=off, 1=diffuse, 2=F, 3=G, 4=D, 5=specular
-    float2 _padding;
+    // IBL parameters
+    float prefilteredMipLevels;
+    float iblIntensity;
 };
 [[vk::binding(0, 0)]] ConstantBuffer<GlobalUBO> ubo;
+
+// IBL textures (Set 0)
+[[vk::binding(1, 0)]] SamplerCube irradianceMap;
+[[vk::binding(2, 0)]] SamplerCube prefilteredEnvMap;
+[[vk::binding(3, 0)]] Sampler2D brdfLUT;
 
 // Set 1: Material Data
 struct MaterialUBO {
@@ -412,10 +419,29 @@ float4 fragMain(VSOutput vertIn) : SV_Target
     }
     
     // ========================================================================
-    // Ambient lighting (simple approximation without IBL)
+    // Image-Based Lighting (IBL)
     // ========================================================================
     
-    float3 ambient = float3(0.03) * baseColor.rgb;
+    float3 ambient = float3(0.0);
+    if (ubo.iblIntensity > 0.0) {
+        // Diffuse IBL - sample irradiance map with normal
+        float3 irradiance = irradianceMap.Sample(n).rgb;
+        float3 diffuseIBL = diffuseColor * irradiance;
+        
+        // Specular IBL - sample pre-filtered environment with reflection and roughness-based LOD
+        float lod = perceptualRoughness * ubo.prefilteredMipLevels;
+        float3 prefilteredColor = prefilteredEnvMap.SampleLevel(reflection, lod).rgb;
+        
+        // BRDF LUT lookup for split-sum approximation
+        float2 brdf = brdfLUT.Sample(float2(NdotV, perceptualRoughness)).rg;
+        float3 specularIBL = prefilteredColor * (specularColor * brdf.x + brdf.y);
+        
+        // Combine diffuse and specular IBL
+        ambient = (diffuseIBL + specularIBL) * ubo.iblIntensity;
+    } else {
+        // Fallback to simple ambient when IBL not available
+        ambient = float3(0.03) * baseColor.rgb;
+    }
     color += ambient;
     
     // ========================================================================

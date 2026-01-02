@@ -3,6 +3,8 @@
 
 #include "Camera.h"
 #include "PipelineBuilder.h"
+#include "core/CommandPool.h"
+#include "core/LogSystem.h"
 #include "core/VulkanDevice.h"
 #include "core/Window.h"
 #include "resources/ResourceManager.h"
@@ -32,11 +34,14 @@ Renderer::Renderer(VulkanDevice& device, Window& window, ResourceManager& resour
 	createUniformBuffers();
 	createObjectDataBuffer();
 	createIndirectBuffer();
+
+	// Initialize ResourceManager with material descriptor resources BEFORE createDescriptorSets
+	// This ensures default textures exist for IBL placeholder bindings
+	_resourceManager.initMaterialResources(*_materialSetLayout, _descriptorPool);
+
 	createDescriptorSets();
 	createSyncObjects();
 
-	// Initialize ResourceManager with material descriptor resources
-	_resourceManager.initMaterialResources(*_materialSetLayout, _descriptorPool);
 	LogSystem::get().info("Renderer initialized successfully");
 }
 
@@ -180,11 +185,9 @@ void Renderer::recreateSwapChain() {
 }
 
 void Renderer::createCommandBuffers() {
-	vk::CommandPoolCreateInfo poolInfo{.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
-									   .queueFamilyIndex = _device.getGraphicsQueueFamilyIndex()};
-	_commandPool = vk::raii::CommandPool(*_device, poolInfo);
+	_commandPool = &_device.getTransferCommandPool();
 
-	vk::CommandBufferAllocateInfo allocInfo{.commandPool = *_commandPool,
+	vk::CommandBufferAllocateInfo allocInfo{.commandPool = *_commandPool->getCommandPool(),
 											.level = vk::CommandBufferLevel::ePrimary,
 											.commandBufferCount = MAX_FRAMES_IN_FLIGHT};
 
@@ -218,13 +221,32 @@ void Renderer::createSyncObjects() {
 }
 
 void Renderer::createGlobalSetLayout() {
-	vk::DescriptorSetLayoutBinding uboLayoutBinding{.binding = 0,
-													.descriptorType = vk::DescriptorType::eUniformBuffer,
-													.descriptorCount = 1,
-													.stageFlags = vk::ShaderStageFlagBits::eVertex |
-																  vk::ShaderStageFlagBits::eFragment};
+	// Set 0: Global data + IBL textures
+	// Binding 0: GlobalUBO
+	// Binding 1: irradianceMap (samplerCube)
+	// Binding 2: prefilteredEnvMap (samplerCube)
+	// Binding 3: brdfLUT (sampler2D)
+	std::vector<vk::DescriptorSetLayoutBinding> bindings = {
+		{.binding = 0,
+		 .descriptorType = vk::DescriptorType::eUniformBuffer,
+		 .descriptorCount = 1,
+		 .stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment},
+		{.binding = 1,
+		 .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+		 .descriptorCount = 1,
+		 .stageFlags = vk::ShaderStageFlagBits::eFragment},
+		{.binding = 2,
+		 .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+		 .descriptorCount = 1,
+		 .stageFlags = vk::ShaderStageFlagBits::eFragment},
+		{.binding = 3,
+		 .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+		 .descriptorCount = 1,
+		 .stageFlags = vk::ShaderStageFlagBits::eFragment},
+	};
 
-	vk::DescriptorSetLayoutCreateInfo layoutInfo{.bindingCount = 1, .pBindings = &uboLayoutBinding};
+	vk::DescriptorSetLayoutCreateInfo layoutInfo{.bindingCount = static_cast<uint32_t>(bindings.size()),
+												 .pBindings = bindings.data()};
 
 	_globalSetLayout = vk::raii::DescriptorSetLayout(*_device, layoutInfo);
 }
@@ -384,8 +406,9 @@ void Renderer::buildUnifiedBuffers(const Model& model) {
 	stagingIndex.upload(allIndices.data(), indexBufferSize);
 
 	// Copy using one-time command buffer
-	vk::CommandBufferAllocateInfo cmdAllocInfo{
-		.commandPool = *_commandPool, .level = vk::CommandBufferLevel::ePrimary, .commandBufferCount = 1};
+	vk::CommandBufferAllocateInfo cmdAllocInfo{.commandPool = *_commandPool->getCommandPool(),
+											   .level = vk::CommandBufferLevel::ePrimary,
+											   .commandBufferCount = 1};
 	auto cmdBuffers = vk::raii::CommandBuffers(*_device, cmdAllocInfo);
 	auto& cmd = cmdBuffers[0];
 
@@ -551,7 +574,7 @@ void Renderer::createDescriptorPool() {
 								   static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT + 100)}, // Extra for materials
 		vk::DescriptorPoolSize{.type = vk::DescriptorType::eCombinedImageSampler,
 							   .descriptorCount =
-								   static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT * 10 + 500)}, // Extra for materials
+								   static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT * 13 + 500)}, // +3 for IBL per frame
 		vk::DescriptorPoolSize{.type = vk::DescriptorType::eStorageBuffer,
 							   .descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT)}}; // SSBO for object data
 
@@ -614,6 +637,9 @@ void Renderer::createDescriptorSets() {
 
 	auto objectDataSets = vk::raii::DescriptorSets(*_device, objectDataAllocInfo);
 
+	// Get default texture for IBL placeholder (prevents validation errors)
+	auto defaultTex = _resourceManager.getDefaultWhiteTexture();
+
 	for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
 		_frames[i].descriptorSet = std::move(globalSets[i]);
 		_frames[i].objectDataSet = std::move(objectDataSets[i]);
@@ -626,7 +652,22 @@ void Renderer::createDescriptorSets() {
 		vk::DescriptorBufferInfo ssboInfo{
 			.buffer = _frames[i].objectDataBuffer->getBuffer(), .offset = 0, .range = VK_WHOLE_SIZE};
 
-		std::array<vk::WriteDescriptorSet, 2> descriptorWrites{};
+		// Default cubemap for IBL cubemap bindings (irradiance/prefiltered)
+		auto defaultCubemap = _resourceManager.getDefaultCubemap();
+		vk::DescriptorImageInfo cubemapImageInfo{
+			.sampler = *defaultCubemap->getSampler(),
+			.imageView = *defaultCubemap->getImageView(),
+			.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+		};
+
+		// Default 2D texture for BRDF LUT binding
+		vk::DescriptorImageInfo brdfLutImageInfo{
+			.sampler = *defaultTex->getSampler(),
+			.imageView = *defaultTex->getImageView(),
+			.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+		};
+
+		std::array<vk::WriteDescriptorSet, 5> descriptorWrites{};
 
 		// Global UBO (Set 0, Binding 0)
 		descriptorWrites[0].dstSet = *_frames[i].descriptorSet;
@@ -636,13 +677,37 @@ void Renderer::createDescriptorSets() {
 		descriptorWrites[0].descriptorCount = 1;
 		descriptorWrites[0].pBufferInfo = &uboInfo;
 
-		// Object Data SSBO (Set 2, Binding 0)
-		descriptorWrites[1].dstSet = *_frames[i].objectDataSet;
-		descriptorWrites[1].dstBinding = 0;
+		// IBL irradiance map placeholder (Set 0, Binding 1) - cubemap
+		descriptorWrites[1].dstSet = *_frames[i].descriptorSet;
+		descriptorWrites[1].dstBinding = 1;
 		descriptorWrites[1].dstArrayElement = 0;
-		descriptorWrites[1].descriptorType = vk::DescriptorType::eStorageBuffer;
+		descriptorWrites[1].descriptorType = vk::DescriptorType::eCombinedImageSampler;
 		descriptorWrites[1].descriptorCount = 1;
-		descriptorWrites[1].pBufferInfo = &ssboInfo;
+		descriptorWrites[1].pImageInfo = &cubemapImageInfo;
+
+		// IBL prefiltered map placeholder (Set 0, Binding 2) - cubemap
+		descriptorWrites[2].dstSet = *_frames[i].descriptorSet;
+		descriptorWrites[2].dstBinding = 2;
+		descriptorWrites[2].dstArrayElement = 0;
+		descriptorWrites[2].descriptorType = vk::DescriptorType::eCombinedImageSampler;
+		descriptorWrites[2].descriptorCount = 1;
+		descriptorWrites[2].pImageInfo = &cubemapImageInfo;
+
+		// BRDF LUT placeholder (Set 0, Binding 3) - 2D texture
+		descriptorWrites[3].dstSet = *_frames[i].descriptorSet;
+		descriptorWrites[3].dstBinding = 3;
+		descriptorWrites[3].dstArrayElement = 0;
+		descriptorWrites[3].descriptorType = vk::DescriptorType::eCombinedImageSampler;
+		descriptorWrites[3].descriptorCount = 1;
+		descriptorWrites[3].pImageInfo = &brdfLutImageInfo;
+
+		// Object Data SSBO (Set 2, Binding 0)
+		descriptorWrites[4].dstSet = *_frames[i].objectDataSet;
+		descriptorWrites[4].dstBinding = 0;
+		descriptorWrites[4].dstArrayElement = 0;
+		descriptorWrites[4].descriptorType = vk::DescriptorType::eStorageBuffer;
+		descriptorWrites[4].descriptorCount = 1;
+		descriptorWrites[4].pBufferInfo = &ssboInfo;
 
 		_device->updateDescriptorSets(descriptorWrites, {});
 	}
@@ -664,6 +729,15 @@ void Renderer::updateUniformBuffer(uint32_t frameIndex) {
 	// Debug settings
 	ubo.debugViewInputs = _debugViewInputs;
 	ubo.debugViewEquation = _debugViewEquation;
+
+	// IBL parameters
+	if (_iblEnvironment) {
+		ubo.prefilteredMipLevels = static_cast<float>(_iblEnvironment->prefilteredMipLevels);
+		ubo.iblIntensity = 1.0f;
+	} else {
+		ubo.prefilteredMipLevels = 1.0f;
+		ubo.iblIntensity = 0.0f; // Disable IBL if no environment
+	}
 
 	_frames[frameIndex].uniformBuffer->upload(&ubo, sizeof(ubo));
 }
@@ -796,6 +870,16 @@ vk::Format Renderer::findDepthFormat() {
 }
 
 void Renderer::createDepthResources() {
+	// Destroy old depth resources if they exist (critical for recreateSwapChain)
+	// This prevents VMA "Unfreed dedicated allocations" error on program exit
+	if (_depthAllocation) {
+		// Reset ImageView first (it references the image)
+		_depthImageView = nullptr;
+		vmaDestroyImage(_device.getVmaAllocator(), _depthImage, _depthAllocation);
+		_depthImage = VK_NULL_HANDLE;
+		_depthAllocation = nullptr;
+	}
+
 	_depthFormat = findDepthFormat();
 	vk::Extent2D extent = getSwapChainExtent();
 
@@ -825,8 +909,6 @@ void Renderer::createDepthResources() {
 		throw std::runtime_error("Failed to create VMA depth image!");
 	}
 
-	LogSystem::get().trace("VMA created depth image handle: {}", reinterpret_cast<uintptr_t>(_depthImage));
-
 	vk::ImageViewCreateInfo viewInfo{.image = _depthImage,
 									 .viewType = vk::ImageViewType::e2D,
 									 .format = _depthFormat,
@@ -841,15 +923,17 @@ void Renderer::createDepthResources() {
 	}
 
 	_depthImageView = vk::raii::ImageView(*_device, viewInfo);
+	LogSystem::get().trace("Created depth image view");
 
 	// Perform explicit layout transition Undefined -> DepthStencilAttachmentOptimal
 	{
-		vk::CommandPoolCreateInfo poolInfo{.flags = vk::CommandPoolCreateFlagBits::eTransient,
-										   .queueFamilyIndex = _device.getGraphicsQueueFamilyIndex()};
-		vk::raii::CommandPool commandPool(*_device, poolInfo);
-
-		vk::CommandBufferAllocateInfo cmdAllocInfo{
-			.commandPool = *commandPool, .level = vk::CommandBufferLevel::ePrimary, .commandBufferCount = 1};
+		LogSystem::get().trace("Performing layout transition for depth image");
+		// Get command pool directly from device since _commandPool might not be initialized yet
+		// during initial swapchain creation
+		CommandPool& cmdPool = _device.getTransferCommandPool();
+		vk::CommandBufferAllocateInfo cmdAllocInfo{.commandPool = *cmdPool.getCommandPool(),
+												   .level = vk::CommandBufferLevel::ePrimary,
+												   .commandBufferCount = 1};
 		auto commandBuffers = vk::raii::CommandBuffers(*_device, cmdAllocInfo);
 		vk::raii::CommandBuffer& cmd = commandBuffers[0];
 
@@ -869,6 +953,7 @@ void Renderer::createDepthResources() {
 		vk::SubmitInfo submitInfo{.commandBufferCount = 1, .pCommandBuffers = &*cmd};
 		_device.getGraphicsQueue().submit(submitInfo, nullptr);
 		_device.getGraphicsQueue().waitIdle();
+		LogSystem::get().trace("Layout transition for depth image completed");
 	}
 }
 
@@ -888,6 +973,62 @@ void Renderer::createSwapChainImageViews() {
 		imageViewCreateInfo.image = image;
 		_swapChainImageViews.emplace_back(*_device, imageViewCreateInfo);
 	}
+}
+
+void Renderer::setIBLEnvironment(IBLEnvironment* ibl) {
+	_iblEnvironment = ibl;
+	if (ibl) {
+		writeIBLDescriptors();
+		LogSystem::get().info("IBL environment set with {} mip levels", ibl->prefilteredMipLevels);
+	}
+}
+
+void Renderer::writeIBLDescriptors() {
+	if (!_iblEnvironment) {
+		return;
+	}
+
+	for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+		std::array<vk::DescriptorImageInfo, 3> imageInfos{};
+
+		// Irradiance map (binding 1)
+		imageInfos[0] = {
+			.sampler = *_iblEnvironment->irradianceMap->getSampler(),
+			.imageView = *_iblEnvironment->irradianceMap->getImageView(),
+			.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+		};
+
+		// Pre-filtered env map (binding 2)
+		imageInfos[1] = {
+			.sampler = *_iblEnvironment->prefilteredMap->getSampler(),
+			.imageView = *_iblEnvironment->prefilteredMap->getImageView(),
+			.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+		};
+
+		// BRDF LUT (binding 3)
+		imageInfos[2] = {
+			.sampler = *_iblEnvironment->brdfLUT->getSampler(),
+			.imageView = *_iblEnvironment->brdfLUT->getImageView(),
+			.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+		};
+
+		std::array<vk::WriteDescriptorSet, 3> descriptorWrites{};
+
+		for (uint32_t j = 0; j < 3; j++) {
+			descriptorWrites[j] = {
+				.dstSet = *_frames[i].descriptorSet,
+				.dstBinding = j + 1, // Bindings 1, 2, 3
+				.dstArrayElement = 0,
+				.descriptorCount = 1,
+				.descriptorType = vk::DescriptorType::eCombinedImageSampler,
+				.pImageInfo = &imageInfos[j],
+			};
+		}
+
+		_device->updateDescriptorSets(descriptorWrites, {});
+	}
+
+	LogSystem::get().trace("IBL descriptors written to global descriptor sets");
 }
 
 } // namespace Fishy

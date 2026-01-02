@@ -34,8 +34,7 @@ public:
 	// Uploads data using a temporary staging buffer.
 	// Executes the copy command immediately and waits for completion.
 	// Requires a command pool to allocate a temporary command buffer.
-	void uploadStaged(const vk::raii::CommandPool& commandPool, const vk::raii::Queue& queue, void* data,
-					  vk::DeviceSize size);
+	void uploadStaged(class CommandPool& commandPool, const vk::raii::Queue& queue, void* data, vk::DeviceSize size);
 
 	// Static helper to copy buffer content using a command buffer.
 	// The command buffer must be in recording state.

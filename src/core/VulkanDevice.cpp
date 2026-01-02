@@ -96,16 +96,17 @@ VulkanDevice::VulkanDevice(const vk::raii::Instance& instance, const vk::raii::S
 
 	auto vma_res = vmaCreateAllocator(&allocatorInfo, &_vmaAllocator);
 
-	if(vma_res != VkResult::VK_SUCCESS){
+	if (vma_res != VkResult::VK_SUCCESS) {
 		LogSystem::get().error("Create Vma allocator failed!");
-	} else{
+	} else {
 		LogSystem::get().info("Create Vma allocator successfully");
 	}
+
+	// Create transfer command pool for texture uploads
+	_transferCommandPool = std::make_unique<CommandPool>(*this, _graphicsQueueFamily);
 }
 
-VulkanDevice::~VulkanDevice() {
-	vmaDestroyAllocator(_vmaAllocator);
-}
+VulkanDevice::~VulkanDevice() { vmaDestroyAllocator(_vmaAllocator); }
 
 uint32_t VulkanDevice::findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties) const {
 	vk::PhysicalDeviceMemoryProperties memProperties = _physicalDevice.getMemoryProperties();

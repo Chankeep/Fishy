@@ -1,5 +1,6 @@
 #pragma once
 
+#include "CommandPool.h"
 #include "vk_mem_alloc.h"
 #include <VkBootstrap.h>
 #include <volk.h>
@@ -35,6 +36,10 @@ public:
 	const vkb::Device& getVkbDevice() const { return _vkbDevice; }
 	VmaAllocator getVmaAllocator() const { return _vmaAllocator; }
 
+	// Transfer command pool for texture uploads and other transfer operations
+	CommandPool& getTransferCommandPool() { return *_transferCommandPool; }
+	const CommandPool& getTransferCommandPool() const { return *_transferCommandPool; }
+
 	uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties) const;
 
 private:
@@ -47,6 +52,7 @@ private:
 
 	vkb::Device _vkbDevice;
 	VmaAllocator _vmaAllocator;
+	std::unique_ptr<CommandPool> _transferCommandPool;
 
 	uint32_t _graphicsQueueFamily;
 };

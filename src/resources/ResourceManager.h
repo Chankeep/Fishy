@@ -16,6 +16,7 @@ namespace Fishy {
 
 class VulkanDevice;
 class Texture;
+class CubemapTexture;
 class Mesh;
 class Material;
 
@@ -65,6 +66,9 @@ public:
 	std::shared_ptr<Texture> getDefaultWhiteTexture();
 	std::shared_ptr<Texture> getDefaultNormalTexture();
 
+	// Get default cubemap for IBL placeholder bindings
+	std::shared_ptr<CubemapTexture> getDefaultCubemap();
+
 	// Clear GPU resources (call before Renderer destroys descriptor pool)
 	void clearGPUResources();
 
@@ -91,7 +95,6 @@ private:
 	std::unordered_map<std::string, std::shared_ptr<Texture>> _textureCache;
 
 	// GPU resource caches (keyed by raw pointer for fast lookup)
-	std::unordered_map<const Mesh*, std::unique_ptr<GPUMesh>> _gpuMeshCache;
 	std::unordered_map<const Material*, std::unique_ptr<GPUMaterial>> _gpuMaterialCache;
 
 	// Material descriptor allocation
@@ -101,6 +104,7 @@ private:
 	// Default textures
 	std::shared_ptr<Texture> _defaultWhiteTexture;
 	std::shared_ptr<Texture> _defaultNormalTexture;
+	std::shared_ptr<CubemapTexture> _defaultCubemap;
 };
 
 } // namespace Fishy

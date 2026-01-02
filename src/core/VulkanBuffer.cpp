@@ -1,4 +1,5 @@
 #include "VulkanBuffer.h"
+#include "CommandPool.h"
 #include <iostream>
 
 namespace Fishy {
@@ -11,19 +12,27 @@ static std::string getBufferUsageDescription(vk::BufferUsageFlags usage) {
 
 	std::vector<std::string> usages;
 
-	if (usage & vk::BufferUsageFlagBits::eVertexBuffer) usages.push_back("vertex");
-	if (usage & vk::BufferUsageFlagBits::eIndexBuffer) usages.push_back("index");
-	if (usage & vk::BufferUsageFlagBits::eUniformBuffer) usages.push_back("uniform");
-	if (usage & vk::BufferUsageFlagBits::eStorageBuffer) usages.push_back("storage");
-	if (usage & vk::BufferUsageFlagBits::eTransferDst) usages.push_back("transfer-dst");
-	if (usage & vk::BufferUsageFlagBits::eIndirectBuffer) usages.push_back("indirect");
+	if (usage & vk::BufferUsageFlagBits::eVertexBuffer)
+		usages.push_back("vertex");
+	if (usage & vk::BufferUsageFlagBits::eIndexBuffer)
+		usages.push_back("index");
+	if (usage & vk::BufferUsageFlagBits::eUniformBuffer)
+		usages.push_back("uniform");
+	if (usage & vk::BufferUsageFlagBits::eStorageBuffer)
+		usages.push_back("storage");
+	if (usage & vk::BufferUsageFlagBits::eTransferDst)
+		usages.push_back("transfer-dst");
+	if (usage & vk::BufferUsageFlagBits::eIndirectBuffer)
+		usages.push_back("indirect");
 
-	if (usages.empty()) return "unknown";
+	if (usages.empty())
+		return "unknown";
 
 	// Combine usage descriptions
 	std::string result;
 	for (size_t i = 0; i < usages.size(); ++i) {
-		if (i > 0) result += " + ";
+		if (i > 0)
+			result += " + ";
 		result += usages[i];
 	}
 	return result;
@@ -56,8 +65,7 @@ VulkanBuffer::VulkanBuffer(const VulkanDevice& device, vk::DeviceSize size, vk::
 
 	VmaAllocationInfo allocInfoOut;
 
-	VkResult result = vmaCreateBuffer(_vmaAllocator, &bufferInfo, &allocInfo,
-									  &_buffer, &_vmaAllocation, &allocInfoOut);
+	VkResult result = vmaCreateBuffer(_vmaAllocator, &bufferInfo, &allocInfo, &_buffer, &_vmaAllocation, &allocInfoOut);
 
 	if (result != VK_SUCCESS) {
 		LogSystem::get().error("Failed to create VMA buffer: {} bytes", size);
@@ -110,7 +118,7 @@ bool VulkanBuffer::upload(void* data, vk::DeviceSize size) {
 	return false;
 }
 
-void VulkanBuffer::uploadStaged(const vk::raii::CommandPool& commandPool, const vk::raii::Queue& queue, void* data,
+void VulkanBuffer::uploadStaged(CommandPool& commandPool, const vk::raii::Queue& queue, void* data,
 								vk::DeviceSize size) {
 
 	// 1. Create Staging Buffer (Host Visible | Coherent with persistent mapping)
@@ -121,8 +129,9 @@ void VulkanBuffer::uploadStaged(const vk::raii::CommandPool& commandPool, const 
 	stagingBuffer.upload(data, size);
 
 	// 3. Allocate Temporary Command Buffer
-	vk::CommandBufferAllocateInfo allocInfo{
-		.commandPool = *commandPool, .level = vk::CommandBufferLevel::ePrimary, .commandBufferCount = 1};
+	vk::CommandBufferAllocateInfo allocInfo{.commandPool = *commandPool.getCommandPool(),
+											.level = vk::CommandBufferLevel::ePrimary,
+											.commandBufferCount = 1};
 
 	vk::raii::CommandBuffers cmdbuffers(*_device, allocInfo);
 	vk::raii::CommandBuffer& cmd = cmdbuffers[0];

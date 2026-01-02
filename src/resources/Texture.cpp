@@ -1,5 +1,6 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "Texture.h"
+#include "../core/CommandPool.h"
 #include <iostream>
 
 namespace Fishy {
@@ -41,8 +42,7 @@ void Texture::createTextureImage(const std::string& path) {
 		throw std::runtime_error("failed to load texture image: " + path);
 	}
 
-	LogSystem::get().trace("Loaded texture from file: {} ({}x{} {} channels)",
-		path, texWidth, texHeight, texChannels);
+	LogSystem::get().trace("Loaded texture from file: {} ({}x{} {} channels)", path, texWidth, texHeight, texChannels);
 	createTextureFromPixels(pixels, texWidth, texHeight);
 	stbi_image_free(pixels);
 }
@@ -57,14 +57,30 @@ void Texture::createTextureImageFromMemory(const unsigned char* data, size_t siz
 		throw std::runtime_error("failed to load texture from memory");
 	}
 
-	LogSystem::get().trace("Loaded texture from memory: {}x{} {} channels ({} bytes)",
-		texWidth, texHeight, texChannels, size);
+	LogSystem::get().trace("Loaded texture from memory: {}x{} {} channels ({} bytes)", texWidth, texHeight, texChannels,
+						   size);
 	createTextureFromPixels(pixels, texWidth, texHeight);
 	stbi_image_free(pixels);
 }
 
+// Helper to get bytes per pixel for a format
+static size_t getBytesPerPixel(vk::Format format) {
+	switch (format) {
+	case vk::Format::eR8G8B8A8Srgb:
+	case vk::Format::eR8G8B8A8Unorm:
+		return 4;
+	case vk::Format::eR16G16Sfloat:
+		return 4; // 2 bytes × 2 channels
+	case vk::Format::eR16G16B16A16Sfloat:
+		return 8; // 2 bytes × 4 channels
+	default:
+		LogSystem::get().warn("Unknown format in getBytesPerPixel, assuming 4 bytes per pixel");
+		return 4;
+	}
+}
+
 void Texture::createTextureFromPixels(const unsigned char* pixels, int texWidth, int texHeight) {
-	vk::DeviceSize imageSize = texWidth * texHeight * 4;
+	vk::DeviceSize imageSize = texWidth * texHeight * getBytesPerPixel(_format);
 
 	VulkanBuffer stagingBuffer(_device, imageSize, vk::BufferUsageFlagBits::eTransferSrc,
 							   vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
@@ -103,14 +119,10 @@ void Texture::createTextureFromPixels(const unsigned char* pixels, int texWidth,
 }
 
 void Texture::transitionImageLayout(vk::ImageLayout oldLayout, vk::ImageLayout newLayout) {
-	vk::CommandPoolCreateInfo poolInfo{
-		.flags = vk::CommandPoolCreateFlagBits::eTransient,
-		.queueFamilyIndex = _device.getGraphicsQueueFamilyIndex(),
-	};
-	vk::raii::CommandPool commandPool(*_device, poolInfo);
+	const CommandPool& commandPool = _device.getTransferCommandPool();
 
 	vk::CommandBufferAllocateInfo cmdAllocInfo{
-		.commandPool = *commandPool,
+		.commandPool = *commandPool.getCommandPool(),
 		.level = vk::CommandBufferLevel::ePrimary,
 		.commandBufferCount = 1,
 	};
@@ -132,7 +144,8 @@ void Texture::transitionImageLayout(vk::ImageLayout oldLayout, vk::ImageLayout n
 		dstAccess = vk::AccessFlagBits::eTransferWrite;
 		srcStage = vk::PipelineStageFlagBits::eTopOfPipe;
 		dstStage = vk::PipelineStageFlagBits::eTransfer;
-	} else if (oldLayout == vk::ImageLayout::eTransferDstOptimal && newLayout == vk::ImageLayout::eShaderReadOnlyOptimal) {
+	} else if (oldLayout == vk::ImageLayout::eTransferDstOptimal &&
+			   newLayout == vk::ImageLayout::eShaderReadOnlyOptimal) {
 		srcAccess = vk::AccessFlagBits::eTransferWrite;
 		dstAccess = vk::AccessFlagBits::eShaderRead;
 		srcStage = vk::PipelineStageFlagBits::eTransfer;
@@ -149,13 +162,14 @@ void Texture::transitionImageLayout(vk::ImageLayout oldLayout, vk::ImageLayout n
 		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 		.image = _image,
-		.subresourceRange = {
-			.aspectMask = vk::ImageAspectFlagBits::eColor,
-			.baseMipLevel = 0,
-			.levelCount = 1,
-			.baseArrayLayer = 0,
-			.layerCount = 1,
-		},
+		.subresourceRange =
+			{
+				.aspectMask = vk::ImageAspectFlagBits::eColor,
+				.baseMipLevel = 0,
+				.levelCount = 1,
+				.baseArrayLayer = 0,
+				.layerCount = 1,
+			},
 	};
 
 	cmd.pipelineBarrier(srcStage, dstStage, vk::DependencyFlags(), nullptr, nullptr, barrier);
@@ -172,14 +186,10 @@ void Texture::transitionImageLayout(vk::ImageLayout oldLayout, vk::ImageLayout n
 }
 
 void Texture::copyBufferToImage(const VulkanBuffer& buffer, uint32_t width, uint32_t height) {
-	vk::CommandPoolCreateInfo poolInfo{
-		.flags = vk::CommandPoolCreateFlagBits::eTransient,
-		.queueFamilyIndex = _device.getGraphicsQueueFamilyIndex(),
-	};
-	vk::raii::CommandPool commandPool(*_device, poolInfo);
+	const CommandPool& commandPool = _device.getTransferCommandPool();
 
 	vk::CommandBufferAllocateInfo cmdAllocInfo{
-		.commandPool = *commandPool,
+		.commandPool = *commandPool.getCommandPool(),
 		.level = vk::CommandBufferLevel::ePrimary,
 		.commandBufferCount = 1,
 	};
@@ -193,12 +203,13 @@ void Texture::copyBufferToImage(const VulkanBuffer& buffer, uint32_t width, uint
 		.bufferOffset = 0,
 		.bufferRowLength = 0,
 		.bufferImageHeight = 0,
-		.imageSubresource = {
-			.aspectMask = vk::ImageAspectFlagBits::eColor,
-			.mipLevel = 0,
-			.baseArrayLayer = 0,
-			.layerCount = 1,
-		},
+		.imageSubresource =
+			{
+				.aspectMask = vk::ImageAspectFlagBits::eColor,
+				.mipLevel = 0,
+				.baseArrayLayer = 0,
+				.layerCount = 1,
+			},
 		.imageOffset = {0, 0, 0},
 		.imageExtent = {width, height, 1},
 	};

@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 # 项目名称
-project(Fishy LANGUAGES CXX)
+project(Fishy LANGUAGES C CXX)
 
 # 设置 C++ 标准 (Vulkan-Hpp 建议使用 C++20，或者至少 C++17)
 set(CMAKE_CXX_STANDARD 20)
@@ -131,6 +131,23 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(VulkanMemoryAllocator)
 
 # ------------------------------------------------------------------------------
+# libktx - KTX/KTX2 Texture Loading (for IBL cubemaps)
+# ------------------------------------------------------------------------------
+set(KTX_FEATURE_STATIC_LIBRARY ON CACHE BOOL "" FORCE)
+set(KTX_FEATURE_TESTS OFF CACHE BOOL "" FORCE)
+set(KTX_FEATURE_TOOLS OFF CACHE BOOL "" FORCE)
+set(KTX_FEATURE_GL_UPLOAD OFF CACHE BOOL "" FORCE)
+set(KTX_FEATURE_VK_UPLOAD ON CACHE BOOL "" FORCE)
+
+FetchContent_Declare(
+    libktx
+    GIT_REPOSITORY https://github.com/KhronosGroup/KTX-Software.git
+    GIT_TAG        v4.3.2
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(libktx)
+
+# ------------------------------------------------------------------------------
 # Dear ImGui - 即时模式 GUI (Docking Branch)
 # ------------------------------------------------------------------------------
 FetchContent_Declare(
@@ -254,6 +271,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     spdlog::spdlog
     tinygltf
     GPUOpen::VulkanMemoryAllocator
+    ktx
     imgui
     ${CMAKE_DL_LIBS}
 )
