@@ -19,7 +19,7 @@
 
 namespace Fishy {
 
-static constexpr uint64_t FENCE_TIMEOUT = std::numeric_limits<uint64_t>::max();
+static constexpr uint64_t FENCE_TIMEOUT = std::numeric_limits<uint32_t>::max();
 
 Renderer::Renderer(VulkanDevice& device, Window& window, ResourceManager& resourceManager)
 	: _device(device), _window(window), _resourceManager(resourceManager) {
@@ -27,19 +27,26 @@ Renderer::Renderer(VulkanDevice& device, Window& window, ResourceManager& resour
 	_frames.resize(MAX_FRAMES_IN_FLIGHT);
 	recreateSwapChain();
 	createCommandBuffers();
+
+	// Descriptor set layouts
 	createGlobalSetLayout();
-	createMaterialSetLayout();
-	createObjectDataSetLayout();
-	createDescriptorPool();
+	createBindlessTextureSetLayout(); // Creates both texture and SSBO bindless layouts
+
+	// Descriptor pools
+	createDescriptorPool();			// For global sets
+	createBindlessDescriptorPool(); // For bindless sets (UPDATE_AFTER_BIND)
+
+	// Allocate bindless descriptor sets
+	allocateBindlessDescriptorSet();
+
+	// Initialize ResourceManager with bindless sets (enables auto-registration)
+	_resourceManager.initBindlessResources(*_bindlessTextureSet, *_bindlessStorageBufferSet);
+
 	loadPipelineCache();
 	createGraphicsPipeline();
-	createUniformBuffers();
-	createObjectDataBuffer();
-	createIndirectBuffer();
 
-	// Initialize ResourceManager with material descriptor resources BEFORE createDescriptorSets
-	// This ensures default textures exist for IBL placeholder bindings
-	_resourceManager.initMaterialResources(*_materialSetLayout, _descriptorPool);
+	createUniformBuffers();
+	createIndirectBuffer();
 
 	createDescriptorSets();
 	createSyncObjects();
@@ -51,10 +58,6 @@ Renderer::~Renderer() {
 	LogSystem::get().info("Shutting down Renderer...");
 	savePipelineCache();
 	_device->waitIdle();
-
-	// Clear GPU resources from ResourceManager before destroying the descriptor pool
-	// This prevents validation errors about freeing descriptor sets from an invalid pool
-	_resourceManager.clearGPUResources();
 
 	freeCommandBuffers();
 	_swapChain.reset();
@@ -121,12 +124,19 @@ void Renderer::render(const Model& model, std::function<void(VkCommandBuffer)> u
 	cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *_graphicsPipeline->getLayout(), 0,
 						   *_frames[_currentFrameIndex].descriptorSet, nullptr);
 
-	// Bind object data SSBO (Set 2)
-	cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *_graphicsPipeline->getLayout(), 2,
-						   *_frames[_currentFrameIndex].objectDataSet, nullptr);
+	// Bind bindless texture array (Set 1) - persistent, updated via UPDATE_AFTER_BIND
+	cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *_graphicsPipeline->getLayout(), 1, *_bindlessTextureSet,
+						   nullptr);
 
-	// Update object data SSBO with per-object transforms
-	updateObjectData(model);
+	// Bind bindless SSBO array (Set 2) - persistent, updated via UPDATE_AFTER_BIND
+	cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *_graphicsPipeline->getLayout(), 2,
+						   *_bindlessStorageBufferSet, nullptr);
+
+	// Build instance data with texture indices from materials
+	buildInstanceData(model);
+
+	// Upload instance data to GPU SSBO
+	updateInstanceDataBuffer();
 
 	// Build draw batches (sorts by material) and upload indirect commands
 	buildDrawBatches(model);
@@ -254,86 +264,116 @@ void Renderer::createGlobalSetLayout() {
 	_globalSetLayout = vk::raii::DescriptorSetLayout(*_device, layoutInfo);
 }
 
-void Renderer::createMaterialSetLayout() {
-	// Material set layout matching glTF PBR with extensions:
-	// Binding 0: MaterialUBO (uniform buffer)
-	// Binding 1: baseColorMap
-	// Binding 2: metallicRoughnessMap
-	// Binding 3: normalMap
-	// Binding 4: occlusionMap
-	// Binding 5: emissiveMap
-	// Binding 6: clearcoatMap
-	// Binding 7: clearcoatRoughnessMap
-	// Binding 8: clearcoatNormalMap
-	// Binding 9: transmissionMap
-	std::vector<vk::DescriptorSetLayoutBinding> bindings = {
-		{.binding = 0,
-		 .descriptorType = vk::DescriptorType::eUniformBuffer,
-		 .descriptorCount = 1,
-		 .stageFlags = vk::ShaderStageFlagBits::eFragment},
-	};
+void Renderer::createBindlessTextureSetLayout() {
+	LogSystem::get().info("[Bindless] Creating texture and SSBO set layouts (max {} entries)", MAX_BINDLESS_TEXTURES);
 
-	// 9 texture bindings (1-9)
-	for (uint32_t i = 1; i <= 9; i++) {
-		bindings.push_back({.binding = i,
-							.descriptorType = vk::DescriptorType::eCombinedImageSampler,
-							.descriptorCount = 1,
-							.stageFlags = vk::ShaderStageFlagBits::eFragment});
-	}
+	// ═══════════════════════════════════════════════════════════════════════════
+	// Set 1: Bindless Texture Array
+	// ═══════════════════════════════════════════════════════════════════════════
+	vk::DescriptorBindingFlags textureBindingFlags =
+		vk::DescriptorBindingFlagBits::eUpdateAfterBind |		 // Can update while bound to command buffer
+		vk::DescriptorBindingFlagBits::ePartiallyBound |		 // Not all slots need valid descriptors
+		vk::DescriptorBindingFlagBits::eVariableDescriptorCount; // Size set at allocation time
 
-	vk::DescriptorSetLayoutCreateInfo layoutInfo{.bindingCount = static_cast<uint32_t>(bindings.size()),
-												 .pBindings = bindings.data()};
+	vk::DescriptorSetLayoutBindingFlagsCreateInfo textureBindingFlagsInfo{.bindingCount = 1,
+																		  .pBindingFlags = &textureBindingFlags};
 
-	_materialSetLayout = vk::raii::DescriptorSetLayout(*_device, layoutInfo);
-}
+	vk::DescriptorSetLayoutBinding textureBinding{.binding = 0,
+												  .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+												  .descriptorCount = MAX_BINDLESS_TEXTURES,
+												  .stageFlags = vk::ShaderStageFlagBits::eFragment};
 
-void Renderer::createObjectDataSetLayout() {
-	// Set 2: Object Data SSBO for per-object transforms
+	vk::DescriptorSetLayoutCreateInfo textureLayoutInfo{
+		.pNext = &textureBindingFlagsInfo,
+		.flags = vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool, // Required for UPDATE_AFTER_BIND
+		.bindingCount = 1,
+		.pBindings = &textureBinding};
+
+	_bindlessTextureSetLayout = vk::raii::DescriptorSetLayout(*_device, textureLayoutInfo);
+	LogSystem::get().info("[Bindless] Texture set layout created");
+
+	// ═══════════════════════════════════════════════════════════════════════════
+	// Set 2: Bindless Storage Buffer Array
+	// ═══════════════════════════════════════════════════════════════════════════
+	vk::DescriptorBindingFlags ssboBindingFlags = vk::DescriptorBindingFlagBits::eUpdateAfterBind |
+												  vk::DescriptorBindingFlagBits::ePartiallyBound |
+												  vk::DescriptorBindingFlagBits::eVariableDescriptorCount;
+
+	vk::DescriptorSetLayoutBindingFlagsCreateInfo ssboBindingFlagsInfo{.bindingCount = 1,
+																	   .pBindingFlags = &ssboBindingFlags};
+
 	vk::DescriptorSetLayoutBinding ssboBinding{.binding = 0,
 											   .descriptorType = vk::DescriptorType::eStorageBuffer,
-											   .descriptorCount = 1,
-											   .stageFlags = vk::ShaderStageFlagBits::eVertex};
+											   .descriptorCount = MAX_BINDLESS_TEXTURES, // Same capacity
+											   .stageFlags = vk::ShaderStageFlagBits::eVertex |
+															 vk::ShaderStageFlagBits::eFragment};
 
-	vk::DescriptorSetLayoutCreateInfo layoutInfo{.bindingCount = 1, .pBindings = &ssboBinding};
+	vk::DescriptorSetLayoutCreateInfo ssboLayoutInfo{.pNext = &ssboBindingFlagsInfo,
+													 .flags =
+														 vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool,
+													 .bindingCount = 1,
+													 .pBindings = &ssboBinding};
 
-	_objectDataSetLayout = vk::raii::DescriptorSetLayout(*_device, layoutInfo);
-	LogSystem::get().trace("Created object data SSBO descriptor set layout");
+	_bindlessStorageBufferSetLayout = vk::raii::DescriptorSetLayout(*_device, ssboLayoutInfo);
+	LogSystem::get().info("[Bindless] Storage buffer set layout created");
 }
 
-void Renderer::createObjectDataBuffer() {
-	// Use header constant for initial buffer size
-	vk::DeviceSize bufferSize = sizeof(ObjectData) * INITIAL_MAX_OBJECTS;
+void Renderer::createBindlessDescriptorPool() {
+	// Pool needs UPDATE_AFTER_BIND flag to match layout
+	std::array<vk::DescriptorPoolSize, 2> poolSizes{
+		vk::DescriptorPoolSize{.type = vk::DescriptorType::eCombinedImageSampler,
+							   .descriptorCount = MAX_BINDLESS_TEXTURES},
+		vk::DescriptorPoolSize{.type = vk::DescriptorType::eStorageBuffer, .descriptorCount = MAX_BINDLESS_TEXTURES}};
 
-	for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-		_frames[i].objectDataBuffer = std::make_unique<VulkanBuffer>(
-			_device, bufferSize, vk::BufferUsageFlagBits::eStorageBuffer,
-			vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+	vk::DescriptorPoolCreateInfo poolInfo{
+		.flags = vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind |
+				 vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet, // Both flags required
+		.maxSets = 2,												   // One texture set + one SSBO set
+		.poolSizeCount = static_cast<uint32_t>(poolSizes.size()),
+		.pPoolSizes = poolSizes.data()};
 
-		// Persistent mapping
-		_frames[i].objectDataBuffer->map();
-	}
-	LogSystem::get().trace("Created object data SSBO buffers ({} bytes each)", bufferSize);
+	_bindlessDescriptorPool = vk::raii::DescriptorPool(*_device, poolInfo);
+	LogSystem::get().info("[Bindless] Descriptor pool created with UPDATE_AFTER_BIND flag");
 }
 
-void Renderer::updateObjectData(const Model& model) {
-	// Build object data for all primitives
-	std::vector<ObjectData> objectData;
-	objectData.reserve(model.getPrimitives().size());
+void Renderer::allocateBindlessDescriptorSet() {
+	// ═══════════════════════════════════════════════════════════════════════════
+	// Allocate Bindless Texture Set (Set 1)
+	// ═══════════════════════════════════════════════════════════════════════════
+	uint32_t textureVariableCount = MAX_BINDLESS_TEXTURES;
 
-	// Base transform: Rotate +90 degrees around X to fix model orientation (glTF uses Y-up)
-	glm::mat4 fixRotation = glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+	vk::DescriptorSetVariableDescriptorCountAllocateInfo textureVariableInfo{
+		.descriptorSetCount = 1, .pDescriptorCounts = &textureVariableCount};
 
-	for (size_t i = 0; i < model.getPrimitives().size(); i++) {
-		// For now, all primitives share the same transform
-		// Future: each primitive could have its own transform from scene graph
-		objectData.push_back(ObjectData::fromModelMatrix(fixRotation, static_cast<uint32_t>(i)));
-	}
+	vk::DescriptorSetAllocateInfo textureAllocInfo{.pNext = &textureVariableInfo,
+												   .descriptorPool = *_bindlessDescriptorPool,
+												   .descriptorSetCount = 1,
+												   .pSetLayouts = &*_bindlessTextureSetLayout};
 
-	// Upload to current frame's SSBO
-	if (!objectData.empty()) {
-		_frames[_currentFrameIndex].objectDataBuffer->upload(objectData.data(), objectData.size() * sizeof(ObjectData));
-	}
+	auto textureSets = vk::raii::DescriptorSets(*_device, textureAllocInfo);
+	_bindlessTextureSet = std::move(textureSets[0]);
+	LogSystem::get().info("[Bindless] Texture descriptor set allocated");
+
+	// ═══════════════════════════════════════════════════════════════════════════
+	// Allocate Bindless SSBO Set (Set 2)
+	// ═══════════════════════════════════════════════════════════════════════════
+	uint32_t ssboVariableCount = MAX_BINDLESS_TEXTURES;
+
+	vk::DescriptorSetVariableDescriptorCountAllocateInfo ssboVariableInfo{.descriptorSetCount = 1,
+																		  .pDescriptorCounts = &ssboVariableCount};
+
+	vk::DescriptorSetAllocateInfo ssboAllocInfo{.pNext = &ssboVariableInfo,
+												.descriptorPool = *_bindlessDescriptorPool,
+												.descriptorSetCount = 1,
+												.pSetLayouts = &*_bindlessStorageBufferSetLayout};
+
+	auto ssboSets = vk::raii::DescriptorSets(*_device, ssboAllocInfo);
+	_bindlessStorageBufferSet = std::move(ssboSets[0]);
+	LogSystem::get().info("[Bindless] Storage buffer descriptor set allocated");
 }
+
+// NOTE: Object data is now managed via bindless SSBO array (Set 2)
+// See BindlessResourceManager for runtime instance data management
 
 void Renderer::createIndirectBuffer() {
 	// Use header constant for initial buffer size
@@ -433,55 +473,29 @@ void Renderer::buildDrawBatches(const Model& model) {
 		return;
 	}
 
-	// Build a list of (primitiveIndex, material) for sorting
-	struct PrimitiveInfo {
-		uint32_t index;
-		GPUMaterial* material;
-	};
-	std::vector<PrimitiveInfo> sortedPrimitives;
-	sortedPrimitives.reserve(primitives.size());
+	// With bindless rendering, we don't need to sort by material
+	// All textures are accessible via indices in the shader
+	// Create a single batch for all primitives
+	_drawBatches.push_back({
+		.material = nullptr, // Not used in bindless mode
+		.firstCommand = 0,
+		.commandCount = 0,
+	});
 
 	for (uint32_t i = 0; i < primitives.size(); i++) {
 		const auto& prim = primitives[i];
 		if (!prim.mesh || _meshRegions[i].indexCount == 0)
 			continue;
 
-		GPUMaterial* gpuMaterial = nullptr;
-		if (prim.material) {
-			gpuMaterial = _resourceManager.getOrCreateGPUMaterial(prim.material.get());
-		}
-
-		sortedPrimitives.push_back({i, gpuMaterial});
-	}
-
-	// Sort by material pointer (group same materials together)
-	std::sort(sortedPrimitives.begin(), sortedPrimitives.end(),
-			  [](const PrimitiveInfo& a, const PrimitiveInfo& b) { return a.material < b.material; });
-
-	// Build batches and indirect commands
-	GPUMaterial* currentMaterial = nullptr;
-
-	for (const auto& prim : sortedPrimitives) {
-		// Start a new batch when material changes
-		if (prim.material != currentMaterial) {
-			currentMaterial = prim.material;
-			_drawBatches.push_back({
-				.material = currentMaterial,
-				.firstCommand = static_cast<uint32_t>(_indirectCommands.size()),
-				.commandCount = 0,
-			});
-		}
-
-		// Get mesh region for this primitive
-		const auto& region = _meshRegions[prim.index];
+		const auto& region = _meshRegions[i];
 
 		// Add indirect command with proper offsets into unified buffers
 		vk::DrawIndexedIndirectCommand cmd{
 			.indexCount = region.indexCount,
 			.instanceCount = 1,
-			.firstIndex = region.firstIndex,	 // Offset into unified index buffer
-			.vertexOffset = region.vertexOffset, // Offset into unified vertex buffer
-			.firstInstance = prim.index,		 // Used for SSBO lookup
+			.firstIndex = region.firstIndex,
+			.vertexOffset = region.vertexOffset,
+			.firstInstance = i, // Used for SSBO instance lookup
 		};
 		_indirectCommands.push_back(cmd);
 		_drawBatches.back().commandCount++;
@@ -503,16 +517,10 @@ void Renderer::renderIndirect(const vk::raii::CommandBuffer& cmd) {
 	cmd.bindVertexBuffers(0, _unifiedVertexBuffer->getBuffer(), {0});
 	cmd.bindIndexBuffer(_unifiedIndexBuffer->getBuffer(), 0, vk::IndexType::eUint32);
 
-	// Render using indirect draw calls, one per batch (material group)
+	// Render using indirect draw calls
+	// With bindless, we don't need to rebind per-material - all textures accessible via indices
 	for (const auto& batch : _drawBatches) {
-		// Bind material descriptor set (Set 1)
-		if (batch.material) {
-			cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *_graphicsPipeline->getLayout(), 1,
-								   *batch.material->descriptorSet, nullptr);
-		}
-
 		// Issue indirect draw call for all commands in this batch
-		// With unified buffers, this draws all same-material objects efficiently!
 		cmd.drawIndexedIndirect(_frames[_currentFrameIndex].indirectBuffer->getBuffer(),
 								batch.firstCommand * sizeof(vk::DrawIndexedIndirectCommand), batch.commandCount,
 								sizeof(vk::DrawIndexedIndirectCommand));
@@ -538,7 +546,7 @@ void Renderer::createGraphicsPipeline() {
 		.setVertexInput(vertexInputInfo)
 		.setInputTopology(vk::PrimitiveTopology::eTriangleList)
 		.setCullMode(vk::CullModeFlagBits::eBack, vk::FrontFace::eCounterClockwise)
-		.setLayout({*_globalSetLayout, *_materialSetLayout, *_objectDataSetLayout}, {})
+		.setLayout({*_globalSetLayout, *_bindlessTextureSetLayout, *_bindlessStorageBufferSetLayout}, {})
 		.setRenderingFormats({_swapChain->getFormat()}, _depthFormat)
 		.setDepthStencilTest(true, true, vk::CompareOp::eLess, false, vk::CompareOp::eAlways);
 
@@ -612,7 +620,7 @@ void Renderer::savePipelineCache() {
 
 void Renderer::createDescriptorSets() {
 	createGlobalDescriptorSets();
-	createObjectDataDescriptorSets();
+	// NOTE: Object data sets are now handled via bindless SSBO array (Set 2)
 }
 
 void Renderer::createGlobalDescriptorSets() {
@@ -685,37 +693,6 @@ void Renderer::createGlobalDescriptorSets() {
 		descriptorWrites[3].pImageInfo = &brdfLutImageInfo;
 
 		_device->updateDescriptorSets(descriptorWrites, {});
-	}
-}
-
-void Renderer::createObjectDataDescriptorSets() {
-	// Allocate object data descriptor sets (Set 2: SSBO for per-object transforms)
-	std::vector<vk::DescriptorSetLayout> objectDataLayouts(MAX_FRAMES_IN_FLIGHT, *_objectDataSetLayout);
-
-	vk::DescriptorSetAllocateInfo objectDataAllocInfo{.descriptorPool = *_descriptorPool,
-													  .descriptorSetCount =
-														  static_cast<uint32_t>(objectDataLayouts.size()),
-													  .pSetLayouts = objectDataLayouts.data()};
-
-	auto objectDataSets = vk::raii::DescriptorSets(*_device, objectDataAllocInfo);
-
-	for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-		_frames[i].objectDataSet = std::move(objectDataSets[i]);
-
-		// SSBO descriptor
-		vk::DescriptorBufferInfo ssboInfo{
-			.buffer = _frames[i].objectDataBuffer->getBuffer(), .offset = 0, .range = VK_WHOLE_SIZE};
-
-		vk::WriteDescriptorSet ssboWrite{
-			.dstSet = *_frames[i].objectDataSet,
-			.dstBinding = 0,
-			.dstArrayElement = 0,
-			.descriptorCount = 1,
-			.descriptorType = vk::DescriptorType::eStorageBuffer,
-			.pBufferInfo = &ssboInfo,
-		};
-
-		_device->updateDescriptorSets(ssboWrite, {});
 	}
 }
 
@@ -1002,6 +979,114 @@ void Renderer::writeIBLDescriptors() {
 	}
 
 	LogSystem::get().trace("IBL descriptors written to global descriptor sets");
+}
+
+void Renderer::buildInstanceData(const Model& model) {
+	_instanceData.clear();
+
+	// Iterate all primitives and build instance data with texture indices
+	for (const auto& primitive : model.getPrimitives()) {
+		// glTF uses Y-up, rotate -90 degrees around X to convert to Z-up
+		static const glm::mat4 gltfCorrection =
+			glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+		InstanceData inst = InstanceData::fromModelMatrix(gltfCorrection);
+
+		// Fill texture indices from material
+		if (primitive.material) {
+			const Material* mat = primitive.material.get();
+
+			// Get texture indices from ResourceManager (textures auto-registered on load)
+			auto getTexIdx = [this](const std::shared_ptr<Texture>& tex) -> uint32_t {
+				return _resourceManager.getTextureIndex(tex);
+			};
+
+			inst.baseColorIndex = getTexIdx(mat->baseColorMap);
+			inst.metallicRoughnessIndex = getTexIdx(mat->metallicRoughnessMap);
+			inst.normalIndex = getTexIdx(mat->normalMap);
+			inst.occlusionIndex = getTexIdx(mat->occlusionMap);
+			inst.emissiveIndex = getTexIdx(mat->emissiveMap);
+			inst.clearcoatIndex = getTexIdx(mat->clearcoatMap);
+			inst.clearcoatRoughnessIndex = getTexIdx(mat->clearcoatRoughnessMap);
+			inst.clearcoatNormalIndex = getTexIdx(mat->clearcoatNormalMap);
+			inst.transmissionIndex = getTexIdx(mat->transmissionMap);
+
+			// Fill material properties
+			inst.baseColorFactor = mat->params.baseColorFactor;
+			inst.metallicFactor = mat->params.metallicFactor;
+			inst.roughnessFactor = mat->params.roughnessFactor;
+			inst.normalScale = mat->params.normalScale;
+			inst.occlusionStrength = mat->params.occlusionStrength;
+			inst.emissiveFactor = glm::vec4(mat->params.emissiveFactor, mat->params.emissiveStrength);
+			inst.alphaCutoff = mat->params.alphaCutoff;
+			inst.clearcoatFactor = mat->params.clearcoatFactor;
+			inst.clearcoatRoughnessFactor = mat->params.clearcoatRoughnessFactor;
+
+			// Build flags
+			uint32_t flags = 0;
+			if (mat->params.doubleSided)
+				flags |= 1;
+			flags |= static_cast<uint32_t>(mat->params.alphaMode) << 1;
+			if (mat->baseColorMap)
+				flags |= (1 << 3);
+			if (mat->metallicRoughnessMap)
+				flags |= (1 << 4);
+			if (mat->normalMap)
+				flags |= (1 << 5);
+			if (mat->occlusionMap)
+				flags |= (1 << 6);
+			if (mat->emissiveMap)
+				flags |= (1 << 7);
+			if (mat->clearcoatMap)
+				flags |= (1 << 8);
+			if (mat->clearcoatRoughnessMap)
+				flags |= (1 << 9);
+			if (mat->clearcoatNormalMap)
+				flags |= (1 << 10);
+			if (mat->transmissionMap)
+				flags |= (1 << 11);
+			inst.flags = flags;
+		}
+
+		_instanceData.push_back(inst);
+	}
+}
+
+void Renderer::updateInstanceDataBuffer() {
+	if (_instanceData.empty()) {
+		return;
+	}
+
+	auto& frame = _frames[_currentFrameIndex];
+	vk::DeviceSize requiredSize = _instanceData.size() * sizeof(InstanceData);
+
+	// Recreate buffer if too small
+	if (!frame.instanceDataBuffer || frame.instanceDataBuffer->getSize() < requiredSize) {
+		// Round up to reasonable capacity with some headroom
+		vk::DeviceSize allocSize =
+			std::max(requiredSize, static_cast<vk::DeviceSize>(INITIAL_MAX_OBJECTS * sizeof(InstanceData)));
+
+		frame.instanceDataBuffer = std::make_unique<VulkanBuffer>(
+			_device, allocSize, vk::BufferUsageFlagBits::eStorageBuffer,
+			vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+		frame.instanceDataBuffer->map();
+
+		// Register to bindless SSBO - writes to Set 2, binding 0
+		vk::DescriptorBufferInfo bufferInfo{
+			.buffer = frame.instanceDataBuffer->getBuffer(), .offset = 0, .range = allocSize};
+
+		vk::WriteDescriptorSet write{.dstSet = *_bindlessStorageBufferSet,
+									 .dstBinding = 0,
+									 .dstArrayElement = 0, // Single SSBO at index 0
+									 .descriptorCount = 1,
+									 .descriptorType = vk::DescriptorType::eStorageBuffer,
+									 .pBufferInfo = &bufferInfo};
+
+		_device->updateDescriptorSets(write, {});
+		LogSystem::get().trace("[Bindless] Frame {} allocated instance SSBO ({} bytes)", _currentFrameIndex, allocSize);
+	}
+
+	// Upload data
+	frame.instanceDataBuffer->upload(_instanceData.data(), requiredSize);
 }
 
 } // namespace Fishy

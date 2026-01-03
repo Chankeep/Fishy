@@ -29,15 +29,167 @@ ResourceManager::ResourceManager(VulkanDevice& device) : _device(device) {}
 
 ResourceManager::~ResourceManager() { clear(); }
 
-void ResourceManager::initMaterialResources(vk::DescriptorSetLayout materialLayout,
-											const vk::raii::DescriptorPool& descriptorPool) {
-	LogSystem::get().info("Initializing ResourceManager material resources...");
-	_materialLayout = materialLayout;
-	_descriptorPool = &descriptorPool;
+// Bindless Resource Management
 
-	// Create default textures
+void ResourceManager::initBindlessResources(vk::DescriptorSet textureSet, vk::DescriptorSet ssboSet) {
+	LogSystem::get().info("[Bindless] Initializing ResourceManager...");
+
+	_bindlessTextureSet = textureSet;
+	_bindlessStorageBufferSet = ssboSet;
+
+	// Reset slot allocators
+	_nextTextureIndex = 0;
+	_nextBufferIndex = 0;
+
+	// Clear recycle queues
+	while (!_freeTextureSlots.empty())
+		_freeTextureSlots.pop();
+	while (!_freeBufferSlots.empty())
+		_freeBufferSlots.pop();
+
+	// Clear handle mappings
+	_textureToHandle.clear();
+
+	// Create default textures and register them
 	createDefaultTextures();
+
+	LogSystem::get().info("[Bindless] ResourceManager ready (max {} resources)", MAX_BINDLESS_RESOURCES);
 }
+
+TextureHandle ResourceManager::registerTexture(std::shared_ptr<Texture> texture) {
+	if (!texture) {
+		return TextureHandle{};
+	}
+
+	// Check if already registered
+	auto it = _textureToHandle.find(texture.get());
+	if (it != _textureToHandle.end()) {
+		return it->second;
+	}
+
+	// Check if bindless is initialized
+	if (!_bindlessTextureSet) {
+		LogSystem::get().warn("[Bindless] Cannot register texture - bindless not initialized");
+		return TextureHandle{};
+	}
+
+	// Allocate slot (prefer recycled slots)
+	uint32_t index;
+	if (!_freeTextureSlots.empty()) {
+		index = _freeTextureSlots.front();
+		_freeTextureSlots.pop();
+		LogSystem::get().trace("[Bindless] Reusing texture slot {}", index);
+	} else {
+		if (_nextTextureIndex >= MAX_BINDLESS_RESOURCES) {
+			LogSystem::get().error("[Bindless] Texture array full!");
+			return TextureHandle{};
+		}
+		index = _nextTextureIndex++;
+		LogSystem::get().trace("[Bindless] Allocated new texture slot {}", index);
+	}
+
+	// Write descriptor (UPDATE_AFTER_BIND allows updating while set is bound!)
+	vk::DescriptorImageInfo imageInfo{.sampler = *texture->getSampler(),
+									  .imageView = *texture->getImageView(),
+									  .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal};
+
+	vk::WriteDescriptorSet write{.dstSet = _bindlessTextureSet,
+								 .dstBinding = 0,
+								 .dstArrayElement = index,
+								 .descriptorCount = 1,
+								 .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+								 .pImageInfo = &imageInfo};
+
+	_device->updateDescriptorSets(write, {});
+
+	// Store mapping
+	TextureHandle handle{index};
+	_textureToHandle[texture.get()] = handle;
+
+	return handle;
+}
+
+void ResourceManager::unregisterTexture(TextureHandle handle) {
+	if (!handle.isValid()) {
+		return;
+	}
+
+	// Recycle slot
+	_freeTextureSlots.push(handle.index);
+
+	// Remove from mapping (reverse lookup)
+	for (auto it = _textureToHandle.begin(); it != _textureToHandle.end(); ++it) {
+		if (it->second.index == handle.index) {
+			_textureToHandle.erase(it);
+			break;
+		}
+	}
+
+	LogSystem::get().trace("[Bindless] Freed texture slot {}", handle.index);
+}
+
+BufferHandle ResourceManager::registerBuffer(VulkanBuffer* buffer, vk::DeviceSize size) {
+	if (!buffer) {
+		return BufferHandle{};
+	}
+
+	if (!_bindlessStorageBufferSet) {
+		LogSystem::get().warn("[Bindless] Cannot register buffer - bindless not initialized");
+		return BufferHandle{};
+	}
+
+	// Allocate slot
+	uint32_t index;
+	if (!_freeBufferSlots.empty()) {
+		index = _freeBufferSlots.front();
+		_freeBufferSlots.pop();
+	} else {
+		if (_nextBufferIndex >= MAX_BINDLESS_RESOURCES) {
+			LogSystem::get().error("[Bindless] Buffer array full!");
+			return BufferHandle{};
+		}
+		index = _nextBufferIndex++;
+	}
+
+	// Write descriptor
+	vk::DescriptorBufferInfo bufferInfo{.buffer = buffer->getBuffer(), .offset = 0, .range = size};
+
+	vk::WriteDescriptorSet write{.dstSet = _bindlessStorageBufferSet,
+								 .dstBinding = 0,
+								 .dstArrayElement = index,
+								 .descriptorCount = 1,
+								 .descriptorType = vk::DescriptorType::eStorageBuffer,
+								 .pBufferInfo = &bufferInfo};
+
+	_device->updateDescriptorSets(write, {});
+
+	LogSystem::get().trace("[Bindless] Registered buffer at slot {}", index);
+	return BufferHandle{index};
+}
+
+void ResourceManager::unregisterBuffer(BufferHandle handle) {
+	if (!handle.isValid()) {
+		return;
+	}
+
+	_freeBufferSlots.push(handle.index);
+	LogSystem::get().trace("[Bindless] Freed buffer slot {}", handle.index);
+}
+
+uint32_t ResourceManager::getTextureIndex(const std::shared_ptr<Texture>& texture) const {
+	if (!texture) {
+		return UINT32_MAX;
+	}
+
+	auto it = _textureToHandle.find(texture.get());
+	if (it != _textureToHandle.end()) {
+		return it->second.index;
+	}
+
+	return UINT32_MAX;
+}
+
+// Default Textures
 
 void ResourceManager::createDefaultTextures() {
 	LogSystem::get().info("Creating default textures (white, normal)...");
@@ -55,6 +207,12 @@ void ResourceManager::createDefaultTextures() {
 
 	// Create default cubemap for IBL placeholder (1x1 black cubemap)
 	_defaultCubemap = CubemapTexture::createDefault(_device);
+
+	// Auto-register default textures to bindless if initialized
+	if (_bindlessTextureSet) {
+		(void)registerTexture(_defaultWhiteTexture);
+		(void)registerTexture(_defaultNormalTexture);
+	}
 
 	LogSystem::get().info("Default textures created");
 }
@@ -80,14 +238,14 @@ std::shared_ptr<CubemapTexture> ResourceManager::getDefaultCubemap() {
 	return _defaultCubemap;
 }
 
+// Resource Loading
+
 const vk::raii::ShaderModule& ResourceManager::getShader(const std::string& filepath) {
-	// Check cache first
 	auto it = _shaderCache.find(filepath);
 	if (it != _shaderCache.end()) {
 		return it->second;
 	}
 
-	// Not in cache, load from file
 	LogSystem::get().info("Loading shader: {}", filepath);
 	std::vector<char> code = readFile(filepath);
 	vk::raii::ShaderModule module = createShaderModule(code);
@@ -101,20 +259,23 @@ std::shared_ptr<Texture> ResourceManager::getTexture(const std::string& filepath
 		return nullptr;
 	}
 
-	// Include format in cache key to support same file with different formats
 	std::string cacheKey = filepath + "_fmt" + std::to_string(static_cast<int>(format));
 
-	// Check cache
 	auto it = _textureCache.find(cacheKey);
 	if (it != _textureCache.end()) {
 		return it->second;
 	}
 
-	// Load new
 	try {
 		LogSystem::get().info("Loading texture: {}", filepath);
 		auto texture = std::make_shared<Texture>(_device, filepath, format);
 		_textureCache.emplace(cacheKey, texture);
+
+		// Auto-register to bindless if enabled
+		if (_bindlessTextureSet) {
+			(void)registerTexture(texture);
+		}
+
 		return texture;
 	} catch (const std::exception& e) {
 		LogSystem::get().error("Failed to load texture: {} Error: {}", filepath, e.what());
@@ -124,20 +285,23 @@ std::shared_ptr<Texture> ResourceManager::getTexture(const std::string& filepath
 
 std::shared_ptr<Texture> ResourceManager::loadTextureFromMemory(const unsigned char* data, size_t size,
 																const std::string& cacheKey, vk::Format format) {
-	// Include format in cache key
 	std::string fullCacheKey = cacheKey + "_fmt" + std::to_string(static_cast<int>(format));
 
-	// Check cache
 	auto it = _textureCache.find(fullCacheKey);
 	if (it != _textureCache.end()) {
 		return it->second;
 	}
 
-	// Load from memory
 	try {
 		LogSystem::get().info("Loading embedded texture: {} ({} bytes)", cacheKey, size);
 		auto texture = std::make_shared<Texture>(_device, data, size, format);
 		_textureCache.emplace(fullCacheKey, texture);
+
+		// Auto-register to bindless if enabled
+		if (_bindlessTextureSet) {
+			(void)registerTexture(texture);
+		}
+
 		return texture;
 	} catch (const std::exception& e) {
 		LogSystem::get().error("Failed to load embedded texture: {} Error: {}", cacheKey, e.what());
@@ -145,201 +309,33 @@ std::shared_ptr<Texture> ResourceManager::loadTextureFromMemory(const unsigned c
 	}
 }
 
-GPUMaterial* ResourceManager::getOrCreateGPUMaterial(const Material* material) {
-	if (!material) {
-		return nullptr;
-	}
-
-	// Check cache
-	auto it = _gpuMaterialCache.find(material);
-	if (it != _gpuMaterialCache.end()) {
-		return it->second.get();
-	}
-
-	if (!_descriptorPool || _materialLayout == nullptr) {
-		throw std::runtime_error("ResourceManager::initMaterialResources must be called before getOrCreateGPUMaterial");
-	}
-
-	auto gpuMaterial = std::make_unique<GPUMaterial>();
-
-	// Create uniform buffer for material parameters
-	gpuMaterial->uniformBuffer = std::make_unique<VulkanBuffer>(
-		_device, sizeof(MaterialUBO), vk::BufferUsageFlagBits::eUniformBuffer,
-		vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
-	gpuMaterial->uniformBuffer->map();
-
-	// Fill MaterialUBO
-	MaterialUBO ubo{};
-	ubo.baseColorFactor = material->params.baseColorFactor;
-	ubo.metallicFactor = material->params.metallicFactor;
-	ubo.roughnessFactor = material->params.roughnessFactor;
-	ubo.normalScale = material->params.normalScale;
-	ubo.occlusionStrength = material->params.occlusionStrength;
-	ubo.emissiveFactor = glm::vec4(material->params.emissiveFactor, material->params.emissiveStrength);
-	ubo.alphaCutoff = material->params.alphaCutoff;
-
-	// Extension parameters
-	ubo.clearcoatFactor = material->params.clearcoatFactor;
-	ubo.clearcoatRoughnessFactor = material->params.clearcoatRoughnessFactor;
-	ubo.transmissionFactor = material->params.transmissionFactor;
-	ubo.ior = material->params.ior;
-
-	// Flags: bit 0 = doubleSided, bits 1-2 = alphaMode, bits 3+ = texture presence
-	uint32_t flags = 0;
-	if (material->params.doubleSided)
-		flags |= MaterialFlags::DoubleSided;
-	flags |= static_cast<uint32_t>(material->params.alphaMode) << MaterialFlags::AlphaModeShift;
-	if (material->baseColorMap)
-		flags |= MaterialFlags::HasBaseColorMap;
-	if (material->metallicRoughnessMap)
-		flags |= MaterialFlags::HasMetallicRoughnessMap;
-	if (material->normalMap)
-		flags |= MaterialFlags::HasNormalMap;
-	if (material->occlusionMap)
-		flags |= MaterialFlags::HasOcclusionMap;
-	if (material->emissiveMap)
-		flags |= MaterialFlags::HasEmissiveMap;
-	if (material->clearcoatMap)
-		flags |= MaterialFlags::HasClearcoatMap;
-	if (material->clearcoatRoughnessMap)
-		flags |= MaterialFlags::HasClearcoatRoughnessMap;
-	if (material->clearcoatNormalMap)
-		flags |= MaterialFlags::HasClearcoatNormalMap;
-	if (material->transmissionMap)
-		flags |= MaterialFlags::HasTransmissionMap;
-	ubo.flags = flags;
-
-	gpuMaterial->uniformBuffer->upload(&ubo, sizeof(ubo));
-
-	// Allocate descriptor set
-	vk::DescriptorSetAllocateInfo allocInfo{
-		.descriptorPool = **_descriptorPool, .descriptorSetCount = 1, .pSetLayouts = &_materialLayout};
-	gpuMaterial->descriptorSet = std::move(vk::raii::DescriptorSets(*_device, allocInfo)[0]);
-
-	auto getOrDefault = [this](const std::shared_ptr<Texture>& tex, bool useNormalDefault = false) {
-		if (tex)
-			return tex;
-		return useNormalDefault ? _defaultNormalTexture : _defaultWhiteTexture;
-	};
-
-	// Get textures (use defaults if not present)
-	// Core PBR textures
-	auto baseColorTex = getOrDefault(material->baseColorMap);
-	auto metallicRoughnessTex = getOrDefault(material->metallicRoughnessMap);
-	auto normalTex = getOrDefault(material->normalMap, true);
-	auto occlusionTex = getOrDefault(material->occlusionMap);
-	auto emissiveTex = getOrDefault(material->emissiveMap);
-
-	// Extension textures (clearcoat, transmission)
-	auto clearcoatTex = getOrDefault(material->clearcoatMap);
-	auto clearcoatRoughnessTex = getOrDefault(material->clearcoatRoughnessMap);
-	auto clearcoatNormalTex = getOrDefault(material->clearcoatNormalMap, true);
-	auto transmissionTex = getOrDefault(material->transmissionMap);
-
-	// Write descriptor set - 9 textures at bindings 1-9
-	std::vector<vk::DescriptorImageInfo> imageInfos = {
-		{*baseColorTex->getSampler(), *baseColorTex->getImageView(), vk::ImageLayout::eShaderReadOnlyOptimal},
-		{*metallicRoughnessTex->getSampler(), *metallicRoughnessTex->getImageView(),
-		 vk::ImageLayout::eShaderReadOnlyOptimal},
-		{*normalTex->getSampler(), *normalTex->getImageView(), vk::ImageLayout::eShaderReadOnlyOptimal},
-		{*occlusionTex->getSampler(), *occlusionTex->getImageView(), vk::ImageLayout::eShaderReadOnlyOptimal},
-		{*emissiveTex->getSampler(), *emissiveTex->getImageView(), vk::ImageLayout::eShaderReadOnlyOptimal},
-		{*clearcoatTex->getSampler(), *clearcoatTex->getImageView(), vk::ImageLayout::eShaderReadOnlyOptimal},
-		{*clearcoatRoughnessTex->getSampler(), *clearcoatRoughnessTex->getImageView(),
-		 vk::ImageLayout::eShaderReadOnlyOptimal},
-		{*clearcoatNormalTex->getSampler(), *clearcoatNormalTex->getImageView(),
-		 vk::ImageLayout::eShaderReadOnlyOptimal},
-		{*transmissionTex->getSampler(), *transmissionTex->getImageView(), vk::ImageLayout::eShaderReadOnlyOptimal},
-	};
-
-	std::vector<vk::WriteDescriptorSet> writes;
-	writes.reserve(imageInfos.size() + 1);
-
-	// Binding 0: Material UBO
-	vk::DescriptorBufferInfo bufferInfo{
-		.buffer = gpuMaterial->uniformBuffer->getBuffer(), .offset = 0, .range = sizeof(MaterialUBO)};
-	writes.push_back({.dstSet = *gpuMaterial->descriptorSet,
-					  .dstBinding = 0,
-					  .dstArrayElement = 0,
-					  .descriptorCount = 1,
-					  .descriptorType = vk::DescriptorType::eUniformBuffer,
-					  .pBufferInfo = &bufferInfo});
-
-	// Bindings 1-9: Textures
-	for (uint32_t i = 0; i < imageInfos.size(); ++i) {
-		writes.push_back({.dstSet = *gpuMaterial->descriptorSet,
-						  .dstBinding = i + 1,
-						  .dstArrayElement = 0,
-						  .descriptorCount = 1,
-						  .descriptorType = vk::DescriptorType::eCombinedImageSampler,
-						  .pImageInfo = &imageInfos[i]});
-	}
-
-	_device->updateDescriptorSets(writes, {});
-
-	auto result = gpuMaterial.get();
-	_gpuMaterialCache.emplace(material, std::move(gpuMaterial));
-
-	return result;
-}
-
-void ResourceManager::clearGPUResources() {
-	_descriptorPool = nullptr;
-	// Idempotent: safe to call multiple times
-	if (_gpuMaterialCache.empty()) {
-		return; // Already cleared
-	}
-
-	LogSystem::get().info("Clearing GPU resources ({} materials)...", _gpuMaterialCache.size());
-	// Clear GPU resources that hold descriptor sets from Renderer's pool
-	// Must be called before Renderer destroys its descriptor pool
-	_gpuMaterialCache.clear();
-}
+// Lifecycle
 
 void ResourceManager::clear() {
 	LogSystem::get().info("Clearing ResourceManager...");
-	// Clear GPU resources first
-	clearGPUResources();
 
-	// Then textures and shaders
 	_textureCache.clear();
 	_shaderCache.clear();
+	_textureToHandle.clear();
 
 	_defaultWhiteTexture.reset();
 	_defaultNormalTexture.reset();
 	_defaultCubemap.reset();
 
+	// Reset bindless state
+	_bindlessTextureSet = nullptr;
+	_bindlessStorageBufferSet = nullptr;
+	_nextTextureIndex = 0;
+	_nextBufferIndex = 0;
+	while (!_freeTextureSlots.empty())
+		_freeTextureSlots.pop();
+	while (!_freeBufferSlots.empty())
+		_freeBufferSlots.pop();
+
 	LogSystem::get().info("ResourceManager cleared");
 }
 
-uint32_t buildMaterialFlags(const Material* material) {
-	uint32_t flags = 0;
-
-	if (material->params.doubleSided)
-		flags |= MaterialFlags::DoubleSided;
-
-	flags |= (static_cast<uint32_t>(material->params.alphaMode) << MaterialFlags::AlphaModeShift);
-
-	// Texture presence flags using structured bindings
-	const std::pair<const std::shared_ptr<Texture>&, uint32_t> textureFlags[] = {
-		{material->baseColorMap, MaterialFlags::HasBaseColorMap},
-		{material->metallicRoughnessMap, MaterialFlags::HasMetallicRoughnessMap},
-		{material->normalMap, MaterialFlags::HasNormalMap},
-		{material->occlusionMap, MaterialFlags::HasOcclusionMap},
-		{material->emissiveMap, MaterialFlags::HasEmissiveMap},
-		{material->clearcoatMap, MaterialFlags::HasClearcoatMap},
-		{material->clearcoatRoughnessMap, MaterialFlags::HasClearcoatRoughnessMap},
-		{material->clearcoatNormalMap, MaterialFlags::HasClearcoatNormalMap},
-		{material->transmissionMap, MaterialFlags::HasTransmissionMap},
-	};
-
-	for (const auto& [texture, flag] : textureFlags) {
-		if (texture)
-			flags |= flag;
-	}
-
-	return flags;
-}
+// Helper Functions
 
 std::vector<char> ResourceManager::readFile(const std::string& filename) {
 	std::ifstream file(filename, std::ios::ate | std::ios::binary);

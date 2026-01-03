@@ -31,43 +31,43 @@ struct GlobalUBO {
 [[vk::binding(2, 0)]] SamplerCube prefilteredEnvMap;
 [[vk::binding(3, 0)]] Sampler2D brdfLUT;
 
-// Set 1: Material Data
-struct MaterialUBO {
-    float4 baseColorFactor;           // offset 0
-    float metallicFactor;             // offset 16
-    float roughnessFactor;            // offset 20
-    float normalScale;                // offset 24
-    float occlusionStrength;          // offset 28
-    float4 emissiveFactor;            // offset 32, w = emissiveStrength
-    float alphaCutoff;                // offset 48
-    uint flags;                       // offset 52
-    float clearcoatFactor;            // offset 56
-    float clearcoatRoughnessFactor;   // offset 60
-    float transmissionFactor;         // offset 64
-    float ior;                        // offset 68
-    float3 padding;                   // offset 72
-};
-[[vk::binding(0, 1)]] ConstantBuffer<MaterialUBO> material;
+// Set 1: Bindless Texture Array
+[[vk::binding(0, 1)]] Sampler2D g_Textures[];
 
-// Material textures
-[[vk::binding(1, 1)]] Sampler2D baseColorMap;
-[[vk::binding(2, 1)]] Sampler2D metallicRoughnessMap;
-[[vk::binding(3, 1)]] Sampler2D normalMap;
-[[vk::binding(4, 1)]] Sampler2D occlusionMap;
-[[vk::binding(5, 1)]] Sampler2D emissiveMap;
-[[vk::binding(6, 1)]] Sampler2D clearcoatMap;
-[[vk::binding(7, 1)]] Sampler2D clearcoatRoughnessMap;
-[[vk::binding(8, 1)]] Sampler2D clearcoatNormalMap;
-[[vk::binding(9, 1)]] Sampler2D transmissionMap;
+// Set 2: Bindless Instance Data (SSBO Array)
+// Each instance contains transforms, texture indices, and material properties
+static const uint INVALID_TEXTURE_INDEX = 0xFFFFFFFF;
 
-// Set 2: Per-Object Data (SSBO)
-struct ObjectData {
-    float4x4 model;           // Per-object world transform
-    float4x4 normalMatrix;    // transpose(inverse(mat3(model))) for correct normals
-    uint materialIndex;       // For future bindless materials
-    uint3 _padding;
+struct InstanceData {
+    // Transform data
+    float4x4 model;
+    float4x4 normalMatrix;
+
+    // Bindless texture indices (UINT32_MAX = no texture)
+    uint baseColorIndex;
+    uint metallicRoughnessIndex;
+    uint normalIndex;
+    uint occlusionIndex;
+    uint emissiveIndex;
+    uint clearcoatIndex;
+    uint clearcoatRoughnessIndex;
+    uint clearcoatNormalIndex;
+    uint transmissionIndex;
+    uint _padding0[3]; // Align to 16 bytes for float4 baseColorFactor
+
+    // Material properties (inline)
+    float4 baseColorFactor;
+    float metallicFactor;
+    float roughnessFactor;
+    float normalScale;
+    float occlusionStrength;
+    float4 emissiveFactor;  // RGB + strength in w
+    float alphaCutoff;
+    uint flags;
+    float clearcoatFactor;
+    float clearcoatRoughnessFactor;
 };
-[[vk::binding(0, 2)]] StructuredBuffer<ObjectData> objectBuffer;
+[[vk::binding(0, 2)]] StructuredBuffer<InstanceData> g_Instances;
 
 struct VSOutput {
     float4 pos : SV_Position;
@@ -76,7 +76,16 @@ struct VSOutput {
     float3 worldNormal;
     float3 worldTangent;
     float tangentW;
+    nointerpolation uint instanceID; // Pass to fragment shader for bindless lookup
 };
+
+// Helper: Sample bindless texture or return default
+float4 sampleBindless(uint texIndex, float2 uv, float4 defaultValue) {
+    if (texIndex == INVALID_TEXTURE_INDEX) {
+        return defaultValue;
+    }
+    return g_Textures[NonUniformResourceIndex(texIndex)].Sample(uv);
+}
 
 // Constants
 static const float M_PI = 3.141592653589793;
@@ -141,7 +150,7 @@ float3x3 getTBN(VSOutput vertIn) {
 
 
         T = normalize(t - N * dot(N, t));
-        B = cross(B, T);
+        B = cross(N, T);
     }
     
     // In Slang/HLSL, float3x3(row0, row1, row2) creates a matrix with these as rows.
@@ -154,25 +163,25 @@ float3x3 getTBN(VSOutput vertIn) {
     return float3x3(T, B, N);
 }
 
-// Find the normal for this fragment, pulling either from a predefined normal map
-// or from the interpolated mesh normal and tangent attributes.
-// Reference: http://www.thetenthplanet.de/archives/1180
-float3 getNormal(VSOutput vertIn) {
-    float3 tangentNormal = normalMap.Sample(vertIn.texCoord).rgb * 2.0 - 1.0;
-    tangentNormal.xy *= material.normalScale;
+// Get normal from bindless normal map
+float3 getNormalBindless(VSOutput vertIn, InstanceData inst) {
+    float4 normalSample = sampleBindless(inst.normalIndex, vertIn.texCoord, float4(0.5, 0.5, 1.0, 1.0));
+    float3 tangentNormal = normalSample.rgb * 2.0 - 1.0;
+    tangentNormal.xy *= inst.normalScale;
     tangentNormal = normalize(tangentNormal);
     
     return normalize(mul(tangentNormal, getTBN(vertIn)));
 }
 
 // Get clearcoat normal (separate from base normal)
-float3 getClearcoatNormal(VSOutput vertIn, float3 geometricNormal) {
-    // Check if clearcoat normal texture is present (bit 10)
-    if ((material.flags & (1 << 10)) == 0) {
+float3 getClearcoatNormalBindless(VSOutput vertIn, InstanceData inst, float3 geometricNormal) {
+    // Check if clearcoat normal texture is present
+    if (inst.clearcoatNormalIndex == INVALID_TEXTURE_INDEX) {
         return geometricNormal;
     }
     
-    float3 tangentNormal = clearcoatNormalMap.Sample(vertIn.texCoord).rgb * 2.0 - 1.0;
+    float4 normalSample = sampleBindless(inst.clearcoatNormalIndex, vertIn.texCoord, float4(0.5, 0.5, 1.0, 1.0));
+    float3 tangentNormal = normalSample.rgb * 2.0 - 1.0;
     
     return normalize(mul(tangentNormal, getTBN(vertIn)));
 }
@@ -267,86 +276,75 @@ float3 evaluateClearcoatBRDF(float3 N, float3 V, float3 L, float clearcoatRoughn
 
 [shader("vertex")]
 VSOutput vertMain(VSInput input, uint instanceID : SV_InstanceID) {
-    // Get per-object data from SSBO
-    ObjectData obj = objectBuffer[instanceID];
+    // Get per-instance data from bindless SSBO
+    InstanceData inst = g_Instances[instanceID];
     
     VSOutput output;
-    float4 worldPos = mul(obj.model, float4(input.inPosition, 1.0));
+    float4 worldPos = mul(inst.model, float4(input.inPosition, 1.0));
     output.worldPos = worldPos.xyz;
     output.pos = mul(ubo.proj, mul(ubo.view, worldPos));
     output.texCoord = input.inTexCoord;
     
     // Transform normal and tangent using precomputed normalMatrix
-    // This correctly handles non-uniform scaling
-    float3x3 normalMat = (float3x3)obj.normalMatrix;
+    float3x3 normalMat = (float3x3)inst.normalMatrix;
     output.worldNormal = normalize(mul(normalMat, input.inNormal));
     output.worldTangent = normalize(mul(normalMat, input.inTangent.xyz));
     output.tangentW = input.inTangent.w;
+    
+    // Pass instance ID to fragment shader for material lookup
+    output.instanceID = instanceID;
 
     return output;
 }
 
-// ============================================================================
 // Fragment Shader
-// ============================================================================
-
 [shader("fragment")]
 float4 fragMain(VSOutput vertIn) : SV_Target
 {
     float2 uv = vertIn.texCoord;
     
-    // ========================================================================
-    // Sample textures and apply material factors
-    // ========================================================================
+    // Get instance data for this fragment
+    InstanceData inst = g_Instances[vertIn.instanceID];
     
-    float4 baseColor = sRGBToLinear(baseColorMap.Sample(uv)) * material.baseColorFactor;
+    // Sample textures using bindless array
+    float4 baseColorSample = sampleBindless(inst.baseColorIndex, uv, float4(1.0));
+    float4 baseColor = sRGBToLinear(baseColorSample) * inst.baseColorFactor;
     
     // Alpha handling
-    uint alphaMode = (material.flags >> 1) & 0x3;
+    uint alphaMode = (inst.flags >> 1) & 0x3;
     if (alphaMode == 1) { // MASK mode
-        if (baseColor.a < material.alphaCutoff) {
+        if (baseColor.a < inst.alphaCutoff) {
             discard;
         }
         baseColor.a = 1.0;
     }
     
     // glTF: metallic in B channel, roughness in G channel
-    float4 mrSample = metallicRoughnessMap.Sample(uv);
-    float perceptualRoughness = clamp(mrSample.g, MIN_ROUGHNESS, 1.0);
-    float metallic = clamp(mrSample.b, 0.0, 1.0);
+    float4 mrSample = sampleBindless(inst.metallicRoughnessIndex, uv, float4(1.0, 1.0, 1.0, 1.0));
+    float perceptualRoughness = clamp(mrSample.g * inst.roughnessFactor, MIN_ROUGHNESS, 1.0);
+    float metallic = clamp(mrSample.b * inst.metallicFactor, 0.0, 1.0);
     
-    // Roughness is authored as perceptual roughness; as is convention,
-    // convert to material roughness by squaring the perceptual roughness
+    // Roughness is authored as perceptual roughness; convert by squaring
     float alphaRoughness = perceptualRoughness * perceptualRoughness;
     
-    // ========================================================================
-    // Calculate reflectance
-    // ========================================================================
-    
-    // Calculate F0 based on IOR (default 1.5 gives 0.04)
-    float3 f0 = F0FromIOR(material.ior);
+    // Calculate reflectance - use default IOR of 1.5
+    float3 f0 = float3(0.04); // F0FromIOR(1.5)
     
     float3 diffuseColor = baseColor.rgb * (float3(1.0) - f0) * (1.0 - metallic);
     float3 specularColor = lerp(f0, baseColor.rgb, metallic);
     
     // Compute reflectance
     float reflectance = max(max(specularColor.r, specularColor.g), specularColor.b);
-    
-    // For typical incident reflectance range (between 4% to 100%) set the grazing reflectance to 100% for typical fresnel effect.
-    // For very low reflectance range on highly diffuse objects (below 4%), incrementally reduce grazing reflectance to 0%.
     float reflectance90 = clamp(reflectance * 25.0, 0.0, 1.0);
     float3 specularEnvironmentR0 = specularColor;
     float3 specularEnvironmentR90 = float3(reflectance90);
     
-    // ========================================================================
-    // Get vectors for lighting calculation
-    // ========================================================================
-    
-    // Check if normal map is present (bit 5)
-    float3 n = ((material.flags & (1 << 5)) != 0) ? getNormal(vertIn) : normalize(vertIn.worldNormal);
-    float3 v = normalize(ubo.camPos - vertIn.worldPos);    // Vector from surface point to camera
-    float3 l = normalize(ubo.lightDir);                    // Vector from surface point to light
-    float3 h = normalize(l + v);                           // Half vector between both l and v
+    // Get normal - check if normal map is present (bit 5 = HasNormalMap)
+    bool hasNormalMap = (inst.flags & (1 << 5)) != 0 && inst.normalIndex != INVALID_TEXTURE_INDEX;
+    float3 n = hasNormalMap ? getNormalBindless(vertIn, inst) : normalize(vertIn.worldNormal);
+    float3 v = normalize(ubo.camPos - vertIn.worldPos);
+    float3 l = normalize(ubo.lightDir);
+    float3 h = normalize(l + v);
     float3 reflection = normalize(reflect(-v, n));
 
     float NdotL = clamp(dot(n, l), 0.001, 1.0);
@@ -388,16 +386,15 @@ float4 fragMain(VSOutput vertIn) : SV_Target
     // Obtain final intensity as reflectance (BRDF) scaled by the energy of the light (cosine law)
     float3 color = NdotL * ubo.lightColor * (diffuseContrib + specContrib);
     
-    // ========================================================================
-    // Clearcoat layer (KHR_materials_clearcoat)
-    // ========================================================================
-    
-    float clearcoatFactor = material.clearcoatFactor;
+    // Clearcoat layer
+    float clearcoatFactor = inst.clearcoatFactor;
     if (clearcoatFactor > 0.0) {
-        float clearcoatStrength = clearcoatMap.Sample(uv).r * clearcoatFactor;
-        float clearcoatRoughness = clamp(clearcoatRoughnessMap.Sample(uv).g * material.clearcoatRoughnessFactor, MIN_ROUGHNESS, 1.0);
+        float4 ccSample = sampleBindless(inst.clearcoatIndex, uv, float4(1.0));
+        float clearcoatStrength = ccSample.r * clearcoatFactor;
+        float4 ccrSample = sampleBindless(inst.clearcoatRoughnessIndex, uv, float4(1.0));
+        float clearcoatRoughness = clamp(ccrSample.g * inst.clearcoatRoughnessFactor, MIN_ROUGHNESS, 1.0);
         
-        float3 clearcoatN = getClearcoatNormal(vertIn, normalize(vertIn.worldNormal));
+        float3 clearcoatN = getClearcoatNormalBindless(vertIn, inst, normalize(vertIn.worldNormal));
         float3 clearcoatBRDF = evaluateClearcoatBRDF(clearcoatN, v, l, clearcoatRoughness) * ubo.lightColor;
         
         // Fresnel for clearcoat energy conservation
@@ -408,14 +405,11 @@ float4 fragMain(VSOutput vertIn) : SV_Target
         color = color * (1.0 - clearcoatStrength * clearcoatFresnel) + clearcoatBRDF * clearcoatStrength;
     }
     
-    // ========================================================================
     // Apply ambient occlusion
-    // ========================================================================
-    
-    // Check if occlusion map is present (bit 6)
-    if ((material.flags & (1 << 6)) != 0) {
-        float ao = occlusionMap.Sample(uv).r;
-        color = lerp(color, color * ao, material.occlusionStrength);
+    bool hasOcclusion = (inst.flags & (1 << 6)) != 0 && inst.occlusionIndex != INVALID_TEXTURE_INDEX;
+    if (hasOcclusion) {
+        float ao = sampleBindless(inst.occlusionIndex, uv, float4(1.0)).r;
+        color = lerp(color, color * ao, inst.occlusionStrength);
     }
     
     // ========================================================================
@@ -444,48 +438,40 @@ float4 fragMain(VSOutput vertIn) : SV_Target
     }
     color += ambient;
     
-    // ========================================================================
     // Emissive
-    // ========================================================================
-    
-    // Check if emissive map is present (bit 7)
-    float emissiveStrength = material.emissiveFactor.w;
-    float3 emissive = material.emissiveFactor.rgb * emissiveStrength;
-    if ((material.flags & (1 << 7)) != 0) {
-        emissive *= sRGBToLinear(emissiveMap.Sample(uv)).rgb;
+    float emissiveStrength = inst.emissiveFactor.w;
+    float3 emissive = inst.emissiveFactor.rgb * emissiveStrength;
+    if (inst.emissiveIndex != INVALID_TEXTURE_INDEX) {
+        emissive *= sRGBToLinear(sampleBindless(inst.emissiveIndex, uv, float4(0.0))).rgb;
     }
     color += emissive;
     
-    // ========================================================================
     // Debug Visualization
-    // ========================================================================
-    
-    // Shader inputs debug visualization
     if (ubo.debugViewInputs > 0.0) {
         int index = int(ubo.debugViewInputs);
         switch (index) {
             case 1: // Base Color
                 color = baseColor.rgb;
                 break;
-            case 2: // Shading Normal (final normal used for lighting)
-                color = n * 0.5 + 0.5; // Remap from [-1,1] to [0,1]
+            case 2: // Shading Normal
+                color = n * 0.5 + 0.5;
                 break;
             case 3: // AO
-                color = ((material.flags & (1 << 6)) != 0) ? occlusionMap.Sample(uv).rrr : float3(1.0);
+                color = hasOcclusion ? sampleBindless(inst.occlusionIndex, uv, float4(1.0)).rrr : float3(1.0);
                 break;
             case 4: // Emissive
                 color = emissive;
                 break;
             case 5: // Metallic
-                color = metallicRoughnessMap.Sample(uv).bbb;
+                color = sampleBindless(inst.metallicRoughnessIndex, uv, float4(1.0)).bbb;
                 break;
             case 6: // Roughness
-                color = metallicRoughnessMap.Sample(uv).ggg;
+                color = sampleBindless(inst.metallicRoughnessIndex, uv, float4(1.0)).ggg;
                 break;
             case 7: // UV
                 color = float3(uv, 0.0);
                 break;
-            case 8: // Geometric Normal (interpolated vertex normal)
+            case 8: // Geometric Normal
                 color = normalize(vertIn.worldNormal);
                 break;
             case 9: // Tangent

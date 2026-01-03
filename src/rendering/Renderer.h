@@ -35,6 +35,9 @@ constexpr int MAX_FRAMES_IN_FLIGHT = 2;
 static constexpr uint32_t INITIAL_MAX_OBJECTS = 256;
 static constexpr uint32_t INITIAL_MAX_COMMANDS = 256;
 
+// Bindless texture array capacity
+static constexpr uint32_t MAX_BINDLESS_TEXTURES = 4096;
+
 /**
  * @brief Main renderer class.
  *
@@ -94,18 +97,18 @@ private:
 	void createGraphicsPipeline();
 	void createUniformBuffers();
 	void createGlobalSetLayout();
-	void createMaterialSetLayout();
+	void createBindlessTextureSetLayout();
+	void createBindlessDescriptorPool();
+	void allocateBindlessDescriptorSet();
 	void createDescriptorPool();
 	void createDescriptorSets();
 	void createGlobalDescriptorSets();
-	void createObjectDataDescriptorSets();
 	void createDepthResources();
-	void createObjectDataSetLayout();
-	void createObjectDataBuffer();
-	void updateObjectData(const Model& model);
 	void createIndirectBuffer();
 	void buildUnifiedBuffers(const Model& model);
 	void buildDrawBatches(const Model& model);
+	void buildInstanceData(const Model& model);
+	void updateInstanceDataBuffer();
 	void renderIndirect(const vk::raii::CommandBuffer& cmd);
 	[[nodiscard]] vk::Format findDepthFormat();
 	void createSwapChainImageViews();
@@ -116,12 +119,11 @@ private:
 		vk::raii::Semaphore imageAvailableSemaphore = nullptr;
 		vk::raii::Fence inFlightFence = nullptr;
 		std::unique_ptr<VulkanBuffer> uniformBuffer;
-		vk::raii::DescriptorSet descriptorSet = nullptr;
-		// Per-object data SSBO
-		std::unique_ptr<VulkanBuffer> objectDataBuffer;
-		vk::raii::DescriptorSet objectDataSet = nullptr;
+		vk::raii::DescriptorSet descriptorSet = nullptr; // Global UBO set
 		// Indirect draw buffer
 		std::unique_ptr<VulkanBuffer> indirectBuffer;
+		// Instance data SSBO for bindless rendering
+		std::unique_ptr<VulkanBuffer> instanceDataBuffer;
 	};
 
 	VulkanDevice& _device;
@@ -150,14 +152,21 @@ private:
 
 	// Graphics Pipeline
 	std::unique_ptr<GraphicsPipeline> _graphicsPipeline;
-	vk::raii::DescriptorSetLayout _globalSetLayout = nullptr;	  // Set 0: Global Data
-	vk::raii::DescriptorSetLayout _materialSetLayout = nullptr;	  // Set 1: Material Data
-	vk::raii::DescriptorSetLayout _objectDataSetLayout = nullptr; // Set 2: SSBO
 
-	// Descriptor Pool
-	vk::raii::DescriptorPool _descriptorPool = nullptr;
+	// Descriptor Set Layouts
+	vk::raii::DescriptorSetLayout _globalSetLayout = nullptr;				 // Set 0: Global Data
+	vk::raii::DescriptorSetLayout _bindlessTextureSetLayout = nullptr;		 // Set 1: Bindless Textures
+	vk::raii::DescriptorSetLayout _bindlessStorageBufferSetLayout = nullptr; // Set 2: Bindless SSBOs
 
-	// Pipeline Cache (disk-persistent for faster startup)
+	// Descriptor Pools
+	vk::raii::DescriptorPool _descriptorPool = nullptr;			// For global sets
+	vk::raii::DescriptorPool _bindlessDescriptorPool = nullptr; // For bindless (UPDATE_AFTER_BIND)
+
+	// Bindless descriptor sets (global, persistent)
+	vk::raii::DescriptorSet _bindlessTextureSet = nullptr;
+	vk::raii::DescriptorSet _bindlessStorageBufferSet = nullptr;
+
+	// Pipeline Cache (disk-persistent)
 	vk::raii::PipelineCache _pipelineCache = nullptr;
 	static constexpr const char* PIPELINE_CACHE_FILENAME = "pipeline_cache.bin";
 	void loadPipelineCache();
@@ -178,7 +187,8 @@ private:
 	// Indirect rendering state (rebuilt each frame)
 	std::vector<DrawBatch> _drawBatches;
 	std::vector<vk::DrawIndexedIndirectCommand> _indirectCommands;
-	std::vector<MeshRegion> _meshRegions; // Per-primitive offsets in unified buffers
+	std::vector<MeshRegion> _meshRegions;	 // Per-primitive offsets in unified buffers
+	std::vector<InstanceData> _instanceData; // CPU-side instance data for SSBO upload
 
 	// Unified geometry buffers (rebuilt when model changes)
 	std::unique_ptr<VulkanBuffer> _unifiedVertexBuffer;

@@ -39,30 +39,8 @@
   - Add Asset Browser with thumbnail preview
   - Add render statistics overlay (draw calls, triangles, GPU time)
 
-- [ ] **Proper Inverse Normal Matrix for Non-Uniform Scaling**
-  - Current: `float3x3 normalMatrix = (float3x3)ubo.model;` (PBRshader.slang:249)
-  - Problem: Incorrect normals when model matrix has non-uniform scaling
-  - Fix: Send `transpose(inverse(mat3(model)))` as separate uniform
-  - Or compute in vertex shader if model matrix varies per-object
 
 ## 🔧 Renderer Design Improvements
-
-- [ ] **Material Sorting / Batching**
-  - Sort primitives by material before rendering to reduce descriptor set switches
-  - Group same-material objects together for potential instancing
-  - Current: Each primitive causes a material descriptor switch
-
-- [ ] **Vertex/Index Buffer Batching**
-  - Merge vertex/index data into single large buffers per scene
-  - Use `firstIndex` and `vertexOffset` parameters instead of rebinding
-  - Current: Each primitive calls `bindVertexBuffers` and `bindIndexBuffer`
-
-- [ ] **Per-Object Model Matrix with Push Constants or SSBO**
-  - Current: Model matrix is in GlobalUBO, shared by all objects (Renderer.cpp:378)
-  - Problem: Cannot render multiple objects with different transforms
-  - Option A: Use Push Constants for small per-draw data (128 bytes typical)
-  - Option B: Use SSBO with object index for large object counts
-  - Required for proper multi-object scene rendering
 
 - [ ] **Multi-Pipeline Support for Different Materials**
   - Current: Single GraphicsPipeline for all objects
@@ -121,14 +99,7 @@
   - Foundation for deferred rendering, post-processing, shadows
 
 ## 🎨 Graphics Features (Future)
-
-- [x] **Image-Based Lighting (IBL)**
-  - Add environment cubemap support
-  - Pre-filtered environment map for specular
-  - Irradiance map for diffuse
-  - Integrates with existing PBR shader
-
-- [ ] **Shadow Mapping**
+w
   - Directional light shadow maps (cascaded for large scenes)
   - Point light shadow cubemaps
   - Percentage-closer filtering (PCF)
@@ -148,11 +119,6 @@
   - FXAA/TAA post-processing options
 
 ## 🟢 Low Priority / Future
-
-- [ ] **Bindless Descriptors (REQ-P-05)**
-  - Implement Descriptor Indexing extension
-  - Use texture arrays with material indices
-  - Reduce descriptor set switching overhead
 
 - [ ] **Dynamic Descriptor Allocator (REQ-M-03)**
   - Implement growable descriptor pool
@@ -318,8 +284,35 @@ After ECS migration, `Renderer` becomes a **low-level Vulkan wrapper** without s
   - Bind Set 0 once outside the loop, only bind Set 1 (Material) per primitive
   - Reduces redundant descriptor set binding overhead
 
-- [x] Integrate a simple logging system: use spdlog! (Completed 2025-12-27)
+- [x] Integrate a simple logging system: use spdlog! ✅ 2025-12-27
   - Added LogSystem class with spdlog integration
   - Multi-sink output: console (color), file, ringbuffer (for ImGui)
   - Source location tracking using std::source_location
   - Vulkan debug callback integration
+
+- [x] **Bindless Descriptors (REQ-P-05)** ✅ 2025-01-03
+  - Implement Descriptor Indexing extension
+  - Use texture arrays with material indices
+  - Reduce descriptor set switching overhead
+
+- [x] **Vertex/Index Buffer Batching** ✅ 2025-01-03
+  - Merge vertex/index data into single large buffers per scene
+  - Use `firstIndex` and `vertexOffset` parameters instead of rebinding
+  - Implemented via `Renderer::buildUnifiedBuffers`
+
+- [x] **Per-Object Model Matrix with Bindless SSBO** ✅ 2025-01-03
+  - Implemented `g_Instances` SSBO in Set 2
+  - Supports separate transform for every object instance
+
+- [x] **Material Sorting / Batching** ✅ 2025-01-03
+  - Superceded by Bindless implementation
+  - Unified draw calls reduce need for frequent descriptor switches
+
+- [x] **Proper Inverse Normal Matrix for Non-Uniform Scaling** ✅ 2025-01-03
+  - Fixed in PBR shader using normal matrix from SSBO instance data
+
+- [x] **Image-Based Lighting (IBL)** ✅ 2025-01-03
+  - Add environment cubemap support
+  - Pre-filtered environment map for specular
+  - Irradiance map for diffuse
+  - Integrates with existing PBR shader
