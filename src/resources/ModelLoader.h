@@ -13,6 +13,7 @@ import vulkan_hpp;
 namespace Fishy {
 
 class ResourceManager;
+class Scene;
 
 class ModelLoader {
 public:
@@ -20,6 +21,20 @@ public:
 	// Uses ResourceManager to load textures if provided.
 	[[nodiscard]] static std::shared_ptr<Model> loadModel(const std::string& filepath,
 														  ResourceManager* resourceManager = nullptr);
+
+	/**
+	 * @brief Load a glTF model directly into a Scene as entities.
+	 *
+	 * Each primitive in the model becomes an entity with MeshComponent,
+	 * MeshRendererComponent, and TransformComponent.
+	 *
+	 * @param filepath Path to the glTF file.
+	 * @param scene The scene to load entities into.
+	 * @param resourceManager ResourceManager for texture loading.
+	 * @return True if loading succeeded.
+	 */
+	static bool loadModelIntoScene(const std::string& filepath, Scene& scene,
+								   ResourceManager* resourceManager = nullptr);
 
 private:
 	// Forward declarations for internal use

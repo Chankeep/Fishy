@@ -21,6 +21,7 @@ CMakeFiles/
 cmake_install.cmake
 *.cmake
 !CMakeLists.txt
+CMakeUserPresets.json
 
 # ------------------
 # IDE 配置文件
@@ -53,3 +54,5 @@ Thumbs.db
 # ------------------
 *.rdc
 *.cap
+
+specification.md

@@ -1,6 +1,10 @@
 #include "Renderer.h"
 
-#include "Camera.h"
+#include "../ecs/components/MeshComponent.h"
+#include "../ecs/components/MeshRendererComponent.h"
+#include "../ecs/components/TransformComponent.h"
+#include "../ecs/systems/RenderSystem.h" // For RenderParams
+#include "../scene/Scene.h"
 #include "PipelineBuilder.h"
 #include "core/CommandPool.h"
 #include "core/LogSystem.h"
@@ -14,6 +18,7 @@
 #include <array>
 #include <chrono>
 #include <fstream>
+#include <glm/gtc/matrix_inverse.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <stdexcept>
 
@@ -36,19 +41,18 @@ Renderer::Renderer(VulkanDevice& device, Window& window, ResourceManager& resour
 	createDescriptorPool();			// For global sets
 	createBindlessDescriptorPool(); // For bindless sets (UPDATE_AFTER_BIND)
 
-	// Allocate bindless descriptor sets
-	allocateBindlessDescriptorSet();
-
-	// Initialize ResourceManager with bindless sets (enables auto-registration)
-	_resourceManager.initBindlessResources(*_bindlessTextureSet, *_bindlessStorageBufferSet);
-
 	loadPipelineCache();
 	createGraphicsPipeline();
 
 	createUniformBuffers();
 	createIndirectBuffer();
 
-	createDescriptorSets();
+	// Allocate all descriptor sets (global + bindless) and write initial data
+	allocateDescriptorSets();
+
+	// Initialize ResourceManager with bindless sets (enables auto-registration)
+	_resourceManager.initBindlessResources(*_bindlessTextureSet, *_bindlessStorageBufferSet);
+
 	createSyncObjects();
 
 	LogSystem::get().info("Renderer initialized successfully");
@@ -71,23 +75,23 @@ Renderer::~Renderer() {
 	}
 }
 
-void Renderer::render(const Model& model, std::function<void(VkCommandBuffer)> uiRenderCallback) {
+void Renderer::renderScene(Scene& scene, const RenderParams& params,
+						   std::function<void(VkCommandBuffer)> uiRenderCallback) {
 	if (!beginFrame()) {
-		return; // SwapChain was recreated, skip this frame
+		return;
 	}
 
 	const auto& cmd = _frames[_currentFrameIndex].commandBuffer;
 
-	// Update uniform buffer with current MVP matrices
+	// Store params for updateUniformBuffer
+	_currentRenderParams = &params;
 	updateUniformBuffer(_currentFrameIndex);
 
-	// Transition image to COLOR_ATTACHMENT_OPTIMAL
 	VulkanUtils::transitionImage(*cmd, _swapChain->getImages()[_currentImageIndex], vk::ImageLayout::eUndefined,
 								 vk::ImageLayout::eColorAttachmentOptimal, {},
 								 vk::AccessFlagBits2::eColorAttachmentWrite, vk::PipelineStageFlagBits2::eTopOfPipe,
 								 vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::ImageAspectFlagBits::eColor);
 
-	// Begin dynamic rendering
 	vk::ClearValue clearColor{.color = {.float32 = {{0.01f, 0.01f, 0.02f, 1.0f}}}};
 	vk::ClearValue clearDepth{.depthStencil = {1.0f, 0}};
 	vk::Extent2D extent = _swapChain->getExtent();
@@ -112,43 +116,29 @@ void Renderer::render(const Model& model, std::function<void(VkCommandBuffer)> u
 
 	cmd.beginRendering(renderingInfo);
 
-	// Bind pipeline
 	_graphicsPipeline->bind(cmd);
 
-	// Set viewport and scissor
 	cmd.setViewport(
 		0, vk::Viewport(0.0f, 0.0f, static_cast<float>(extent.width), static_cast<float>(extent.height), 0.0f, 1.0f));
 	cmd.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), extent));
 
-	// Bind global descriptor set (Set 0) once - it doesn't change per-primitive
 	cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *_graphicsPipeline->getLayout(), 0,
 						   *_frames[_currentFrameIndex].descriptorSet, nullptr);
-
-	// Bind bindless texture array (Set 1) - persistent, updated via UPDATE_AFTER_BIND
 	cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *_graphicsPipeline->getLayout(), 1, *_bindlessTextureSet,
 						   nullptr);
-
-	// Bind bindless SSBO array (Set 2) - persistent, updated via UPDATE_AFTER_BIND
 	cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *_graphicsPipeline->getLayout(), 2,
 						   *_bindlessStorageBufferSet, nullptr);
 
-	// Build instance data with texture indices from materials
-	buildInstanceData(model);
-
-	// Upload instance data to GPU SSBO
+	// Build data from scene entities
+	buildInstanceDataFromScene(scene);
 	updateInstanceDataBuffer();
+	buildDrawBatchesFromScene(scene);
 
-	// Build draw batches (sorts by material) and upload indirect commands
-	buildDrawBatches(model);
-
-	// Render using indirect draw calls
 	renderIndirect(cmd);
 
 	cmd.endRendering();
 
-	// UI Rendering Pass (if callback provided)
 	if (uiRenderCallback) {
-		// Start UI rendering pass (no depth, load previous color)
 		vk::RenderingAttachmentInfo uiColorAttachment{.imageView = *_swapChainImageViews[_currentImageIndex],
 													  .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
 													  .loadOp = vk::AttachmentLoadOp::eLoad,
@@ -160,14 +150,10 @@ void Renderer::render(const Model& model, std::function<void(VkCommandBuffer)> u
 										  .pColorAttachments = &uiColorAttachment};
 
 		cmd.beginRendering(uiRenderingInfo);
-
-		// Call the UI render callback with raw VkCommandBuffer
 		uiRenderCallback(static_cast<VkCommandBuffer>(*cmd));
-
 		cmd.endRendering();
 	}
 
-	// Transition image to PRESENT_SRC
 	VulkanUtils::transitionImage(*cmd, _swapChain->getImages()[_currentImageIndex],
 								 vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::ePresentSrcKHR,
 								 vk::AccessFlagBits2::eColorAttachmentWrite, {},
@@ -198,9 +184,9 @@ void Renderer::recreateSwapChain() {
 }
 
 void Renderer::createCommandBuffers() {
-	_commandPool = &_device.getTransferCommandPool();
+	auto commandPool = &_device.getTransferCommandPool();
 
-	vk::CommandBufferAllocateInfo allocInfo{.commandPool = *_commandPool->getCommandPool(),
+	vk::CommandBufferAllocateInfo allocInfo{.commandPool = *commandPool->getCommandPool(),
 											.level = vk::CommandBufferLevel::ePrimary,
 											.commandBufferCount = MAX_FRAMES_IN_FLIGHT};
 
@@ -214,7 +200,6 @@ void Renderer::freeCommandBuffers() {
 	for (auto& frame : _frames) {
 		frame.commandBuffer = nullptr;
 	}
-	_commandPool = nullptr;
 }
 
 void Renderer::createSyncObjects() {
@@ -336,7 +321,7 @@ void Renderer::createBindlessDescriptorPool() {
 	LogSystem::get().info("[Bindless] Descriptor pool created with UPDATE_AFTER_BIND flag");
 }
 
-void Renderer::allocateBindlessDescriptorSet() {
+void Renderer::allocateDescriptorSets() {
 	// ═══════════════════════════════════════════════════════════════════════════
 	// Allocate Bindless Texture Set (Set 1)
 	// ═══════════════════════════════════════════════════════════════════════════
@@ -370,6 +355,80 @@ void Renderer::allocateBindlessDescriptorSet() {
 	auto ssboSets = vk::raii::DescriptorSets(*_device, ssboAllocInfo);
 	_bindlessStorageBufferSet = std::move(ssboSets[0]);
 	LogSystem::get().info("[Bindless] Storage buffer descriptor set allocated");
+
+	// ═══════════════════════════════════════════════════════════════════════════
+	// Allocate Global Descriptor Sets (Set 0: UBO + IBL textures)
+	// ═══════════════════════════════════════════════════════════════════════════
+	std::vector<vk::DescriptorSetLayout> globalLayouts(MAX_FRAMES_IN_FLIGHT, *_globalSetLayout);
+
+	vk::DescriptorSetAllocateInfo globalAllocInfo{.descriptorPool = *_descriptorPool,
+												  .descriptorSetCount = static_cast<uint32_t>(globalLayouts.size()),
+												  .pSetLayouts = globalLayouts.data()};
+
+	auto globalSets = vk::raii::DescriptorSets(*_device, globalAllocInfo);
+
+	// Get default textures for placeholders
+	auto defaultTex = _resourceManager.getDefaultWhiteTexture();
+	auto defaultCubemap = _resourceManager.getDefaultCubemap();
+
+	for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+		_frames[i].descriptorSet = std::move(globalSets[i]);
+
+		// UBO descriptor
+		vk::DescriptorBufferInfo uboInfo{
+			.buffer = _frames[i].uniformBuffer->getBuffer(), .offset = 0, .range = sizeof(UniformBufferObject)};
+
+		// IBL placeholders (cubemaps)
+		vk::DescriptorImageInfo cubemapImageInfo{
+			.sampler = *defaultCubemap->getSampler(),
+			.imageView = *defaultCubemap->getImageView(),
+			.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+		};
+
+		// BRDF LUT placeholder (2D texture)
+		vk::DescriptorImageInfo brdfLutImageInfo{
+			.sampler = *defaultTex->getSampler(),
+			.imageView = *defaultTex->getImageView(),
+			.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+		};
+
+		std::array<vk::WriteDescriptorSet, 4> descriptorWrites{};
+
+		// Binding 0: Global UBO
+		descriptorWrites[0].dstSet = *_frames[i].descriptorSet;
+		descriptorWrites[0].dstBinding = 0;
+		descriptorWrites[0].dstArrayElement = 0;
+		descriptorWrites[0].descriptorType = vk::DescriptorType::eUniformBuffer;
+		descriptorWrites[0].descriptorCount = 1;
+		descriptorWrites[0].pBufferInfo = &uboInfo;
+
+		// Binding 1: IBL irradiance map
+		descriptorWrites[1].dstSet = *_frames[i].descriptorSet;
+		descriptorWrites[1].dstBinding = 1;
+		descriptorWrites[1].dstArrayElement = 0;
+		descriptorWrites[1].descriptorType = vk::DescriptorType::eCombinedImageSampler;
+		descriptorWrites[1].descriptorCount = 1;
+		descriptorWrites[1].pImageInfo = &cubemapImageInfo;
+
+		// Binding 2: IBL prefiltered map
+		descriptorWrites[2].dstSet = *_frames[i].descriptorSet;
+		descriptorWrites[2].dstBinding = 2;
+		descriptorWrites[2].dstArrayElement = 0;
+		descriptorWrites[2].descriptorType = vk::DescriptorType::eCombinedImageSampler;
+		descriptorWrites[2].descriptorCount = 1;
+		descriptorWrites[2].pImageInfo = &cubemapImageInfo;
+
+		// Binding 3: BRDF LUT
+		descriptorWrites[3].dstSet = *_frames[i].descriptorSet;
+		descriptorWrites[3].dstBinding = 3;
+		descriptorWrites[3].dstArrayElement = 0;
+		descriptorWrites[3].descriptorType = vk::DescriptorType::eCombinedImageSampler;
+		descriptorWrites[3].descriptorCount = 1;
+		descriptorWrites[3].pImageInfo = &brdfLutImageInfo;
+
+		_device->updateDescriptorSets(descriptorWrites, {});
+	}
+	LogSystem::get().info("All descriptor sets allocated and initialized");
 }
 
 // NOTE: Object data is now managed via bindless SSBO array (Set 2)
@@ -387,125 +446,6 @@ void Renderer::createIndirectBuffer() {
 		_frames[i].indirectBuffer->map();
 	}
 	LogSystem::get().trace("Created indirect draw buffers ({} bytes each)", bufferSize);
-}
-
-void Renderer::buildUnifiedBuffers(const Model& model) {
-	// Collect all vertex and index data into unified buffers
-	std::vector<Vertex> allVertices;
-	std::vector<uint32_t> allIndices;
-	_meshRegions.clear();
-	_meshRegions.reserve(model.getPrimitives().size());
-
-	for (const auto& prim : model.getPrimitives()) {
-		if (!prim.mesh) {
-			_meshRegions.push_back({0, 0, 0}); // Placeholder for skipped primitives
-			continue;
-		}
-
-		const auto& vertices = prim.mesh->getVertices();
-		const auto& indices = prim.mesh->getIndices();
-
-		MeshRegion region{
-			.firstIndex = static_cast<uint32_t>(allIndices.size()),
-			.indexCount = static_cast<uint32_t>(indices.size()),
-			.vertexOffset = static_cast<int32_t>(allVertices.size()),
-		};
-		_meshRegions.push_back(region);
-
-		// Append vertices and indices
-		allVertices.insert(allVertices.end(), vertices.begin(), vertices.end());
-		allIndices.insert(allIndices.end(), indices.begin(), indices.end());
-	}
-
-	if (allVertices.empty() || allIndices.empty()) {
-		return;
-	}
-
-	// Create unified vertex buffer
-	vk::DeviceSize vertexBufferSize = allVertices.size() * sizeof(Vertex);
-	_unifiedVertexBuffer = std::make_unique<VulkanBuffer>(
-		_device, vertexBufferSize, vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst,
-		vk::MemoryPropertyFlagBits::eDeviceLocal);
-
-	// Create unified index buffer
-	vk::DeviceSize indexBufferSize = allIndices.size() * sizeof(uint32_t);
-	_unifiedIndexBuffer = std::make_unique<VulkanBuffer>(
-		_device, indexBufferSize, vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst,
-		vk::MemoryPropertyFlagBits::eDeviceLocal);
-
-	// Upload via staging buffer
-	auto stagingVertex =
-		VulkanBuffer(_device, vertexBufferSize, vk::BufferUsageFlagBits::eTransferSrc,
-					 vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
-	stagingVertex.map();
-	stagingVertex.upload(allVertices.data(), vertexBufferSize);
-
-	auto stagingIndex =
-		VulkanBuffer(_device, indexBufferSize, vk::BufferUsageFlagBits::eTransferSrc,
-					 vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
-	stagingIndex.map();
-	stagingIndex.upload(allIndices.data(), indexBufferSize);
-
-	// Copy using one-time command buffer
-	VulkanUtils::executeImmediate(_device, [&](auto& cmd) {
-		cmd.copyBuffer(stagingVertex.getBuffer(), _unifiedVertexBuffer->getBuffer(),
-					   vk::BufferCopy{.size = vertexBufferSize});
-		cmd.copyBuffer(stagingIndex.getBuffer(), _unifiedIndexBuffer->getBuffer(),
-					   vk::BufferCopy{.size = indexBufferSize});
-	});
-
-	_unifiedBuffersDirty = false;
-	LogSystem::get().info("Built unified buffers: {} vertices, {} indices", allVertices.size(), allIndices.size());
-}
-
-void Renderer::buildDrawBatches(const Model& model) {
-	// Build unified buffers on first call or when model changes
-	if (_unifiedBuffersDirty) {
-		buildUnifiedBuffers(model);
-	}
-
-	// Clear previous frame's data
-	_drawBatches.clear();
-	_indirectCommands.clear();
-
-	const auto& primitives = model.getPrimitives();
-	if (primitives.empty() || _meshRegions.empty()) {
-		return;
-	}
-
-	// With bindless rendering, we don't need to sort by material
-	// All textures are accessible via indices in the shader
-	// Create a single batch for all primitives
-	_drawBatches.push_back({
-		.material = nullptr, // Not used in bindless mode
-		.firstCommand = 0,
-		.commandCount = 0,
-	});
-
-	for (uint32_t i = 0; i < primitives.size(); i++) {
-		const auto& prim = primitives[i];
-		if (!prim.mesh || _meshRegions[i].indexCount == 0)
-			continue;
-
-		const auto& region = _meshRegions[i];
-
-		// Add indirect command with proper offsets into unified buffers
-		vk::DrawIndexedIndirectCommand cmd{
-			.indexCount = region.indexCount,
-			.instanceCount = 1,
-			.firstIndex = region.firstIndex,
-			.vertexOffset = region.vertexOffset,
-			.firstInstance = i, // Used for SSBO instance lookup
-		};
-		_indirectCommands.push_back(cmd);
-		_drawBatches.back().commandCount++;
-	}
-
-	// Upload indirect commands to GPU
-	if (!_indirectCommands.empty()) {
-		_frames[_currentFrameIndex].indirectBuffer->upload(
-			_indirectCommands.data(), _indirectCommands.size() * sizeof(vk::DrawIndexedIndirectCommand));
-	}
 }
 
 void Renderer::renderIndirect(const vk::raii::CommandBuffer& cmd) {
@@ -618,96 +558,26 @@ void Renderer::savePipelineCache() {
 	}
 }
 
-void Renderer::createDescriptorSets() {
-	createGlobalDescriptorSets();
-	// NOTE: Object data sets are now handled via bindless SSBO array (Set 2)
-}
-
-void Renderer::createGlobalDescriptorSets() {
-	// Allocate global descriptor sets (Set 0: UBO + IBL textures)
-	std::vector<vk::DescriptorSetLayout> globalLayouts(MAX_FRAMES_IN_FLIGHT, *_globalSetLayout);
-
-	vk::DescriptorSetAllocateInfo globalAllocInfo{.descriptorPool = *_descriptorPool,
-												  .descriptorSetCount = static_cast<uint32_t>(globalLayouts.size()),
-												  .pSetLayouts = globalLayouts.data()};
-
-	auto globalSets = vk::raii::DescriptorSets(*_device, globalAllocInfo);
-
-	// Get default textures for placeholders
-	auto defaultTex = _resourceManager.getDefaultWhiteTexture();
-	auto defaultCubemap = _resourceManager.getDefaultCubemap();
-
-	for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-		_frames[i].descriptorSet = std::move(globalSets[i]);
-
-		// UBO descriptor
-		vk::DescriptorBufferInfo uboInfo{
-			.buffer = _frames[i].uniformBuffer->getBuffer(), .offset = 0, .range = sizeof(UniformBufferObject)};
-
-		// IBL placeholders (cubemaps)
-		vk::DescriptorImageInfo cubemapImageInfo{
-			.sampler = *defaultCubemap->getSampler(),
-			.imageView = *defaultCubemap->getImageView(),
-			.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
-		};
-
-		// BRDF LUT placeholder (2D texture)
-		vk::DescriptorImageInfo brdfLutImageInfo{
-			.sampler = *defaultTex->getSampler(),
-			.imageView = *defaultTex->getImageView(),
-			.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
-		};
-
-		std::array<vk::WriteDescriptorSet, 4> descriptorWrites{};
-
-		// Binding 0: Global UBO
-		descriptorWrites[0].dstSet = *_frames[i].descriptorSet;
-		descriptorWrites[0].dstBinding = 0;
-		descriptorWrites[0].dstArrayElement = 0;
-		descriptorWrites[0].descriptorType = vk::DescriptorType::eUniformBuffer;
-		descriptorWrites[0].descriptorCount = 1;
-		descriptorWrites[0].pBufferInfo = &uboInfo;
-
-		// Binding 1: IBL irradiance map
-		descriptorWrites[1].dstSet = *_frames[i].descriptorSet;
-		descriptorWrites[1].dstBinding = 1;
-		descriptorWrites[1].dstArrayElement = 0;
-		descriptorWrites[1].descriptorType = vk::DescriptorType::eCombinedImageSampler;
-		descriptorWrites[1].descriptorCount = 1;
-		descriptorWrites[1].pImageInfo = &cubemapImageInfo;
-
-		// Binding 2: IBL prefiltered map
-		descriptorWrites[2].dstSet = *_frames[i].descriptorSet;
-		descriptorWrites[2].dstBinding = 2;
-		descriptorWrites[2].dstArrayElement = 0;
-		descriptorWrites[2].descriptorType = vk::DescriptorType::eCombinedImageSampler;
-		descriptorWrites[2].descriptorCount = 1;
-		descriptorWrites[2].pImageInfo = &cubemapImageInfo;
-
-		// Binding 3: BRDF LUT
-		descriptorWrites[3].dstSet = *_frames[i].descriptorSet;
-		descriptorWrites[3].dstBinding = 3;
-		descriptorWrites[3].dstArrayElement = 0;
-		descriptorWrites[3].descriptorType = vk::DescriptorType::eCombinedImageSampler;
-		descriptorWrites[3].descriptorCount = 1;
-		descriptorWrites[3].pImageInfo = &brdfLutImageInfo;
-
-		_device->updateDescriptorSets(descriptorWrites, {});
-	}
-}
-
 void Renderer::updateUniformBuffer(uint32_t frameIndex) {
 	auto extent = _swapChain->getExtent();
 	UniformBufferObject ubo{};
 
-	// Get camera matrices from Camera class
-	ubo.view = _camera.getViewMatrix();
-	ubo.proj = _camera.getProjectionMatrix(static_cast<float>(extent.width) / static_cast<float>(extent.height));
-	ubo.camPos = _camera.getPosition();
-
-	// Lighting
-	ubo.lightDir = glm::normalize(glm::vec3(1.0f, 1.0f, 1.0f));
-	ubo.lightColor = glm::vec3(1.0f, 1.0f, 1.0f) * 5.0f;
+	// Use RenderParams from ECS systems
+	if (_currentRenderParams) {
+		ubo.view = _currentRenderParams->viewMatrix;
+		ubo.proj = _currentRenderParams->projectionMatrix;
+		ubo.camPos = _currentRenderParams->cameraPosition;
+		ubo.lightDir = glm::normalize(_currentRenderParams->lightDirection);
+		ubo.lightColor = _currentRenderParams->lightColor;
+	} else {
+		// Fallback defaults if no RenderParams (shouldn't happen in normal use)
+		ubo.view = glm::mat4(1.0f);
+		ubo.proj = glm::perspective(glm::radians(45.0f),
+									static_cast<float>(extent.width) / static_cast<float>(extent.height), 0.1f, 100.0f);
+		ubo.camPos = glm::vec3(0.0f, 0.0f, 3.0f);
+		ubo.lightDir = glm::normalize(glm::vec3(1.0f, 1.0f, 1.0f));
+		ubo.lightColor = glm::vec3(5.0f, 5.0f, 5.0f);
+	}
 
 	// Debug settings
 	ubo.debugViewInputs = _debugViewInputs;
@@ -981,76 +851,6 @@ void Renderer::writeIBLDescriptors() {
 	LogSystem::get().trace("IBL descriptors written to global descriptor sets");
 }
 
-void Renderer::buildInstanceData(const Model& model) {
-	_instanceData.clear();
-
-	// Iterate all primitives and build instance data with texture indices
-	for (const auto& primitive : model.getPrimitives()) {
-		// glTF uses Y-up, rotate -90 degrees around X to convert to Z-up
-		static const glm::mat4 gltfCorrection =
-			glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
-		InstanceData inst = InstanceData::fromModelMatrix(gltfCorrection);
-
-		// Fill texture indices from material
-		if (primitive.material) {
-			const Material* mat = primitive.material.get();
-
-			// Get texture indices from ResourceManager (textures auto-registered on load)
-			auto getTexIdx = [this](const std::shared_ptr<Texture>& tex) -> uint32_t {
-				return _resourceManager.getTextureIndex(tex);
-			};
-
-			inst.baseColorIndex = getTexIdx(mat->baseColorMap);
-			inst.metallicRoughnessIndex = getTexIdx(mat->metallicRoughnessMap);
-			inst.normalIndex = getTexIdx(mat->normalMap);
-			inst.occlusionIndex = getTexIdx(mat->occlusionMap);
-			inst.emissiveIndex = getTexIdx(mat->emissiveMap);
-			inst.clearcoatIndex = getTexIdx(mat->clearcoatMap);
-			inst.clearcoatRoughnessIndex = getTexIdx(mat->clearcoatRoughnessMap);
-			inst.clearcoatNormalIndex = getTexIdx(mat->clearcoatNormalMap);
-			inst.transmissionIndex = getTexIdx(mat->transmissionMap);
-
-			// Fill material properties
-			inst.baseColorFactor = mat->params.baseColorFactor;
-			inst.metallicFactor = mat->params.metallicFactor;
-			inst.roughnessFactor = mat->params.roughnessFactor;
-			inst.normalScale = mat->params.normalScale;
-			inst.occlusionStrength = mat->params.occlusionStrength;
-			inst.emissiveFactor = glm::vec4(mat->params.emissiveFactor, mat->params.emissiveStrength);
-			inst.alphaCutoff = mat->params.alphaCutoff;
-			inst.clearcoatFactor = mat->params.clearcoatFactor;
-			inst.clearcoatRoughnessFactor = mat->params.clearcoatRoughnessFactor;
-
-			// Build flags
-			uint32_t flags = 0;
-			if (mat->params.doubleSided)
-				flags |= 1;
-			flags |= static_cast<uint32_t>(mat->params.alphaMode) << 1;
-			if (mat->baseColorMap)
-				flags |= (1 << 3);
-			if (mat->metallicRoughnessMap)
-				flags |= (1 << 4);
-			if (mat->normalMap)
-				flags |= (1 << 5);
-			if (mat->occlusionMap)
-				flags |= (1 << 6);
-			if (mat->emissiveMap)
-				flags |= (1 << 7);
-			if (mat->clearcoatMap)
-				flags |= (1 << 8);
-			if (mat->clearcoatRoughnessMap)
-				flags |= (1 << 9);
-			if (mat->clearcoatNormalMap)
-				flags |= (1 << 10);
-			if (mat->transmissionMap)
-				flags |= (1 << 11);
-			inst.flags = flags;
-		}
-
-		_instanceData.push_back(inst);
-	}
-}
-
 void Renderer::updateInstanceDataBuffer() {
 	if (_instanceData.empty()) {
 		return;
@@ -1087,6 +887,181 @@ void Renderer::updateInstanceDataBuffer() {
 
 	// Upload data
 	frame.instanceDataBuffer->upload(_instanceData.data(), requiredSize);
+}
+
+void Renderer::buildUnifiedBuffersFromScene(Scene& scene) {
+	std::vector<Vertex> allVertices;
+	std::vector<uint32_t> allIndices;
+	_meshRegions.clear();
+
+	auto view = scene.view<MeshComponent, MeshRendererComponent, TransformComponent>();
+	for (auto entity : view) {
+		const auto& mesh = view.get<MeshComponent>(entity);
+		const auto& meshRenderer = view.get<MeshRendererComponent>(entity);
+
+		if (!mesh.mesh || !meshRenderer.visible) {
+			_meshRegions.push_back({0, 0, 0});
+			continue;
+		}
+
+		const auto& vertices = mesh.mesh->getVertices();
+		const auto& indices = mesh.mesh->getIndices();
+
+		MeshRegion region{
+			.firstIndex = static_cast<uint32_t>(allIndices.size()),
+			.indexCount = static_cast<uint32_t>(indices.size()),
+			.vertexOffset = static_cast<int32_t>(allVertices.size()),
+		};
+		_meshRegions.push_back(region);
+
+		allVertices.insert(allVertices.end(), vertices.begin(), vertices.end());
+		allIndices.insert(allIndices.end(), indices.begin(), indices.end());
+	}
+
+	if (allVertices.empty() || allIndices.empty()) {
+		return;
+	}
+
+	vk::DeviceSize vertexBufferSize = allVertices.size() * sizeof(Vertex);
+	_unifiedVertexBuffer = std::make_unique<VulkanBuffer>(
+		_device, vertexBufferSize, vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst,
+		vk::MemoryPropertyFlagBits::eDeviceLocal);
+
+	vk::DeviceSize indexBufferSize = allIndices.size() * sizeof(uint32_t);
+	_unifiedIndexBuffer = std::make_unique<VulkanBuffer>(
+		_device, indexBufferSize, vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst,
+		vk::MemoryPropertyFlagBits::eDeviceLocal);
+
+	auto stagingVertex =
+		VulkanBuffer(_device, vertexBufferSize, vk::BufferUsageFlagBits::eTransferSrc,
+					 vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+	stagingVertex.map();
+	stagingVertex.upload(allVertices.data(), vertexBufferSize);
+
+	auto stagingIndex =
+		VulkanBuffer(_device, indexBufferSize, vk::BufferUsageFlagBits::eTransferSrc,
+					 vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+	stagingIndex.map();
+	stagingIndex.upload(allIndices.data(), indexBufferSize);
+
+	VulkanUtils::executeImmediate(_device, [&](auto& cmd) {
+		cmd.copyBuffer(stagingVertex.getBuffer(), _unifiedVertexBuffer->getBuffer(),
+					   vk::BufferCopy{.size = vertexBufferSize});
+		cmd.copyBuffer(stagingIndex.getBuffer(), _unifiedIndexBuffer->getBuffer(),
+					   vk::BufferCopy{.size = indexBufferSize});
+	});
+
+	_unifiedBuffersDirty = false;
+	LogSystem::get().info("Built unified buffers from scene: {} vertices, {} indices", allVertices.size(),
+						  allIndices.size());
+}
+
+void Renderer::buildInstanceDataFromScene(Scene& scene) {
+	_instanceData.clear();
+
+	auto view = scene.view<MeshComponent, MeshRendererComponent, TransformComponent>();
+	for (auto entity : view) {
+		const auto& mesh = view.get<MeshComponent>(entity);
+		const auto& meshRenderer = view.get<MeshRendererComponent>(entity);
+		const auto& transform = view.get<TransformComponent>(entity);
+
+		if (!mesh.mesh || !meshRenderer.visible) {
+			continue;
+		}
+
+		// Build instance data from transform
+		InstanceData inst = InstanceData::fromModelMatrix(transform.worldMatrix);
+
+		// Fill material properties
+		const auto* mat = meshRenderer.material.get();
+		if (mat) {
+			inst.baseColorFactor = mat->params.baseColorFactor;
+			inst.metallicFactor = mat->params.metallicFactor;
+			inst.roughnessFactor = mat->params.roughnessFactor;
+			inst.normalScale = mat->params.normalScale;
+			inst.occlusionStrength = mat->params.occlusionStrength;
+			inst.emissiveFactor = glm::vec4(mat->params.emissiveFactor, mat->params.emissiveStrength);
+			inst.alphaCutoff = mat->params.alphaCutoff;
+
+			// Get texture indices from ResourceManager
+			inst.baseColorIndex =
+				mat->baseColorMap ? _resourceManager.getTextureIndex(mat->baseColorMap) : INVALID_TEXTURE_INDEX;
+			inst.metallicRoughnessIndex = mat->metallicRoughnessMap
+											  ? _resourceManager.getTextureIndex(mat->metallicRoughnessMap)
+											  : INVALID_TEXTURE_INDEX;
+			inst.normalIndex =
+				mat->normalMap ? _resourceManager.getTextureIndex(mat->normalMap) : INVALID_TEXTURE_INDEX;
+			inst.occlusionIndex =
+				mat->occlusionMap ? _resourceManager.getTextureIndex(mat->occlusionMap) : INVALID_TEXTURE_INDEX;
+			inst.emissiveIndex =
+				mat->emissiveMap ? _resourceManager.getTextureIndex(mat->emissiveMap) : INVALID_TEXTURE_INDEX;
+
+			// Build texture flags
+			uint32_t flags = 0;
+			if (mat->baseColorMap)
+				flags |= (1 << 0);
+			if (mat->metallicRoughnessMap)
+				flags |= (1 << 1);
+			if (mat->normalMap)
+				flags |= (1 << 2);
+			if (mat->occlusionMap)
+				flags |= (1 << 3);
+			if (mat->emissiveMap)
+				flags |= (1 << 4);
+			inst.flags = flags;
+		}
+
+		_instanceData.push_back(inst);
+	}
+}
+
+void Renderer::buildDrawBatchesFromScene(Scene& scene) {
+	if (_unifiedBuffersDirty) {
+		buildUnifiedBuffersFromScene(scene);
+	}
+
+	_drawBatches.clear();
+	_indirectCommands.clear();
+
+	if (_meshRegions.empty()) {
+		return;
+	}
+
+	_drawBatches.push_back({
+		.material = nullptr,
+		.firstCommand = 0,
+		.commandCount = 0,
+	});
+
+	uint32_t i = 0;
+	auto view = scene.view<MeshComponent, MeshRendererComponent, TransformComponent>();
+	for (auto entity : view) {
+		const auto& mesh = view.get<MeshComponent>(entity);
+		const auto& meshRenderer = view.get<MeshRendererComponent>(entity);
+
+		if (!mesh.mesh || !meshRenderer.visible || _meshRegions[i].indexCount == 0) {
+			++i;
+			continue;
+		}
+
+		const auto& region = _meshRegions[i];
+
+		vk::DrawIndexedIndirectCommand cmd{
+			.indexCount = region.indexCount,
+			.instanceCount = 1,
+			.firstIndex = region.firstIndex,
+			.vertexOffset = region.vertexOffset,
+			.firstInstance = static_cast<uint32_t>(_indirectCommands.size()),
+		};
+		_indirectCommands.push_back(cmd);
+		_drawBatches.back().commandCount++;
+		++i;
+	}
+
+	if (!_indirectCommands.empty()) {
+		_frames[_currentFrameIndex].indirectBuffer->upload(
+			_indirectCommands.data(), _indirectCommands.size() * sizeof(vk::DrawIndexedIndirectCommand));
+	}
 }
 
 } // namespace Fishy

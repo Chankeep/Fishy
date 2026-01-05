@@ -1,5 +1,11 @@
 #include "Application.h"
 
+#include "../ecs/Entity.h"
+#include "../ecs/components/CameraComponent.h"
+#include "../ecs/components/LightComponent.h"
+#include "../ecs/components/MeshComponent.h"
+#include "../ecs/components/MeshRendererComponent.h"
+#include "../ecs/components/TransformComponent.h"
 #include "../ui/DebugPanel.h"
 #include "LogSystem.h"
 #include <imgui.h>
@@ -27,15 +33,38 @@ Application::Application()
 	_imguiLayer = std::make_unique<ImGuiLayer>(_context, _device, _window, _renderer.getSwapChainFormat());
 	LogSystem::get().info("ImGui Layer initialized");
 
-	// Try to load a default model
+	// Initialize Scene
+	_scene = std::make_unique<Scene>();
+	LogSystem::get().info("ECS Scene initialized");
+
+	// Try to load a default model into the scene
 	auto modelPath = "assets/models/DamagedHelmet.glb";
 	LogSystem::get().info("Loading default model: {}", modelPath);
-	_model = ModelLoader::loadModel(modelPath, &_resourceManager);
-
-	if (!_model) {
+	if (!ModelLoader::loadModelIntoScene(modelPath, *_scene, &_resourceManager)) {
 		LogSystem::get().warn("Failed to load model, creating default geometry");
-		_model = createDefaultModel();
+		createDefaultScene();
 	}
+
+	// Create camera entity
+	Entity cameraEntity = _scene->createEntity("MainCamera");
+	auto& cam = cameraEntity.addComponent<CameraComponent>();
+	cam.primary = true;
+	cam.fov = 45.0f;
+	cam.nearClip = 0.1f;
+	cam.farClip = 100.0f;
+	LogSystem::get().info("Camera entity created");
+
+	// Create a directional light entity
+	Entity lightEntity = _scene->createEntity("DirectionalLight");
+	auto& light = lightEntity.addComponent<LightComponent>();
+	light.type = LightType::Directional;
+	light.color = glm::vec3(1.0f, 1.0f, 1.0f); // Warm white
+	light.intensity = 5.0f;
+
+	// Set light direction via transform rotation
+	auto& lightTransform = lightEntity.getComponent<TransformComponent>();
+	lightTransform.setRotationEuler(glm::vec3(glm::radians(-45.0f), glm::radians(45.0f), 0.0f));
+	LogSystem::get().info("Light entity created");
 
 	// Load IBL environment
 	try {
@@ -50,9 +79,10 @@ Application::Application()
 
 Application::~Application() {
 	LogSystem::get().info("Shutting down Application...");
-	// Wait for GPU before destroying ImGui resources
+	// Wait for GPU before destroying resources
 	_device->waitIdle();
 	_imguiLayer.reset();
+	_scene.reset();
 	LogSystem::get().info("Application shutdown complete");
 }
 
@@ -72,17 +102,36 @@ void Application::run() {
 
 		_window.update();
 
-		// Update camera from mouse input (only if ImGui is not capturing mouse)
+		// Process camera input (only if ImGui is not capturing mouse)
 		ImGuiIO& io = ImGui::GetIO();
 		if (!io.WantCaptureMouse) {
 			const auto& mouseState = _window.getMouseState();
-			_renderer.getCamera().update(static_cast<float>(mouseState.deltaX), static_cast<float>(mouseState.deltaY),
-										 static_cast<float>(mouseState.scrollDelta), mouseState.rightButton,
-										 mouseState.middleButton, mouseState.leftButton, deltaTime);
+			_cameraSystem.processInput(
+				*_scene, static_cast<float>(mouseState.deltaX), static_cast<float>(mouseState.deltaY),
+				static_cast<float>(mouseState.scrollDelta), mouseState.rightButton, mouseState.middleButton);
 		}
 
 		// Reset mouse delta for next frame
 		_window.resetMouseDelta();
+
+		// Update ECS Systems
+		_transformSystem.update(*_scene);
+		_cameraSystem.update(*_scene, _renderer.getAspectRatio());
+		_lightingSystem.update(*_scene);
+
+		// Build RenderParams from system data
+		RenderParams renderParams;
+		renderParams.viewMatrix = _cameraSystem.getPrimaryViewMatrix();
+		renderParams.projectionMatrix = _cameraSystem.getPrimaryProjectionMatrix();
+		renderParams.cameraPosition = _cameraSystem.getPrimaryCameraPosition();
+
+		// Use first light from LightingSystem if available
+		const auto& lights = _lightingSystem.getLightData();
+		if (!lights.empty()) {
+			const auto& light = lights[0];
+			renderParams.lightDirection = glm::vec3(light.directionAndRange);
+			renderParams.lightColor = glm::vec3(light.colorAndIntensity) * light.colorAndIntensity.w;
+		}
 
 		// Start ImGui frame
 		_imguiLayer->newFrame();
@@ -95,17 +144,17 @@ void Application::run() {
 		_renderer.setDebugSettings(static_cast<float>(settings.debugViewInputs),
 								   static_cast<float>(settings.debugViewEquation));
 
-		// Render scene with UI callback
-		_renderer.render(*_model, [this](VkCommandBuffer cmd) { _imguiLayer->render(cmd); });
+		// Render scene via RenderSystem with params
+		_renderSystem.render(*_scene, _renderer, renderParams,
+							 [this](VkCommandBuffer cmd) { _imguiLayer->render(cmd); });
 	}
 
 	LogSystem::get().info("Main render loop ended");
 	_device->waitIdle();
 }
 
-std::shared_ptr<Model> Application::createDefaultModel() { // Create a simple default model with two quads
-	auto model = std::make_shared<Model>();
-
+void Application::createDefaultScene() {
+	// Create a simple default scene with two quads
 	std::vector<Vertex> vertices = {
 		// Front quad
 		{{-0.5f, -0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
@@ -125,9 +174,10 @@ std::shared_ptr<Model> Application::createDefaultModel() { // Create a simple de
 	auto mesh = std::make_shared<Mesh>(vertices, indices);
 	auto material = std::make_shared<Material>();
 
-	model->addPrimitive({mesh, material});
-
-	return model;
+	// Create entity with mesh and renderer components
+	Entity entity = _scene->createEntity("DefaultQuad");
+	entity.addComponent<MeshComponent>(mesh);
+	entity.addComponent<MeshRendererComponent>(material);
 }
 
 } // namespace Fishy

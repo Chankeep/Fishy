@@ -1,6 +1,11 @@
 #include "ModelLoader.h"
 #include "../core/LogSystem.h"
+#include "../ecs/Entity.h"
+#include "../ecs/components/MeshComponent.h"
+#include "../ecs/components/MeshRendererComponent.h"
+#include "../scene/Scene.h"
 #include "ResourceManager.h"
+
 
 #define TINYGLTF_IMPLEMENTATION
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -469,6 +474,35 @@ std::shared_ptr<Model> ModelLoader::loadModel(const std::string& filepath, Resou
 	LogSystem::get().info("Loaded model: {} with {} primitives", filepath, model->getPrimitives().size());
 
 	return model;
+}
+
+bool ModelLoader::loadModelIntoScene(const std::string& filepath, Scene& scene, ResourceManager* resourceManager) {
+	// Load model using existing function
+	auto model = loadModel(filepath, resourceManager);
+	if (!model) {
+		return false;
+	}
+
+	// Convert each primitive to an entity
+	for (const auto& primitive : model->getPrimitives()) {
+		// Create entity (automatically gets TagComponent and TransformComponent)
+		Entity entity = scene.createEntity("MeshEntity");
+
+		// Add mesh component
+		if (primitive.mesh) {
+			entity.addComponent<MeshComponent>(primitive.mesh);
+		}
+
+		// Add mesh renderer component
+		if (primitive.material) {
+			entity.addComponent<MeshRendererComponent>(primitive.material);
+		} else {
+			entity.addComponent<MeshRendererComponent>();
+		}
+	}
+
+	LogSystem::get().info("Loaded {} entities into scene from: {}", model->getPrimitives().size(), filepath);
+	return true;
 }
 
 } // namespace Fishy

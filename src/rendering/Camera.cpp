@@ -2,7 +2,6 @@
 #include <algorithm>
 #include <glm/gtc/matrix_transform.hpp>
 
-
 namespace Fishy {
 
 void Camera::update(float mouseDeltaX, float mouseDeltaY, float scrollDelta, bool mouseButtonRight,

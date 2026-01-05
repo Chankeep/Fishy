@@ -1,14 +1,19 @@
 #pragma once
 
+#include "../ecs/systems/CameraSystem.h"
+#include "../ecs/systems/LightingSystem.h"
+#include "../ecs/systems/RenderSystem.h"
+#include "../ecs/systems/TransformSystem.h"
 #include "../rendering/Renderer.h"
 #include "../resources/IBLEnvironment.h"
-#include "../resources/Model.h"
 #include "../resources/ModelLoader.h"
 #include "../resources/ResourceManager.h"
+#include "../scene/Scene.h"
 #include "../ui/ImGuiLayer.h"
 #include "VulkanContext.h"
 #include "VulkanDevice.h"
 #include "Window.h"
+
 
 #include <memory>
 
@@ -18,7 +23,7 @@ namespace Fishy {
  * @brief Main application class.
  *
  * Coordinates the engine lifecycle: initialization, main loop, and cleanup.
- * Manages core subsystems like Window, VulkanContext, Device, and Renderer.
+ * Manages core subsystems like Window, VulkanContext, Device, Renderer, and ECS Systems.
  */
 class Application {
 public:
@@ -30,7 +35,7 @@ public:
 	void run();
 
 private:
-	std::shared_ptr<Model> createDefaultModel();
+	void createDefaultScene();
 
 	// Order matters for RAII destruction!
 	// Destruction order is reverse of declaration order.
@@ -45,8 +50,14 @@ private:
 	Fishy::ResourceManager _resourceManager;
 	Fishy::Renderer _renderer;
 	std::unique_ptr<ImGuiLayer> _imguiLayer;
-	std::shared_ptr<Model> _model;
 	std::unique_ptr<IBLEnvironment> _iblEnvironment;
+
+	// ECS
+	std::unique_ptr<Scene> _scene;
+	TransformSystem _transformSystem;
+	CameraSystem _cameraSystem;
+	LightingSystem _lightingSystem;
+	RenderSystem _renderSystem;
 };
 
 } // namespace Fishy

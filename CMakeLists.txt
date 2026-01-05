@@ -148,6 +148,17 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(libktx)
 
 # ------------------------------------------------------------------------------
+# EnTT - Entity Component System
+# ------------------------------------------------------------------------------
+FetchContent_Declare(
+    entt
+    GIT_REPOSITORY https://github.com/skypjack/entt.git
+    GIT_TAG        v3.13.0
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(entt)
+
+# ------------------------------------------------------------------------------
 # Dear ImGui - 即时模式 GUI (Docking Branch)
 # ------------------------------------------------------------------------------
 FetchContent_Declare(
@@ -272,6 +283,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     tinygltf
     GPUOpen::VulkanMemoryAllocator
     ktx
+    EnTT::EnTT
     imgui
     ${CMAKE_DL_LIBS}
 )

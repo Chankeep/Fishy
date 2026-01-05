@@ -91,6 +91,32 @@ public:
 	 */
 	void reset();
 
+	/**
+	 * @brief Set view matrix directly (for external camera control)
+	 */
+	void setViewMatrix(const glm::mat4& view) {
+		_overrideViewMatrix = view;
+		_useOverrideMatrices = true;
+	}
+
+	/**
+	 * @brief Set projection matrix directly (for external camera control)
+	 */
+	void setProjectionMatrix(const glm::mat4& proj) {
+		_overrideProjectionMatrix = proj;
+		_useOverrideMatrices = true;
+	}
+
+	/**
+	 * @brief Set position directly (for external camera control)
+	 */
+	void setPosition(const glm::vec3& pos) { _position = pos; }
+
+	/**
+	 * @brief Clear override matrices and return to orbit mode
+	 */
+	void clearOverrideMatrices() { _useOverrideMatrices = false; }
+
 private:
 	void updatePosition();
 	void rotate(float deltaX, float deltaY);
@@ -116,6 +142,11 @@ private:
 	// Pitch limits to prevent gimbal lock
 	float _minPitch = -89.0f; // Minimum pitch angle
 	float _maxPitch = 89.0f;  // Maximum pitch angle
+
+	// Override matrices for external camera control
+	bool _useOverrideMatrices = false;
+	glm::mat4 _overrideViewMatrix{1.0f};
+	glm::mat4 _overrideProjectionMatrix{1.0f};
 };
 
 } // namespace Fishy

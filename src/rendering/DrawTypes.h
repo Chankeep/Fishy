@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_inverse.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <vulkan/vulkan.hpp>
 
 namespace Fishy {
@@ -48,8 +49,10 @@ struct alignas(16) InstanceData {
 	// Compute InstanceData from a model matrix with default values
 	[[nodiscard]] static InstanceData fromModelMatrix(const glm::mat4& modelMat) {
 		InstanceData data{};
-		data.model = modelMat;
-		data.normalMatrix = glm::mat4(glm::inverseTranspose(glm::mat3(modelMat)));
+		static const glm::mat4 gltfCorrection =
+			glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+		data.model = gltfCorrection * modelMat;
+		data.normalMatrix = glm::mat4(glm::inverseTranspose(glm::mat3(data.model)));
 
 		// Default texture indices (invalid = use shader defaults)
 		data.baseColorIndex = INVALID_TEXTURE_INDEX;

@@ -11,7 +11,6 @@ import vulkan_hpp;
 #include "../resources/IBLEnvironment.h"
 #include "../resources/Mesh.h"
 #include "../resources/Model.h"
-#include "Camera.h"
 #include "DrawTypes.h"
 #include "GraphicsPipeline.h"
 #include "core/SwapChain.h"
@@ -28,6 +27,8 @@ class Window;
 class SwapChain;
 class ResourceManager;
 class CommandPool;
+class Scene;
+struct RenderParams;
 
 constexpr int MAX_FRAMES_IN_FLIGHT = 2;
 
@@ -52,15 +53,16 @@ public:
 	Renderer& operator=(const Renderer&) = delete;
 
 	/**
-	 * @brief Render a model with optional UI callback.
+	 * @brief Render a scene with optional UI callback.
 	 *
-	 * This is the main rendering interface. All command buffer recording is encapsulated here.
-	 * The uiRenderCallback is called after scene rendering but before present, allowing ImGui to render.
+	 * ECS-based rendering interface. Iterates entities with MeshComponent and MeshRendererComponent.
 	 *
-	 * @param model The model to render.
-	 * @param uiRenderCallback Optional callback for UI rendering (receives VkCommandBuffer).
+	 * @param scene The scene containing entities to render.
+	 * @param params Camera and light data for this frame.
+	 * @param uiRenderCallback Optional callback for UI rendering.
 	 */
-	void render(const Model& model, std::function<void(VkCommandBuffer)> uiRenderCallback = nullptr);
+	void renderScene(Scene& scene, const RenderParams& params,
+					 std::function<void(VkCommandBuffer)> uiRenderCallback = nullptr);
 
 	// Debug settings
 	void setDebugSettings(float debugViewInputs, float debugViewEquation) {
@@ -72,10 +74,6 @@ public:
 	[[nodiscard]] float getAspectRatio() const;
 	[[nodiscard]] vk::Format getSwapChainFormat() const { return _swapChain->getFormat(); }
 	[[nodiscard]] vk::Extent2D getSwapChainExtent() const { return _swapChain->getExtent(); }
-
-	// Camera access
-	[[nodiscard]] Camera& getCamera() { return _camera; }
-	[[nodiscard]] const Camera& getCamera() const { return _camera; }
 
 	// IBL environment
 	void setIBLEnvironment(IBLEnvironment* ibl);
@@ -99,19 +97,19 @@ private:
 	void createGlobalSetLayout();
 	void createBindlessTextureSetLayout();
 	void createBindlessDescriptorPool();
-	void allocateBindlessDescriptorSet();
 	void createDescriptorPool();
-	void createDescriptorSets();
-	void createGlobalDescriptorSets();
+	void allocateDescriptorSets();
 	void createDepthResources();
 	void createIndirectBuffer();
-	void buildUnifiedBuffers(const Model& model);
-	void buildDrawBatches(const Model& model);
-	void buildInstanceData(const Model& model);
+	void createSwapChainImageViews();
+
+	void buildUnifiedBuffersFromScene(Scene& scene);
+	void buildDrawBatchesFromScene(Scene& scene);
+	void buildInstanceDataFromScene(Scene& scene);
+
 	void updateInstanceDataBuffer();
 	void renderIndirect(const vk::raii::CommandBuffer& cmd);
 	[[nodiscard]] vk::Format findDepthFormat();
-	void createSwapChainImageViews();
 	void writeIBLDescriptors();
 
 	struct FrameData {
@@ -130,9 +128,6 @@ private:
 	Window& _window;
 	ResourceManager& _resourceManager;
 
-	// Camera for orbit controls
-	Camera _camera;
-
 	std::unique_ptr<SwapChain> _swapChain;
 
 	// Depth resources
@@ -146,9 +141,6 @@ private:
 
 	// Sync objects
 	std::vector<vk::raii::Semaphore> _renderFinishedSemaphores;
-
-	// Command Pool (borrowed from VulkanDevice)
-	CommandPool* _commandPool = nullptr;
 
 	// Graphics Pipeline
 	std::unique_ptr<GraphicsPipeline> _graphicsPipeline;
@@ -197,6 +189,9 @@ private:
 
 	// IBL environment (externally owned)
 	IBLEnvironment* _iblEnvironment = nullptr;
+
+	// Current frame render params (pointer to data passed by RenderSystem, valid only during renderScene)
+	const RenderParams* _currentRenderParams = nullptr;
 };
 
 } // namespace Fishy

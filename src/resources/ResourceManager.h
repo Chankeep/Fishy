@@ -6,6 +6,10 @@
 import vulkan_hpp;
 #endif
 
+#include "slang/slang-com-helper.h"
+#include "slang/slang-com-ptr.h"
+#include "slang/slang.h"
+
 #include "../core/VulkanBuffer.h"
 #include <memory>
 #include <queue>
