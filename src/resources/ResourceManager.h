@@ -16,6 +16,11 @@ import vulkan_hpp;
 #include <unordered_map>
 #include <vector>
 
+#include <slang/slang-com-helper.h>
+#include <slang/slang-com-ptr.h>
+#include <slang/slang.h>
+
+
 namespace Fishy {
 
 class VulkanDevice;
@@ -137,7 +142,8 @@ public:
 	void unregisterBuffer(BufferHandle handle);
 
 	// ========== Shader API (unchanged) ==========
-	[[nodiscard]] const vk::raii::ShaderModule& getShader(const std::string& filepath);
+	[[nodiscard]] const vk::raii::ShaderModule& getShader(const std::string& filepath,
+														  const std::string& entryPoint = "");
 
 	// Clear all cached resources
 	void clear();
@@ -161,8 +167,15 @@ private:
 	entt::resource_cache<Mesh, MeshLoader> _meshCache;
 	entt::resource_cache<Material, MaterialLoader> _materialCache;
 
-	// Shader cache (separate, shaders don't need EnTT resource semantics)
+	// shader cache (separate, shaders don't need EnTT resource semantics)
 	std::unordered_map<std::string, vk::raii::ShaderModule> _shaderCache;
+
+	// Slang API sessions
+	Slang::ComPtr<slang::IGlobalSession> _slangGlobalSession;
+	Slang::ComPtr<slang::ISession> _slangSession;
+
+	// Compile Slang source code to SPIR-V
+	std::vector<char> compileSlangShader(const std::string& filepath, const std::string& entryPoint = "main");
 
 	// Default texture IDs (using hashed strings)
 	static constexpr entt::id_type DEFAULT_WHITE_TEXTURE_ID = entt::hashed_string{"__default_white__"};

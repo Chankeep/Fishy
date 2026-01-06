@@ -69,3 +69,38 @@ C++ 类成员变量的**析构顺序是声明顺序的逆序**。在使用 `vulk
 调整 `Renderer` 类中成员变量的声明顺序。
 - 将 `_frames` 移动到 `_descriptorPool` 之后声明。
 - 确保析构顺序为：先析构 `_frames`（Sets 被安全归还），后析构 `_descriptorPool`。
+
+## 3. 矩阵布局错位 (Matrix Layout Mismatch / Geometry Distortion)
+
+### 错误现象
+渲染出的模型严重变形，表现为被压缩成一个巨大的平面，或者坐标轴完全错乱。验证层无报错。
+
+### 根因分析
+**矩阵内存布局（Memory Layout）** 在 CPU 和 GPU 端的默认设置不一致：
+1.  **CPU (GLM)**: 默认主要使用 **列主序 (Column-Major)**。
+2.  **GPU (Slang/HLSL)**: 默认主要使用 **行主序 (Row-Major)**。
+
+当直接将 GLM 的矩阵数据 memcpy 到 Uniform Buffer，并在 Shader 中以默认方式读取时，Shader 会把列主序数据当成行主序解析，导致**矩阵被转置** (Transposed)。
+例如，投影矩阵（Projection Matrix）被转置后，Z 轴深度计算会完全失效。
+
+### 修复方案
+**方案 A (推荐 - 全局配置)**：
+在 C++ 端初始化 Slang Session 时，强制指定默认布局为 Column-Major，以匹配 GLM。
+
+```cpp
+slang::SessionDesc sessionDesc = {};
+// ...
+sessionDesc.defaultMatrixLayoutMode = SLANG_MATRIX_LAYOUT_COLUMN_MAJOR; // 关键配置
+```
+
+**方案 B (局部修饰)**：
+在 Shader代码中显式为每个矩阵变量添加 `column_major` 修饰符（不推荐，繁琐且容易遗漏）。
+
+```slang
+// PBRshader.slang
+struct GlobalUBO {
+    column_major float4x4 view;
+    column_major float4x4 proj; 
+    // ...
+};
+```

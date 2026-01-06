@@ -4,10 +4,10 @@
 // Supports: KHR_materials_clearcoat, KHR_materials_ior, KHR_materials_emissive_strength
 
 struct VSInput {
-    float3 inPosition;
-    float3 inNormal;
-    float2 inTexCoord;
-    float4 inTangent; // xyz = tangent, w = handedness
+    [[vk::location(0)]] float3 inPosition;
+    [[vk::location(1)]] float3 inNormal;
+    [[vk::location(2)]] float2 inTexCoord;
+    [[vk::location(3)]] float4 inTangent; // xyz = tangent, w = handedness
 };
 
 // Set 0: Global Data
@@ -66,6 +66,8 @@ struct InstanceData {
     uint flags;
     float clearcoatFactor;
     float clearcoatRoughnessFactor;
+    float transmissionFactor; // KHR_materials_transmission
+    float ior;                // KHR_materials_ior
 };
 [[vk::binding(0, 2)]] StructuredBuffer<InstanceData> g_Instances;
 

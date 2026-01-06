@@ -11,7 +11,45 @@
 
 namespace Fishy {
 
-ResourceManager::ResourceManager(VulkanDevice& device) : _device(device) {}
+ResourceManager::ResourceManager(VulkanDevice& device) : _device(device) {
+	// Initialize Slang Global Session
+	SlangResult res = slang::createGlobalSession(_slangGlobalSession.writeRef());
+	if (SLANG_FAILED(res)) {
+		throw std::runtime_error("Failed to create Slang Global Session");
+	}
+
+	// Create Session Options
+	slang::SessionDesc sessionDesc = {};
+	slang::TargetDesc target = {};
+	target.format = SLANG_SPIRV;
+	target.profile = _slangGlobalSession->findProfile("glsl_460");
+	target.flags = SLANG_TARGET_FLAG_GENERATE_SPIRV_DIRECTLY; // Optional: optimize for Vulkan
+
+	sessionDesc.targets = &target;
+	sessionDesc.targetCount = 1;
+	sessionDesc.defaultMatrixLayoutMode = SLANG_MATRIX_LAYOUT_COLUMN_MAJOR;
+
+	// Search paths
+	// We need to keep these strings alive while sessionDesc is used (which is just for createSession)
+	std::string cwd = std::filesystem::current_path().string();
+	LogSystem::get().info("Slang Search Paths Base: {}", cwd);
+
+	std::string shadersPath = (std::filesystem::current_path() / "shaders").string();
+	std::string srcPath = (std::filesystem::current_path() / "src").string();
+	std::string dotPath = ".";
+
+	const char* searchPaths[] = {shadersPath.c_str(), srcPath.c_str(), dotPath.c_str()};
+	sessionDesc.searchPaths = searchPaths;
+	sessionDesc.searchPathCount = 3;
+
+	// Create Session
+	res = _slangGlobalSession->createSession(sessionDesc, _slangSession.writeRef());
+	if (SLANG_FAILED(res)) {
+		throw std::runtime_error("Failed to create Slang Session");
+	}
+
+	LogSystem::get().info("Slang API initialized successfully");
+}
 
 ResourceManager::~ResourceManager() { clear(); }
 
@@ -312,18 +350,96 @@ void ResourceManager::unregisterBuffer(BufferHandle handle) {
 
 // ========== Shader API ==========
 
-const vk::raii::ShaderModule& ResourceManager::getShader(const std::string& filepath) {
-	auto it = _shaderCache.find(filepath);
+const vk::raii::ShaderModule& ResourceManager::getShader(const std::string& filepath, const std::string& entryPoint) {
+	std::string cacheKey = filepath + (entryPoint.empty() ? "" : ":" + entryPoint);
+	auto it = _shaderCache.find(cacheKey);
 	if (it != _shaderCache.end()) {
 		return it->second;
 	}
 
-	LogSystem::get().info("Loading shader: {}", filepath);
-	std::vector<char> code = readFile(filepath);
+	LogSystem::get().info("Loading shader: {} ({})", filepath, entryPoint);
+
+	std::vector<char> code;
+	if (filepath.ends_with(".slang")) {
+		// For Slang, we need an entry point. If not provided, default to "main".
+		std::string ep = entryPoint.empty() ? "main" : entryPoint;
+		code = compileSlangShader(filepath, ep);
+	} else {
+		code = readFile(filepath);
+	}
+
 	vk::raii::ShaderModule module = createShaderModule(code);
 
-	auto insertedIt = _shaderCache.emplace(filepath, std::move(module));
+	auto insertedIt = _shaderCache.emplace(cacheKey, std::move(module));
 	return insertedIt.first->second;
+}
+
+std::vector<char> ResourceManager::compileSlangShader(const std::string& filepath, const std::string& entryPoint) {
+	// Extract module name from file path (e.g. "shaders/PBRshader.slang" -> "PBRshader")
+	std::filesystem::path path(filepath);
+	std::string moduleName = path.stem().string();
+
+	// Load Module
+	Slang::ComPtr<slang::IModule> module;
+	Slang::ComPtr<slang::IBlob> diagnostics;
+	module.attach(_slangSession->loadModule(moduleName.c_str(), diagnostics.writeRef()));
+
+	if (!module) {
+		if (diagnostics) {
+			LogSystem::get().error("Slang Load Error: {}", (const char*)diagnostics->getBufferPointer());
+		}
+		LogSystem::get().warn("Failed to load module '{}'", moduleName);
+		throw std::runtime_error("Unknown shader module: " + moduleName);
+	}
+
+	// Find Entry Point
+	Slang::ComPtr<slang::IEntryPoint> entryPointComponent;
+	SlangResult res = module->findEntryPointByName(entryPoint.c_str(), entryPointComponent.writeRef());
+	if (SLANG_FAILED(res) || !entryPointComponent) {
+		throw std::runtime_error("Failed to find entry point '" + entryPoint + "' in module " + moduleName);
+	}
+
+	// Create composite component (Module + EntryPoint)
+	slang::IComponentType* components[] = {module.get(), entryPointComponent.get()};
+	Slang::ComPtr<slang::IComponentType> program;
+
+	res = _slangSession->createCompositeComponentType(components, 2, program.writeRef());
+	if (SLANG_FAILED(res)) {
+		throw std::runtime_error("Failed to create composite program for: " + moduleName);
+	}
+
+	// Link
+	Slang::ComPtr<slang::IComponentType> linkedProgram;
+	res = program->link(linkedProgram.writeRef());
+
+	if (SLANG_FAILED(res)) {
+		Slang::ComPtr<slang::IBlob> linkDiag;
+		program->link(linkedProgram.writeRef(), linkDiag.writeRef());
+		if (linkDiag) {
+			LogSystem::get().error("Shader Link Error: {}", (const char*)linkDiag->getBufferPointer());
+		}
+		throw std::runtime_error("Failed to link shader: " + moduleName);
+	}
+
+	// Get compiled SPIR-V code
+	Slang::ComPtr<slang::IBlob> codeBlob;
+	res = linkedProgram->getEntryPointCode(0, 0, codeBlob.writeRef());
+
+	if (SLANG_FAILED(res)) {
+		throw std::runtime_error("Failed to get SPIR-V code for: " + moduleName);
+	}
+
+	// Copy to vector
+	const char* begin = (const char*)codeBlob->getBufferPointer();
+	size_t codeSize = codeBlob->getBufferSize();
+	LogSystem::get().info("Compiled SPIR-V for '{}:{}': {} bytes", filepath, entryPoint, codeSize);
+
+	if (codeSize == 0) {
+		LogSystem::get().error("SPIR-V code blob is empty!");
+		throw std::runtime_error("Empty SPIR-V code blob for: " + filepath);
+	}
+
+	return std::vector<char>(begin, begin + codeSize);
 }
 
 // Lifecycle
@@ -335,8 +451,6 @@ void ResourceManager::clear() {
 	_textureCache.clear();
 	_meshCache.clear();
 	_materialCache.clear();
-
-	// Clear shader cache
 	_shaderCache.clear();
 
 	// Clear bindless mappings
@@ -355,6 +469,10 @@ void ResourceManager::clear() {
 		_freeTextureSlots.pop();
 	while (!_freeBufferSlots.empty())
 		_freeBufferSlots.pop();
+
+	// Release Slang sessions (prevents memory leak popup on exit)
+	_slangSession = nullptr;
+	_slangGlobalSession = nullptr;
 
 	LogSystem::get().info("ResourceManager cleared");
 }

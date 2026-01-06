@@ -1,8 +1,8 @@
 #include "Scene.h"
 
-#include "Entity.h"
-#include "components/TagComponent.h"
-#include "components/TransformComponent.h"
+#include "../ecs/Entity.h"
+#include "../ecs/components/TagComponent.h"
+#include "../ecs/components/TransformComponent.h"
 
 namespace Fishy {
 

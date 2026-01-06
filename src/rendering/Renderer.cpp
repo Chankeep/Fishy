@@ -450,6 +450,8 @@ void Renderer::createIndirectBuffer() {
 
 void Renderer::renderIndirect(const vk::raii::CommandBuffer& cmd) {
 	if (!_unifiedVertexBuffer || !_unifiedIndexBuffer || _drawBatches.empty()) {
+		LogSystem::get().warn("[Render] Skipping: vertBuf={} idxBuf={} batches={}", (bool)_unifiedVertexBuffer,
+							  (bool)_unifiedIndexBuffer, _drawBatches.size());
 		return;
 	}
 
@@ -469,7 +471,8 @@ void Renderer::renderIndirect(const vk::raii::CommandBuffer& cmd) {
 
 void Renderer::createGraphicsPipeline() {
 	LogSystem::get().info("Creating graphics pipeline...");
-	const auto& shaderModule = _resourceManager.getShader("shaders/PBRshader.slang.spv");
+	const auto& vertShader = _resourceManager.getShader("shaders/PBRshader.slang", "vertMain");
+	const auto& fragShader = _resourceManager.getShader("shaders/PBRshader.slang", "fragMain");
 
 	auto bindingDescription = Vertex::getBindingDescription();
 	auto attributeDescriptions = Vertex::getAttributeDescriptions();
@@ -482,7 +485,7 @@ void Renderer::createGraphicsPipeline() {
 
 	PipelineBuilder builder(**_device);
 
-	builder.setShaders(shaderModule, shaderModule, "vertMain", "fragMain")
+	builder.setShaders(vertShader, fragShader, "main", "main")
 		.setVertexInput(vertexInputInfo)
 		.setInputTopology(vk::PrimitiveTopology::eTriangleList)
 		.setCullMode(vk::CullModeFlagBits::eBack, vk::FrontFace::eCounterClockwise)
@@ -1016,31 +1019,19 @@ void Renderer::buildInstanceDataFromScene(Scene& scene) {
 										 ? _resourceManager.getTextureBindlessIndex(&(*mat.transmissionMap))
 										 : INVALID_TEXTURE_INDEX;
 
-			// Build texture flags
+			// Build texture flags - MUST match shader expectations in PBRshader.slang
+			// Shader reads: alphaMode = (flags >> 1) & 0x3, hasNormalMap = flags & (1<<5), hasOcclusion = flags &
+			// (1<<6)
 			uint32_t flags = 0;
-			if (mat.baseColorMap)
-				flags |= (1 << 0);
-			if (mat.metallicRoughnessMap)
-				flags |= (1 << 1);
+			// AlphaMode uses bits 1-2 (2 bits: 0=OPAQUE, 1=MASK, 2=BLEND)
+			flags |= (static_cast<uint32_t>(mat.params.alphaMode) << 1);
+			// Texture presence flags
 			if (mat.normalMap)
-				flags |= (1 << 2);
+				flags |= (1 << 5); // bit 5 = HasNormalMap
 			if (mat.occlusionMap)
-				flags |= (1 << 3);
-			if (mat.emissiveMap)
-				flags |= (1 << 4);
-			// Extension texture flags
-			if (mat.clearcoatMap)
-				flags |= (1 << 5);
-			if (mat.clearcoatRoughnessMap)
-				flags |= (1 << 6);
-			if (mat.clearcoatNormalMap)
-				flags |= (1 << 7);
-			if (mat.transmissionMap)
-				flags |= (1 << 8);
+				flags |= (1 << 6); // bit 6 = HasOcclusion
 			if (mat.params.doubleSided)
 				flags |= (1 << 9);
-			// AlphaMode uses bits 10-11 (2 bits: 0=OPAQUE, 1=MASK, 2=BLEND)
-			flags |= (static_cast<uint32_t>(mat.params.alphaMode) << 10);
 			inst.flags = flags;
 		}
 
