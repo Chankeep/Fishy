@@ -45,6 +45,8 @@ struct alignas(16) InstanceData {
 	uint32_t flags; // Material flags (doubleSided, alphaMode, etc.)
 	float clearcoatFactor;
 	float clearcoatRoughnessFactor;
+	float transmissionFactor; // KHR_materials_transmission
+	float ior;				  // KHR_materials_ior
 
 	// Compute InstanceData from a model matrix with default values
 	[[nodiscard]] static InstanceData fromModelMatrix(const glm::mat4& modelMat) {
@@ -76,6 +78,8 @@ struct alignas(16) InstanceData {
 		data.flags = 0;
 		data.clearcoatFactor = 0.0f;
 		data.clearcoatRoughnessFactor = 0.0f;
+		data.transmissionFactor = 0.0f;
+		data.ior = 1.5f;
 
 		return data;
 	}

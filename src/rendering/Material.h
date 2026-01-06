@@ -1,8 +1,8 @@
 #pragma once
 
 #include "../resources/Texture.h"
+#include <entt/entt.hpp>
 #include <glm/glm.hpp>
-#include <memory>
 
 namespace Fishy {
 
@@ -11,6 +11,7 @@ namespace Fishy {
  *
  * Supports KHR_materials_clearcoat and other glTF extensions.
  * Pure data container - no GPU resources. GPU resources are managed by ResourceManager.
+ * Textures are held via entt::resource handles for proper cache integration.
  */
 class Material {
 public:
@@ -58,17 +59,18 @@ public:
 	Material& operator=(Material&&) = default;
 
 	// Core PBR Textures (glTF naming convention)
-	std::shared_ptr<Texture> baseColorMap;		   // RGBA base color
-	std::shared_ptr<Texture> metallicRoughnessMap; // G=roughness, B=metallic (glTF spec)
-	std::shared_ptr<Texture> normalMap;			   // RGB normal map
-	std::shared_ptr<Texture> occlusionMap;		   // R=ambient occlusion
-	std::shared_ptr<Texture> emissiveMap;		   // RGB emissive
+	// using entt::resource handles for cache-friendly resource management
+	entt::resource<Texture> baseColorMap;		  // RGBA base color
+	entt::resource<Texture> metallicRoughnessMap; // G=roughness, B=metallic (glTF spec)
+	entt::resource<Texture> normalMap;			  // RGB normal map
+	entt::resource<Texture> occlusionMap;		  // R=ambient occlusion
+	entt::resource<Texture> emissiveMap;		  // RGB emissive
 
 	// Extension Textures
-	std::shared_ptr<Texture> clearcoatMap;			// KHR_materials_clearcoat
-	std::shared_ptr<Texture> clearcoatRoughnessMap; // KHR_materials_clearcoat
-	std::shared_ptr<Texture> clearcoatNormalMap;	// KHR_materials_clearcoat
-	std::shared_ptr<Texture> transmissionMap;		// KHR_materials_transmission
+	entt::resource<Texture> clearcoatMap;		   // KHR_materials_clearcoat
+	entt::resource<Texture> clearcoatRoughnessMap; // KHR_materials_clearcoat
+	entt::resource<Texture> clearcoatNormalMap;	   // KHR_materials_clearcoat
+	entt::resource<Texture> transmissionMap;	   // KHR_materials_transmission
 
 	PBRParameters params;
 };

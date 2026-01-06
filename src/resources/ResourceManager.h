@@ -6,11 +6,10 @@
 import vulkan_hpp;
 #endif
 
-#include "slang/slang-com-helper.h"
-#include "slang/slang-com-ptr.h"
-#include "slang/slang.h"
-
 #include "../core/VulkanBuffer.h"
+#include "CubemapTexture.h"
+#include "ResourceLoaders.h"
+#include <entt/entt.hpp>
 #include <memory>
 #include <queue>
 #include <string>
@@ -37,16 +36,11 @@ struct BufferHandle {
 	[[nodiscard]] bool isValid() const { return index != UINT32_MAX; }
 };
 
-// @deprecated Use bindless texture indices instead
-struct [[deprecated("Use bindless texture indices instead")]] GPUMaterial {
-	vk::raii::DescriptorSet descriptorSet = nullptr;
-	std::unique_ptr<VulkanBuffer> uniformBuffer;
-};
-
 /**
- * @brief Manages loading and caching of resources including shaders, textures, and GPU resources.
+ * @brief Manages loading and caching of resources using EnTT's resource system.
  *
  * Supports bindless resource management for textures and storage buffers.
+ * Resources are accessed via entt::resource handles instead of raw pointers.
  */
 class ResourceManager {
 public:
@@ -58,68 +52,135 @@ public:
 	// Initialize bindless descriptor sets (called by Renderer after allocation)
 	void initBindlessResources(vk::DescriptorSet textureSet, vk::DescriptorSet ssboSet);
 
-	// Register a texture to the bindless array, returns handle with index
-	[[nodiscard]] TextureHandle registerTexture(std::shared_ptr<Texture> texture);
+	// ========== Texture API ==========
+	/**
+	 * @brief Load or get a cached texture from file.
+	 * @param id Unique identifier (typically the file path or a hashed key).
+	 * @param filepath Path to the texture file.
+	 * @param format Vulkan format for the texture.
+	 * @return entt::resource handle to the texture.
+	 */
+	[[nodiscard]] entt::resource<Texture> loadTexture(entt::id_type id, const std::string& filepath,
+													  vk::Format format = vk::Format::eR8G8B8A8Srgb);
 
-	// Unregister a texture and recycle its slot
-	void unregisterTexture(TextureHandle handle);
+	/**
+	 * @brief Load a texture from embedded memory data.
+	 * @param id Unique identifier for caching.
+	 * @param data Pointer to encoded image data (PNG/JPG).
+	 * @param size Size of the data in bytes.
+	 * @param format Vulkan format.
+	 * @return entt::resource handle to the texture.
+	 */
+	[[nodiscard]] entt::resource<Texture> loadTextureFromMemory(entt::id_type id, const unsigned char* data,
+																size_t size, vk::Format format);
 
+	/**
+	 * @brief Get a previously loaded texture by its ID.
+	 * @param id The identifier used during loading.
+	 * @return entt::resource handle, or empty if not found.
+	 */
+	[[nodiscard]] entt::resource<Texture> getTexture(entt::id_type id) const;
+
+	/**
+	 * @brief Get the bindless descriptor index for a texture.
+	 * @param id The texture's cache ID.
+	 * @return Bindless array index, or UINT32_MAX if not found.
+	 */
+	[[nodiscard]] uint32_t getTextureBindlessIndex(entt::id_type id) const;
+
+	/**
+	 * @brief Get the bindless descriptor index for a texture by pointer.
+	 * @param texture Pointer to the texture (from entt::resource.get()).
+	 * @return Bindless array index, or UINT32_MAX if not found.
+	 */
+	[[nodiscard]] uint32_t getTextureBindlessIndex(const Texture* texture) const;
+
+	// Default textures
+	[[nodiscard]] entt::resource<Texture> getDefaultWhiteTexture();
+	[[nodiscard]] entt::resource<Texture> getDefaultNormalTexture();
+	[[nodiscard]] std::shared_ptr<CubemapTexture> getDefaultCubemap();
+
+	// ========== Mesh API ==========
+	/**
+	 * @brief Create and cache a mesh with the given geometry.
+	 * @param id Unique identifier for the mesh.
+	 * @param vertices Vertex data.
+	 * @param indices Index data.
+	 * @return entt::resource handle to the mesh.
+	 */
+	[[nodiscard]] entt::resource<Mesh> createMesh(entt::id_type id, std::vector<Vertex>& vertices,
+												  std::vector<uint32_t>& indices);
+
+	/**
+	 * @brief Get a previously created mesh by its ID.
+	 */
+	[[nodiscard]] entt::resource<Mesh> getMesh(entt::id_type id) const;
+
+	// ========== Material API ==========
+	/**
+	 * @brief Create and cache a new material.
+	 * @param id Unique identifier for the material.
+	 * @return entt::resource handle to the material.
+	 */
+	[[nodiscard]] entt::resource<Material> createMaterial(entt::id_type id);
+
+	/**
+	 * @brief Get a previously created material by its ID.
+	 */
+	[[nodiscard]] entt::resource<Material> getMaterial(entt::id_type id) const;
+
+	// ========== Bindless Buffer API ==========
 	/// Register a buffer to the bindless SSBO array
 	[[nodiscard]] BufferHandle registerBuffer(VulkanBuffer* buffer, vk::DeviceSize size);
 
 	// Unregister a buffer and recycle its slot
 	void unregisterBuffer(BufferHandle handle);
 
-	// Get the bindless index for a texture (returns UINT32_MAX if not registered)
-	[[nodiscard]] uint32_t getTextureIndex(const std::shared_ptr<Texture>& texture) const;
-
-	// Load or get cached shader module
+	// ========== Shader API (unchanged) ==========
 	[[nodiscard]] const vk::raii::ShaderModule& getShader(const std::string& filepath);
-
-	// Load or get cached texture (auto-registers to bindless if enabled)
-	[[nodiscard]] std::shared_ptr<Texture> getTexture(const std::string& filepath,
-													  vk::Format format = vk::Format::eR8G8B8A8Srgb);
-
-	// Load texture from memory (auto-registers to bindless if enabled)
-	[[nodiscard]] std::shared_ptr<Texture> loadTextureFromMemory(const unsigned char* data, size_t size,
-																 const std::string& cacheKey,
-																 vk::Format format = vk::Format::eR8G8B8A8Srgb);
-
-	// Default Resources
-	[[nodiscard]] std::shared_ptr<Texture> getDefaultWhiteTexture();
-	[[nodiscard]] std::shared_ptr<Texture> getDefaultNormalTexture();
-	[[nodiscard]] std::shared_ptr<CubemapTexture> getDefaultCubemap();
 
 	// Clear all cached resources
 	void clear();
+
+	// Access to device (for loaders that need it)
+	[[nodiscard]] VulkanDevice& getDevice() { return _device; }
+	[[nodiscard]] const VulkanDevice& getDevice() const { return _device; }
 
 private:
 	// Helper functions
 	static std::vector<char> readFile(const std::string& filename);
 	vk::raii::ShaderModule createShaderModule(const std::vector<char>& code);
 	void createDefaultTextures();
+	TextureHandle registerTextureBindless(const std::shared_ptr<Texture>& texture);
 
 	// Core dependency
 	VulkanDevice& _device;
 
-	// Caches
-	std::unordered_map<std::string, vk::raii::ShaderModule> _shaderCache;
-	std::unordered_map<std::string, std::shared_ptr<Texture>> _textureCache;
+	// EnTT Resource Caches
+	entt::resource_cache<Texture, TextureLoader> _textureCache;
+	entt::resource_cache<Mesh, MeshLoader> _meshCache;
+	entt::resource_cache<Material, MaterialLoader> _materialCache;
 
-	// Default textures
-	std::shared_ptr<Texture> _defaultWhiteTexture;
-	std::shared_ptr<Texture> _defaultNormalTexture;
+	// Shader cache (separate, shaders don't need EnTT resource semantics)
+	std::unordered_map<std::string, vk::raii::ShaderModule> _shaderCache;
+
+	// Default texture IDs (using hashed strings)
+	static constexpr entt::id_type DEFAULT_WHITE_TEXTURE_ID = entt::hashed_string{"__default_white__"};
+	static constexpr entt::id_type DEFAULT_NORMAL_TEXTURE_ID = entt::hashed_string{"__default_normal__"};
+
+	// Default cubemap (still shared_ptr for simplicity, cubemaps are special resources)
 	std::shared_ptr<CubemapTexture> _defaultCubemap;
 
+	// Bindless descriptor sets
 	static constexpr uint32_t MAX_BINDLESS_RESOURCES = 4096;
-
 	vk::DescriptorSet _bindlessTextureSet = nullptr;
 	vk::DescriptorSet _bindlessStorageBufferSet = nullptr;
 
-	// Texture slot management
+	// Texture slot management for bindless
 	std::queue<uint32_t> _freeTextureSlots;
 	uint32_t _nextTextureIndex = 0;
-	std::unordered_map<Texture*, TextureHandle> _textureToHandle;
+	std::unordered_map<entt::id_type, TextureHandle> _textureIdToBindlessHandle;
+	std::unordered_map<const Texture*, TextureHandle> _texturePtrToBindlessHandle;
 
 	// Buffer slot management
 	std::queue<uint32_t> _freeBufferSlots;

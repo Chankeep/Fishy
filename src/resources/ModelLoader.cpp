@@ -6,7 +6,6 @@
 #include "../scene/Scene.h"
 #include "ResourceManager.h"
 
-
 #define TINYGLTF_IMPLEMENTATION
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 // STB_IMAGE_IMPLEMENTATION is defined in Texture.cpp
@@ -74,14 +73,10 @@ static void logGltfExtensions(const tinygltf::Model& gltfModel) {
 }
 
 // Compute tangents for vertices when they are not provided by the model
-// Based on the algorithm from "Foundations of Game Engine Development, Volume 2: Rendering"
-// by Eric Lengyel. This provides smooth per-vertex tangents.
 static void computeTangents(std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices) {
-	// Allocate temporary arrays for tangent and bitangent accumulation
 	std::vector<glm::vec3> tan1(vertices.size(), glm::vec3(0.0f));
 	std::vector<glm::vec3> tan2(vertices.size(), glm::vec3(0.0f));
 
-	// Process each triangle
 	for (size_t i = 0; i < indices.size(); i += 3) {
 		uint32_t i0 = indices[i];
 		uint32_t i1 = indices[i + 1];
@@ -95,11 +90,9 @@ static void computeTangents(std::vector<Vertex>& vertices, const std::vector<uin
 		const glm::vec2& uv1 = vertices[i1].texCoord;
 		const glm::vec2& uv2 = vertices[i2].texCoord;
 
-		// Edge vectors
 		glm::vec3 e1 = v1 - v0;
 		glm::vec3 e2 = v2 - v0;
 
-		// UV deltas
 		glm::vec2 duv1 = uv1 - uv0;
 		glm::vec2 duv2 = uv2 - uv0;
 
@@ -108,7 +101,6 @@ static void computeTangents(std::vector<Vertex>& vertices, const std::vector<uin
 		glm::vec3 tangent = (e1 * duv2.y - e2 * duv1.y) * r;
 		glm::vec3 bitangent = (e2 * duv1.x - e1 * duv2.x) * r;
 
-		// Accumulate for each vertex of the triangle
 		tan1[i0] += tangent;
 		tan1[i1] += tangent;
 		tan1[i2] += tangent;
@@ -118,15 +110,11 @@ static void computeTangents(std::vector<Vertex>& vertices, const std::vector<uin
 		tan2[i2] += bitangent;
 	}
 
-	// Orthogonalize and compute handedness for each vertex
 	for (size_t i = 0; i < vertices.size(); ++i) {
 		const glm::vec3& n = vertices[i].normal;
 		const glm::vec3& t = tan1[i];
 
-		// Gram-Schmidt orthogonalize: T' = normalize(T - N * dot(N, T))
 		glm::vec3 tangent = glm::normalize(t - n * glm::dot(n, t));
-
-		// Calculate handedness: sign = dot(cross(N, T), B) < 0 ? -1 : 1
 		float w = (glm::dot(glm::cross(n, t), tan2[i]) < 0.0f) ? -1.0f : 1.0f;
 
 		vertices[i].tangent = glm::vec4(tangent, w);
@@ -140,94 +128,127 @@ struct ModelLoader::LoadContext {
 	const tinygltf::Model& gltfModel;
 	const std::string& filepath;
 	const std::string& baseDir;
-	ResourceManager* resourceManager;
+	ResourceManager& resourceManager;
+	uint32_t nextMeshId;	 // Counter for unique mesh IDs
+	uint32_t nextMaterialId; // Counter for unique material IDs
 };
 
-// Load texture from glTF model (external file, embedded buffer, or decoded image)
-std::shared_ptr<Texture> ModelLoader::loadGltfTexture(const LoadContext& ctx, int textureIndex, vk::Format format,
-													  const std::string& texName) {
+// Generate unique cache ID for textures
+static entt::id_type makeTextureId(const std::string& filepath, int textureIndex, vk::Format format) {
+	std::string key =
+		filepath + "_tex_" + std::to_string(textureIndex) + "_fmt_" + std::to_string(static_cast<int>(format));
+	return entt::hashed_string{key.c_str()};
+}
+
+// Generate unique cache ID for meshes
+static entt::id_type makeMeshId(const std::string& filepath, uint32_t meshIndex) {
+	std::string key = filepath + "_mesh_" + std::to_string(meshIndex);
+	return entt::hashed_string{key.c_str()};
+}
+
+// Generate unique cache ID for materials
+static entt::id_type makeMaterialId(const std::string& filepath, int materialIndex) {
+	std::string key = filepath + "_mat_" + std::to_string(materialIndex);
+	return entt::hashed_string{key.c_str()};
+}
+
+// Load texture from glTF model
+entt::resource<Texture> ModelLoader::loadGltfTexture(const LoadContext& ctx, int textureIndex, vk::Format format,
+													 const std::string& texName) {
 	if (textureIndex < 0 || textureIndex >= static_cast<int>(ctx.gltfModel.textures.size())) {
-		return nullptr;
+		return {};
 	}
 
 	int imageIndex = ctx.gltfModel.textures[textureIndex].source;
 	if (imageIndex < 0 || imageIndex >= static_cast<int>(ctx.gltfModel.images.size())) {
-		return nullptr;
+		return {};
 	}
 
 	const auto& img = ctx.gltfModel.images[imageIndex];
 
-	if (!img.uri.empty() && ctx.resourceManager) {
+	if (!img.uri.empty()) {
 		// External file - resolve relative to model directory
 		std::string texPath = ctx.baseDir.empty() ? img.uri : ctx.baseDir + "/" + img.uri;
 		LogSystem::get().trace("{}: [External file] {}", texName, texPath);
-		return ctx.resourceManager->getTexture(texPath, format);
-	} else if (img.bufferView >= 0 && ctx.resourceManager) {
+		entt::id_type id = entt::hashed_string{texPath.c_str()};
+		return ctx.resourceManager.loadTexture(id, texPath, format);
+	} else if (img.bufferView >= 0) {
 		// Embedded: load from glTF buffer
 		const auto& bufferView = ctx.gltfModel.bufferViews[img.bufferView];
 		const auto& buffer = ctx.gltfModel.buffers[bufferView.buffer];
 		const unsigned char* data = buffer.data.data() + bufferView.byteOffset;
 		size_t size = bufferView.byteLength;
 
-		std::string cacheKey = ctx.filepath + "_tex_" + std::to_string(textureIndex);
+		entt::id_type id = makeTextureId(ctx.filepath, textureIndex, format);
 		LogSystem::get().trace("{}: [Embedded buffer] {} bytes", texName, size);
-		return ctx.resourceManager->loadTextureFromMemory(data, size, cacheKey, format);
-	} else if (!img.image.empty() && ctx.resourceManager) {
+		return ctx.resourceManager.loadTextureFromMemory(id, data, size, format);
+	} else if (!img.image.empty()) {
 		// Image data loaded by tinygltf (decoded in memory)
-		std::string cacheKey = ctx.filepath + "_tex_" + std::to_string(textureIndex);
+		entt::id_type id = makeTextureId(ctx.filepath, textureIndex, format);
 		LogSystem::get().trace("{}: [Decoded image] {} bytes", texName, img.image.size());
-		return ctx.resourceManager->loadTextureFromMemory(img.image.data(), img.image.size(), cacheKey, format);
+		return ctx.resourceManager.loadTextureFromMemory(id, img.image.data(), img.image.size(), format);
 	}
 
-	return nullptr;
+	return {};
 }
 
-// Helper: set texture from path name
-static void setMaterialTexture(std::shared_ptr<Material>& mat, const std::string& path, std::shared_ptr<Texture> tex) {
+// Helper: set texture on material
+static void setMaterialTexture(Material& mat, const std::string& path, entt::resource<Texture> tex) {
 	if (path == "pbr.baseColorTexture")
-		mat->baseColorMap = tex;
+		mat.baseColorMap = std::move(tex);
 	else if (path == "pbr.metallicRoughnessTexture")
-		mat->metallicRoughnessMap = tex;
+		mat.metallicRoughnessMap = std::move(tex);
 	else if (path == "normalTexture")
-		mat->normalMap = tex;
+		mat.normalMap = std::move(tex);
 	else if (path == "occlusionTexture")
-		mat->occlusionMap = tex;
+		mat.occlusionMap = std::move(tex);
 	else if (path == "emissiveTexture")
-		mat->emissiveMap = tex;
+		mat.emissiveMap = std::move(tex);
 }
 
 // Load material from glTF model
-std::shared_ptr<Material> ModelLoader::loadGltfMaterial(const LoadContext& ctx, int materialIndex) {
+entt::resource<Material> ModelLoader::loadGltfMaterial(const LoadContext& ctx, int materialIndex) {
 	if (materialIndex < 0 || materialIndex >= static_cast<int>(ctx.gltfModel.materials.size())) {
-		return nullptr;
+		return {};
+	}
+
+	entt::id_type materialId = makeMaterialId(ctx.filepath, materialIndex);
+
+	// Check if already cached
+	auto existing = ctx.resourceManager.getMaterial(materialId);
+	if (existing) {
+		return existing;
 	}
 
 	const auto& gltfMat = ctx.gltfModel.materials[materialIndex];
 	const auto& pbr = gltfMat.pbrMetallicRoughness;
-	auto material = std::make_shared<Material>();
+
+	// Create material in cache
+	auto materialHandle = ctx.resourceManager.createMaterial(materialId);
+	Material& material = *materialHandle;
 
 	// PBR Factors (Metallic Roughness)
-	material->params.baseColorFactor = glm::make_vec4(pbr.baseColorFactor.data());
-	material->params.metallicFactor = static_cast<float>(pbr.metallicFactor);
-	material->params.roughnessFactor = static_cast<float>(pbr.roughnessFactor);
+	material.params.baseColorFactor = glm::make_vec4(pbr.baseColorFactor.data());
+	material.params.metallicFactor = static_cast<float>(pbr.metallicFactor);
+	material.params.roughnessFactor = static_cast<float>(pbr.roughnessFactor);
 
 	// Emissive
-	material->params.emissiveFactor = glm::make_vec3(gltfMat.emissiveFactor.data());
+	material.params.emissiveFactor = glm::make_vec3(gltfMat.emissiveFactor.data());
 
 	// Alpha
 	if (gltfMat.alphaMode == "MASK") {
-		material->params.alphaMode = Material::PBRParameters::AlphaMode::MASK;
+		material.params.alphaMode = Material::PBRParameters::AlphaMode::MASK;
 	} else if (gltfMat.alphaMode == "BLEND") {
-		material->params.alphaMode = Material::PBRParameters::AlphaMode::BLEND;
+		material.params.alphaMode = Material::PBRParameters::AlphaMode::BLEND;
 	} else {
-		material->params.alphaMode = Material::PBRParameters::AlphaMode::OPAQUE_MODE;
+		material.params.alphaMode = Material::PBRParameters::AlphaMode::OPAQUE_MODE;
 	}
-	material->params.alphaCutoff = static_cast<float>(gltfMat.alphaCutoff);
-	material->params.doubleSided = gltfMat.doubleSided;
+	material.params.alphaCutoff = static_cast<float>(gltfMat.alphaCutoff);
+	material.params.doubleSided = gltfMat.doubleSided;
 
 	// Normal Scale & Occlusion Strength
-	material->params.normalScale = static_cast<float>(gltfMat.normalTexture.scale);
-	material->params.occlusionStrength = static_cast<float>(gltfMat.occlusionTexture.strength);
+	material.params.normalScale = static_cast<float>(gltfMat.normalTexture.scale);
+	material.params.occlusionStrength = static_cast<float>(gltfMat.occlusionTexture.strength);
 
 	// Standard texture paths
 	struct TextureDef {
@@ -247,8 +268,9 @@ std::shared_ptr<Material> ModelLoader::loadGltfMaterial(const LoadContext& ctx, 
 	for (const auto& texDef : textureDefs) {
 		if (texDef.index >= 0) {
 			auto tex = loadGltfTexture(ctx, texDef.index, texDef.format, texDef.name);
-			setMaterialTexture(material, texDef.name, tex);
-			if (tex) {
+			setMaterialTexture(material, texDef.name, std::move(tex));
+			if (material.baseColorMap || material.metallicRoughnessMap || material.normalMap || material.occlusionMap ||
+				material.emissiveMap) {
 				loadedTextureNames.emplace_back(texDef.name);
 			}
 		}
@@ -271,22 +293,21 @@ std::shared_ptr<Material> ModelLoader::loadGltfMaterial(const LoadContext& ctx, 
 					auto tex = loadGltfTexture(ctx, texIdx, format, fullName);
 
 					if (texName == "clearcoatTexture")
-						material->clearcoatMap = tex;
+						material.clearcoatMap = std::move(tex);
 					else if (texName == "clearcoatRoughnessTexture")
-						material->clearcoatRoughnessMap = tex;
+						material.clearcoatRoughnessMap = std::move(tex);
 					else if (texName == "clearcoatNormalTexture")
-						material->clearcoatNormalMap = tex;
+						material.clearcoatNormalMap = std::move(tex);
 
-					if (tex)
-						loadedTextureNames.push_back(fullName);
+					loadedTextureNames.push_back(fullName);
 				}
 			}
 
 			if (extValue.Has("clearcoatFactor"))
-				material->params.clearcoatFactor =
+				material.params.clearcoatFactor =
 					static_cast<float>(extValue.Get("clearcoatFactor").GetNumberAsDouble());
 			if (extValue.Has("clearcoatRoughnessFactor"))
-				material->params.clearcoatRoughnessFactor =
+				material.params.clearcoatRoughnessFactor =
 					static_cast<float>(extValue.Get("clearcoatRoughnessFactor").GetNumberAsDouble());
 
 		} else if (extName == GltfExtensions::TRANSMISSION) {
@@ -294,20 +315,19 @@ std::shared_ptr<Material> ModelLoader::loadGltfMaterial(const LoadContext& ctx, 
 			if (extValue.Has("transmissionTexture")) {
 				int texIdx = extValue.Get("transmissionTexture").Get("index").GetNumberAsInt();
 				auto tex = loadGltfTexture(ctx, texIdx, vk::Format::eR8G8B8A8Unorm, prefix + "transmissionTexture");
-				material->transmissionMap = tex;
-				if (tex)
-					loadedTextureNames.push_back(prefix + "transmissionTexture");
+				material.transmissionMap = std::move(tex);
+				loadedTextureNames.push_back(prefix + "transmissionTexture");
 			}
 			if (extValue.Has("transmissionFactor"))
-				material->params.transmissionFactor =
+				material.params.transmissionFactor =
 					static_cast<float>(extValue.Get("transmissionFactor").GetNumberAsDouble());
 
 		} else if (extName == GltfExtensions::IOR) {
 			if (extValue.Has("ior"))
-				material->params.ior = static_cast<float>(extValue.Get("ior").GetNumberAsDouble());
+				material.params.ior = static_cast<float>(extValue.Get("ior").GetNumberAsDouble());
 		} else if (extName == GltfExtensions::EMISSIVE_STRENGTH) {
 			if (extValue.Has("emissiveStrength"))
-				material->params.emissiveStrength =
+				material.params.emissiveStrength =
 					static_cast<float>(extValue.Get("emissiveStrength").GetNumberAsDouble());
 		}
 	}
@@ -319,17 +339,18 @@ std::shared_ptr<Material> ModelLoader::loadGltfMaterial(const LoadContext& ctx, 
 		LogSystem::get().info("Material textures: none");
 	}
 
-	return material;
+	return materialHandle;
 }
 
 // Process a glTF node recursively, extracting meshes and materials
-void ModelLoader::processGltfNode(const LoadContext& ctx, int nodeIndex, std::shared_ptr<Model>& model) {
+void ModelLoader::processGltfNode(const LoadContext& ctx, int nodeIndex, Model& model) {
 	const auto& node = ctx.gltfModel.nodes[nodeIndex];
 
 	if (node.mesh >= 0) {
 		const auto& gltfMesh = ctx.gltfModel.meshes[node.mesh];
 
-		for (const auto& primitive : gltfMesh.primitives) {
+		for (size_t primitiveIdx = 0; primitiveIdx < gltfMesh.primitives.size(); ++primitiveIdx) {
+			const auto& primitive = gltfMesh.primitives[primitiveIdx];
 			std::vector<Vertex> vertices;
 			std::vector<uint32_t> indices;
 
@@ -358,7 +379,7 @@ void ModelLoader::processGltfNode(const LoadContext& ctx, int nodeIndex, std::sh
 				}
 			}
 
-			// Attributes - dynamically collect all attributes from glTF
+			// Attributes
 			std::map<std::string, std::pair<const float*, int>> attributeBuffers;
 			std::vector<std::string> attributeNames;
 			size_t vertexCount = 0;
@@ -414,10 +435,15 @@ void ModelLoader::processGltfNode(const LoadContext& ctx, int nodeIndex, std::sh
 				computeTangents(vertices, indices);
 			}
 
-			auto mesh = std::make_shared<Mesh>(vertices, indices);
-			auto material = loadGltfMaterial(ctx, primitive.material);
+			// Create mesh in cache with unique ID
+			uint32_t meshIdCounter = static_cast<uint32_t>(node.mesh * 1000 + primitiveIdx);
+			entt::id_type meshId = makeMeshId(ctx.filepath, meshIdCounter);
+			auto meshHandle = ctx.resourceManager.createMesh(meshId, vertices, indices);
 
-			model->addPrimitive({mesh, material});
+			// Load material
+			auto materialHandle = loadGltfMaterial(ctx, primitive.material);
+
+			model.addPrimitive({meshHandle, materialHandle});
 		}
 	}
 
@@ -427,7 +453,7 @@ void ModelLoader::processGltfNode(const LoadContext& ctx, int nodeIndex, std::sh
 	}
 }
 
-std::shared_ptr<Model> ModelLoader::loadModel(const std::string& filepath, ResourceManager* resourceManager) {
+entt::resource<Model> ModelLoader::loadModel(const std::string& filepath, ResourceManager& resourceManager) {
 	tinygltf::Model gltfModel;
 	tinygltf::TinyGLTF loader;
 	std::string err;
@@ -450,33 +476,35 @@ std::shared_ptr<Model> ModelLoader::loadModel(const std::string& filepath, Resou
 
 	if (!ret) {
 		LogSystem::get().error("Failed to parse glTF: {}", filepath);
-		return nullptr;
+		return {};
 	}
 
 	// Log extensions for debugging
 	logGltfExtensions(gltfModel);
-
-	auto model = std::make_shared<Model>();
 
 	// Get base directory for resolving relative texture paths
 	std::filesystem::path modelPath(filepath);
 	std::string baseDir = modelPath.parent_path().string();
 
 	// Create context for helper functions
-	LoadContext ctx{gltfModel, filepath, baseDir, resourceManager};
+	LoadContext ctx{gltfModel, filepath, baseDir, resourceManager, 0, 0};
+
+	// Create model (stored directly, not in cache for now - models are transient containers)
+	auto model = std::make_shared<Model>();
 
 	// Process scene nodes using extracted function
 	const auto& scene = gltfModel.scenes[gltfModel.defaultScene > -1 ? gltfModel.defaultScene : 0];
 	for (int nodeIndex : scene.nodes) {
-		processGltfNode(ctx, nodeIndex, model);
+		processGltfNode(ctx, nodeIndex, *model);
 	}
 
 	LogSystem::get().info("Loaded model: {} with {} primitives", filepath, model->getPrimitives().size());
 
-	return model;
+	// Return as entt::resource (wrapping the shared_ptr)
+	return entt::resource<Model>{model};
 }
 
-bool ModelLoader::loadModelIntoScene(const std::string& filepath, Scene& scene, ResourceManager* resourceManager) {
+bool ModelLoader::loadModelIntoScene(const std::string& filepath, Scene& scene, ResourceManager& resourceManager) {
 	// Load model using existing function
 	auto model = loadModel(filepath, resourceManager);
 	if (!model) {

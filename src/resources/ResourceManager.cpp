@@ -11,20 +11,6 @@
 
 namespace Fishy {
 
-namespace MaterialFlags {
-constexpr uint32_t DoubleSided = 1u << 0;
-constexpr uint32_t AlphaModeShift = 1;
-constexpr uint32_t HasBaseColorMap = 1u << 3;
-constexpr uint32_t HasMetallicRoughnessMap = 1u << 4;
-constexpr uint32_t HasNormalMap = 1u << 5;
-constexpr uint32_t HasOcclusionMap = 1u << 6;
-constexpr uint32_t HasEmissiveMap = 1u << 7;
-constexpr uint32_t HasClearcoatMap = 1u << 8;
-constexpr uint32_t HasClearcoatRoughnessMap = 1u << 9;
-constexpr uint32_t HasClearcoatNormalMap = 1u << 10;
-constexpr uint32_t HasTransmissionMap = 1u << 11;
-} // namespace MaterialFlags
-
 ResourceManager::ResourceManager(VulkanDevice& device) : _device(device) {}
 
 ResourceManager::~ResourceManager() { clear(); }
@@ -32,7 +18,7 @@ ResourceManager::~ResourceManager() { clear(); }
 // Bindless Resource Management
 
 void ResourceManager::initBindlessResources(vk::DescriptorSet textureSet, vk::DescriptorSet ssboSet) {
-	LogSystem::get().info("[Bindless] Initializing ResourceManager...");
+	LogSystem::get().info("[Bindless] Initializing ResourceManager with EnTT resource caches...");
 
 	_bindlessTextureSet = textureSet;
 	_bindlessStorageBufferSet = ssboSet;
@@ -48,7 +34,8 @@ void ResourceManager::initBindlessResources(vk::DescriptorSet textureSet, vk::De
 		_freeBufferSlots.pop();
 
 	// Clear handle mappings
-	_textureToHandle.clear();
+	_textureIdToBindlessHandle.clear();
+	_texturePtrToBindlessHandle.clear();
 
 	// Create default textures and register them
 	createDefaultTextures();
@@ -56,15 +43,88 @@ void ResourceManager::initBindlessResources(vk::DescriptorSet textureSet, vk::De
 	LogSystem::get().info("[Bindless] ResourceManager ready (max {} resources)", MAX_BINDLESS_RESOURCES);
 }
 
-TextureHandle ResourceManager::registerTexture(std::shared_ptr<Texture> texture) {
+// ========== Texture API ==========
+
+entt::resource<Texture> ResourceManager::loadTexture(entt::id_type id, const std::string& filepath, vk::Format format) {
+	// Check if already cached
+	if (_textureCache.contains(id)) {
+		return _textureCache[id];
+	}
+
+	LogSystem::get().info("Loading texture: {}", filepath);
+
+	// Load using the TextureLoader - load() returns pair<iterator, bool>
+	auto [it, inserted] = _textureCache.load(id, _device, filepath, format);
+
+	// Register to bindless array using the shared_ptr from resource via .handle()
+	if (_bindlessTextureSet) {
+		auto bindlessHandle = registerTextureBindless(it->second.handle());
+		_textureIdToBindlessHandle[id] = bindlessHandle;
+	}
+
+	// Return resource handle from cache
+	return _textureCache[id];
+}
+
+entt::resource<Texture> ResourceManager::loadTextureFromMemory(entt::id_type id, const unsigned char* data, size_t size,
+															   vk::Format format) {
+	// Check if already cached
+	if (_textureCache.contains(id)) {
+		return _textureCache[id];
+	}
+
+	LogSystem::get().info("Loading embedded texture: id={} ({} bytes)", id, size);
+
+	// Load using the TextureLoader (encoded data overload)
+	auto [it, inserted] = _textureCache.load(id, _device, data, size, format);
+
+	// Register to bindless array using .handle() to get shared_ptr
+	if (_bindlessTextureSet) {
+		auto bindlessHandle = registerTextureBindless(it->second.handle());
+		_textureIdToBindlessHandle[id] = bindlessHandle;
+	}
+
+	// Return resource handle from cache
+	return _textureCache[id];
+}
+
+entt::resource<Texture> ResourceManager::getTexture(entt::id_type id) const {
+	// Note: const operator[] returns resource<const T>, we need to cast for the return type
+	// This is safe because we're just providing read access to the resource handle
+	if (_textureCache.contains(id)) {
+		return const_cast<entt::resource_cache<Texture, TextureLoader>&>(_textureCache)[id];
+	}
+	return {};
+}
+
+uint32_t ResourceManager::getTextureBindlessIndex(entt::id_type id) const {
+	auto it = _textureIdToBindlessHandle.find(id);
+	if (it != _textureIdToBindlessHandle.end()) {
+		return it->second.index;
+	}
+	return UINT32_MAX;
+}
+
+uint32_t ResourceManager::getTextureBindlessIndex(const Texture* texture) const {
+	if (!texture) {
+		return UINT32_MAX;
+	}
+	auto it = _texturePtrToBindlessHandle.find(texture);
+	if (it != _texturePtrToBindlessHandle.end()) {
+		return it->second.index;
+	}
+	return UINT32_MAX;
+}
+
+TextureHandle ResourceManager::registerTextureBindless(const std::shared_ptr<Texture>& texture) {
 	if (!texture) {
 		return TextureHandle{};
 	}
 
-	// Check if already registered
-	auto it = _textureToHandle.find(texture.get());
-	if (it != _textureToHandle.end()) {
-		return it->second;
+	// Check if already registered by pointer
+	auto existingIt = _texturePtrToBindlessHandle.find(texture.get());
+	if (existingIt != _texturePtrToBindlessHandle.end()) {
+		return existingIt->second;
 	}
 
 	// Check if bindless is initialized
@@ -102,31 +162,105 @@ TextureHandle ResourceManager::registerTexture(std::shared_ptr<Texture> texture)
 
 	_device->updateDescriptorSets(write, {});
 
-	// Store mapping
+	// Store mapping by pointer for reverse lookup
 	TextureHandle handle{index};
-	_textureToHandle[texture.get()] = handle;
+	_texturePtrToBindlessHandle[texture.get()] = handle;
 
 	return handle;
 }
 
-void ResourceManager::unregisterTexture(TextureHandle handle) {
-	if (!handle.isValid()) {
-		return;
+// Default Textures
+
+void ResourceManager::createDefaultTextures() {
+	LogSystem::get().info("Creating default textures (white, normal)...");
+
+	// Create 1x1 white texture (RGBA) - sRGB for color data
+	unsigned char whitePixel[] = {255, 255, 255, 255};
+	auto [whiteIt, whiteInserted] =
+		_textureCache.load(DEFAULT_WHITE_TEXTURE_ID, _device, whitePixel, 1, 1, vk::Format::eR8G8B8A8Srgb);
+	if (_bindlessTextureSet) {
+		auto bindlessHandle = registerTextureBindless(whiteIt->second.handle());
+		_textureIdToBindlessHandle[DEFAULT_WHITE_TEXTURE_ID] = bindlessHandle;
 	}
 
-	// Recycle slot
-	_freeTextureSlots.push(handle.index);
-
-	// Remove from mapping (reverse lookup)
-	for (auto it = _textureToHandle.begin(); it != _textureToHandle.end(); ++it) {
-		if (it->second.index == handle.index) {
-			_textureToHandle.erase(it);
-			break;
-		}
+	// Create 1x1 default normal map (pointing up: RGB = 128, 128, 255) - UNORM for data textures
+	unsigned char normalPixel[] = {128, 128, 255, 255};
+	auto [normalIt, normalInserted] =
+		_textureCache.load(DEFAULT_NORMAL_TEXTURE_ID, _device, normalPixel, 1, 1, vk::Format::eR8G8B8A8Unorm);
+	if (_bindlessTextureSet) {
+		auto bindlessHandle = registerTextureBindless(normalIt->second.handle());
+		_textureIdToBindlessHandle[DEFAULT_NORMAL_TEXTURE_ID] = bindlessHandle;
 	}
 
-	LogSystem::get().trace("[Bindless] Freed texture slot {}", handle.index);
+	// Create default cubemap for IBL placeholder (1x1 black cubemap)
+	_defaultCubemap = CubemapTexture::createDefault(_device);
+
+	LogSystem::get().info("Default textures created");
 }
+
+entt::resource<Texture> ResourceManager::getDefaultWhiteTexture() {
+	if (!_textureCache.contains(DEFAULT_WHITE_TEXTURE_ID)) {
+		createDefaultTextures();
+	}
+	return _textureCache[DEFAULT_WHITE_TEXTURE_ID];
+}
+
+entt::resource<Texture> ResourceManager::getDefaultNormalTexture() {
+	if (!_textureCache.contains(DEFAULT_NORMAL_TEXTURE_ID)) {
+		createDefaultTextures();
+	}
+	return _textureCache[DEFAULT_NORMAL_TEXTURE_ID];
+}
+
+std::shared_ptr<CubemapTexture> ResourceManager::getDefaultCubemap() {
+	if (!_defaultCubemap) {
+		createDefaultTextures();
+	}
+	return _defaultCubemap;
+}
+
+// ========== Mesh API ==========
+
+entt::resource<Mesh> ResourceManager::createMesh(entt::id_type id, std::vector<Vertex>& vertices,
+												 std::vector<uint32_t>& indices) {
+	// Check if already cached
+	if (_meshCache.contains(id)) {
+		return _meshCache[id];
+	}
+
+	LogSystem::get().trace("Creating mesh: id={}", id);
+	_meshCache.load(id, vertices, indices);
+	return _meshCache[id];
+}
+
+entt::resource<Mesh> ResourceManager::getMesh(entt::id_type id) const {
+	if (_meshCache.contains(id)) {
+		return const_cast<entt::resource_cache<Mesh, MeshLoader>&>(_meshCache)[id];
+	}
+	return {};
+}
+
+// ========== Material API ==========
+
+entt::resource<Material> ResourceManager::createMaterial(entt::id_type id) {
+	// Check if already cached
+	if (_materialCache.contains(id)) {
+		return _materialCache[id];
+	}
+
+	LogSystem::get().trace("Creating material: id={}", id);
+	_materialCache.load(id);
+	return _materialCache[id];
+}
+
+entt::resource<Material> ResourceManager::getMaterial(entt::id_type id) const {
+	if (_materialCache.contains(id)) {
+		return const_cast<entt::resource_cache<Material, MaterialLoader>&>(_materialCache)[id];
+	}
+	return {};
+}
+
+// ========== Buffer API ==========
 
 BufferHandle ResourceManager::registerBuffer(VulkanBuffer* buffer, vk::DeviceSize size) {
 	if (!buffer) {
@@ -176,69 +310,7 @@ void ResourceManager::unregisterBuffer(BufferHandle handle) {
 	LogSystem::get().trace("[Bindless] Freed buffer slot {}", handle.index);
 }
 
-uint32_t ResourceManager::getTextureIndex(const std::shared_ptr<Texture>& texture) const {
-	if (!texture) {
-		return UINT32_MAX;
-	}
-
-	auto it = _textureToHandle.find(texture.get());
-	if (it != _textureToHandle.end()) {
-		return it->second.index;
-	}
-
-	return UINT32_MAX;
-}
-
-// Default Textures
-
-void ResourceManager::createDefaultTextures() {
-	LogSystem::get().info("Creating default textures (white, normal)...");
-
-	// Create 1x1 white texture (RGBA) - sRGB for color data
-	unsigned char whitePixel[] = {255, 255, 255, 255};
-	_defaultWhiteTexture = std::make_shared<Texture>(_device, whitePixel, 1, 1, vk::Format::eR8G8B8A8Srgb);
-
-	// Create 1x1 default normal map (pointing up: RGB = 128, 128, 255) - UNORM for data textures
-	unsigned char normalPixel[] = {128, 128, 255, 255};
-	_defaultNormalTexture = std::make_shared<Texture>(_device, normalPixel, 1, 1, vk::Format::eR8G8B8A8Unorm);
-
-	_textureCache["__default_white__"] = _defaultWhiteTexture;
-	_textureCache["__default_normal__"] = _defaultNormalTexture;
-
-	// Create default cubemap for IBL placeholder (1x1 black cubemap)
-	_defaultCubemap = CubemapTexture::createDefault(_device);
-
-	// Auto-register default textures to bindless if initialized
-	if (_bindlessTextureSet) {
-		(void)registerTexture(_defaultWhiteTexture);
-		(void)registerTexture(_defaultNormalTexture);
-	}
-
-	LogSystem::get().info("Default textures created");
-}
-
-std::shared_ptr<Texture> ResourceManager::getDefaultWhiteTexture() {
-	if (!_defaultWhiteTexture) {
-		createDefaultTextures();
-	}
-	return _defaultWhiteTexture;
-}
-
-std::shared_ptr<Texture> ResourceManager::getDefaultNormalTexture() {
-	if (!_defaultNormalTexture) {
-		createDefaultTextures();
-	}
-	return _defaultNormalTexture;
-}
-
-std::shared_ptr<CubemapTexture> ResourceManager::getDefaultCubemap() {
-	if (!_defaultCubemap) {
-		createDefaultTextures();
-	}
-	return _defaultCubemap;
-}
-
-// Resource Loading
+// ========== Shader API ==========
 
 const vk::raii::ShaderModule& ResourceManager::getShader(const std::string& filepath) {
 	auto it = _shaderCache.find(filepath);
@@ -254,72 +326,24 @@ const vk::raii::ShaderModule& ResourceManager::getShader(const std::string& file
 	return insertedIt.first->second;
 }
 
-std::shared_ptr<Texture> ResourceManager::getTexture(const std::string& filepath, vk::Format format) {
-	if (filepath.empty()) {
-		return nullptr;
-	}
-
-	std::string cacheKey = filepath + "_fmt" + std::to_string(static_cast<int>(format));
-
-	auto it = _textureCache.find(cacheKey);
-	if (it != _textureCache.end()) {
-		return it->second;
-	}
-
-	try {
-		LogSystem::get().info("Loading texture: {}", filepath);
-		auto texture = std::make_shared<Texture>(_device, filepath, format);
-		_textureCache.emplace(cacheKey, texture);
-
-		// Auto-register to bindless if enabled
-		if (_bindlessTextureSet) {
-			(void)registerTexture(texture);
-		}
-
-		return texture;
-	} catch (const std::exception& e) {
-		LogSystem::get().error("Failed to load texture: {} Error: {}", filepath, e.what());
-		return nullptr;
-	}
-}
-
-std::shared_ptr<Texture> ResourceManager::loadTextureFromMemory(const unsigned char* data, size_t size,
-																const std::string& cacheKey, vk::Format format) {
-	std::string fullCacheKey = cacheKey + "_fmt" + std::to_string(static_cast<int>(format));
-
-	auto it = _textureCache.find(fullCacheKey);
-	if (it != _textureCache.end()) {
-		return it->second;
-	}
-
-	try {
-		LogSystem::get().info("Loading embedded texture: {} ({} bytes)", cacheKey, size);
-		auto texture = std::make_shared<Texture>(_device, data, size, format);
-		_textureCache.emplace(fullCacheKey, texture);
-
-		// Auto-register to bindless if enabled
-		if (_bindlessTextureSet) {
-			(void)registerTexture(texture);
-		}
-
-		return texture;
-	} catch (const std::exception& e) {
-		LogSystem::get().error("Failed to load embedded texture: {} Error: {}", cacheKey, e.what());
-		return nullptr;
-	}
-}
-
 // Lifecycle
 
 void ResourceManager::clear() {
 	LogSystem::get().info("Clearing ResourceManager...");
 
+	// Clear EnTT caches
 	_textureCache.clear();
-	_shaderCache.clear();
-	_textureToHandle.clear();
+	_meshCache.clear();
+	_materialCache.clear();
 
-	_defaultWhiteTexture.reset();
-	_defaultNormalTexture.reset();
+	// Clear shader cache
+	_shaderCache.clear();
+
+	// Clear bindless mappings
+	_textureIdToBindlessHandle.clear();
+	_texturePtrToBindlessHandle.clear();
+
+	// Reset cubemap
 	_defaultCubemap.reset();
 
 	// Reset bindless state

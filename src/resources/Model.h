@@ -2,16 +2,28 @@
 
 #include "../rendering/Material.h"
 #include "Mesh.h"
-#include <memory>
+#include <entt/entt.hpp>
 #include <vector>
 
 namespace Fishy {
 
+/**
+ * @brief A single primitive within a Model.
+ *
+ * Uses entt::resource handles for mesh and material, integrating with the
+ * ResourceManager's caching system.
+ */
 struct Primitive {
-	std::shared_ptr<Mesh> mesh;
-	std::shared_ptr<Material> material;
+	entt::resource<Mesh> mesh;
+	entt::resource<Material> material;
 };
 
+/**
+ * @brief A loaded 3D model containing multiple primitives.
+ *
+ * Each primitive consists of a mesh and a material. This is typically
+ * loaded from glTF files via ModelLoader.
+ */
 class Model {
 public:
 	Model() = default;

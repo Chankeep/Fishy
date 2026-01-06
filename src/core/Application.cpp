@@ -40,7 +40,7 @@ Application::Application()
 	// Try to load a default model into the scene
 	auto modelPath = "assets/models/DamagedHelmet.glb";
 	LogSystem::get().info("Loading default model: {}", modelPath);
-	if (!ModelLoader::loadModelIntoScene(modelPath, *_scene, &_resourceManager)) {
+	if (!ModelLoader::loadModelIntoScene(modelPath, *_scene, _resourceManager)) {
 		LogSystem::get().warn("Failed to load model, creating default geometry");
 		createDefaultScene();
 	}
@@ -171,13 +171,14 @@ void Application::createDefaultScene() {
 
 	std::vector<uint32_t> indices = {0, 1, 2, 2, 3, 0, 4, 5, 6, 6, 7, 4};
 
-	auto mesh = std::make_shared<Mesh>(vertices, indices);
-	auto material = std::make_shared<Material>();
+	// Use ResourceManager to create cached mesh and material
+	auto meshHandle = _resourceManager.createMesh(entt::hashed_string{"__default_quad_mesh__"}, vertices, indices);
+	auto materialHandle = _resourceManager.createMaterial(entt::hashed_string{"__default_material__"});
 
 	// Create entity with mesh and renderer components
 	Entity entity = _scene->createEntity("DefaultQuad");
-	entity.addComponent<MeshComponent>(mesh);
-	entity.addComponent<MeshRendererComponent>(material);
+	entity.addComponent<MeshComponent>(meshHandle);
+	entity.addComponent<MeshRendererComponent>(materialHandle);
 }
 
 } // namespace Fishy

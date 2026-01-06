@@ -972,42 +972,75 @@ void Renderer::buildInstanceDataFromScene(Scene& scene) {
 		// Build instance data from transform
 		InstanceData inst = InstanceData::fromModelMatrix(transform.worldMatrix);
 
-		// Fill material properties
-		const auto* mat = meshRenderer.material.get();
-		if (mat) {
-			inst.baseColorFactor = mat->params.baseColorFactor;
-			inst.metallicFactor = mat->params.metallicFactor;
-			inst.roughnessFactor = mat->params.roughnessFactor;
-			inst.normalScale = mat->params.normalScale;
-			inst.occlusionStrength = mat->params.occlusionStrength;
-			inst.emissiveFactor = glm::vec4(mat->params.emissiveFactor, mat->params.emissiveStrength);
-			inst.alphaCutoff = mat->params.alphaCutoff;
+		// Fill material properties using entt::resource operator->
+		if (meshRenderer.material) {
+			const Material& mat = *meshRenderer.material;
+			inst.baseColorFactor = mat.params.baseColorFactor;
+			inst.metallicFactor = mat.params.metallicFactor;
+			inst.roughnessFactor = mat.params.roughnessFactor;
+			inst.normalScale = mat.params.normalScale;
+			inst.occlusionStrength = mat.params.occlusionStrength;
+			inst.emissiveFactor = glm::vec4(mat.params.emissiveFactor, mat.params.emissiveStrength);
+			inst.alphaCutoff = mat.params.alphaCutoff;
 
-			// Get texture indices from ResourceManager
-			inst.baseColorIndex =
-				mat->baseColorMap ? _resourceManager.getTextureIndex(mat->baseColorMap) : INVALID_TEXTURE_INDEX;
-			inst.metallicRoughnessIndex = mat->metallicRoughnessMap
-											  ? _resourceManager.getTextureIndex(mat->metallicRoughnessMap)
+			// Extension material properties
+			inst.clearcoatFactor = mat.params.clearcoatFactor;
+			inst.clearcoatRoughnessFactor = mat.params.clearcoatRoughnessFactor;
+			inst.transmissionFactor = mat.params.transmissionFactor;
+			inst.ior = mat.params.ior;
+
+			// Get texture indices from ResourceManager using pointer lookup
+			// entt::resource uses operator* to dereference, &(*handle) gets pointer
+			inst.baseColorIndex = mat.baseColorMap ? _resourceManager.getTextureBindlessIndex(&(*mat.baseColorMap))
+												   : INVALID_TEXTURE_INDEX;
+			inst.metallicRoughnessIndex = mat.metallicRoughnessMap
+											  ? _resourceManager.getTextureBindlessIndex(&(*mat.metallicRoughnessMap))
 											  : INVALID_TEXTURE_INDEX;
 			inst.normalIndex =
-				mat->normalMap ? _resourceManager.getTextureIndex(mat->normalMap) : INVALID_TEXTURE_INDEX;
-			inst.occlusionIndex =
-				mat->occlusionMap ? _resourceManager.getTextureIndex(mat->occlusionMap) : INVALID_TEXTURE_INDEX;
+				mat.normalMap ? _resourceManager.getTextureBindlessIndex(&(*mat.normalMap)) : INVALID_TEXTURE_INDEX;
+			inst.occlusionIndex = mat.occlusionMap ? _resourceManager.getTextureBindlessIndex(&(*mat.occlusionMap))
+												   : INVALID_TEXTURE_INDEX;
 			inst.emissiveIndex =
-				mat->emissiveMap ? _resourceManager.getTextureIndex(mat->emissiveMap) : INVALID_TEXTURE_INDEX;
+				mat.emissiveMap ? _resourceManager.getTextureBindlessIndex(&(*mat.emissiveMap)) : INVALID_TEXTURE_INDEX;
+
+			// Extension texture indices
+			inst.clearcoatIndex = mat.clearcoatMap ? _resourceManager.getTextureBindlessIndex(&(*mat.clearcoatMap))
+												   : INVALID_TEXTURE_INDEX;
+			inst.clearcoatRoughnessIndex = mat.clearcoatRoughnessMap
+											   ? _resourceManager.getTextureBindlessIndex(&(*mat.clearcoatRoughnessMap))
+											   : INVALID_TEXTURE_INDEX;
+			inst.clearcoatNormalIndex = mat.clearcoatNormalMap
+											? _resourceManager.getTextureBindlessIndex(&(*mat.clearcoatNormalMap))
+											: INVALID_TEXTURE_INDEX;
+			inst.transmissionIndex = mat.transmissionMap
+										 ? _resourceManager.getTextureBindlessIndex(&(*mat.transmissionMap))
+										 : INVALID_TEXTURE_INDEX;
 
 			// Build texture flags
 			uint32_t flags = 0;
-			if (mat->baseColorMap)
+			if (mat.baseColorMap)
 				flags |= (1 << 0);
-			if (mat->metallicRoughnessMap)
+			if (mat.metallicRoughnessMap)
 				flags |= (1 << 1);
-			if (mat->normalMap)
+			if (mat.normalMap)
 				flags |= (1 << 2);
-			if (mat->occlusionMap)
+			if (mat.occlusionMap)
 				flags |= (1 << 3);
-			if (mat->emissiveMap)
+			if (mat.emissiveMap)
 				flags |= (1 << 4);
+			// Extension texture flags
+			if (mat.clearcoatMap)
+				flags |= (1 << 5);
+			if (mat.clearcoatRoughnessMap)
+				flags |= (1 << 6);
+			if (mat.clearcoatNormalMap)
+				flags |= (1 << 7);
+			if (mat.transmissionMap)
+				flags |= (1 << 8);
+			if (mat.params.doubleSided)
+				flags |= (1 << 9);
+			// AlphaMode uses bits 10-11 (2 bits: 0=OPAQUE, 1=MASK, 2=BLEND)
+			flags |= (static_cast<uint32_t>(mat.params.alphaMode) << 10);
 			inst.flags = flags;
 		}
 

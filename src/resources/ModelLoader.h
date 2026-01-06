@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Model.h"
-#include <memory>
+#include <entt/entt.hpp>
 #include <string>
 
 #if defined(__INTELLISENSE__) || !defined(USE_CPP20_MODULES)
@@ -19,8 +19,8 @@ class ModelLoader {
 public:
 	// Loads a glTF model from the specified path.
 	// Uses ResourceManager to load textures if provided.
-	[[nodiscard]] static std::shared_ptr<Model> loadModel(const std::string& filepath,
-														  ResourceManager* resourceManager = nullptr);
+	// Returns entt::resource<Model> for cache-friendly management.
+	[[nodiscard]] static entt::resource<Model> loadModel(const std::string& filepath, ResourceManager& resourceManager);
 
 	/**
 	 * @brief Load a glTF model directly into a Scene as entities.
@@ -33,18 +33,17 @@ public:
 	 * @param resourceManager ResourceManager for texture loading.
 	 * @return True if loading succeeded.
 	 */
-	static bool loadModelIntoScene(const std::string& filepath, Scene& scene,
-								   ResourceManager* resourceManager = nullptr);
+	static bool loadModelIntoScene(const std::string& filepath, Scene& scene, ResourceManager& resourceManager);
 
 private:
 	// Forward declarations for internal use
 	struct LoadContext;
 
 	// Helper functions extracted from loadModel
-	static std::shared_ptr<Texture> loadGltfTexture(const LoadContext& ctx, int textureIndex, vk::Format format,
-													const std::string& texName);
-	static std::shared_ptr<Material> loadGltfMaterial(const LoadContext& ctx, int materialIndex);
-	static void processGltfNode(const LoadContext& ctx, int nodeIndex, std::shared_ptr<Model>& model);
+	static entt::resource<Texture> loadGltfTexture(const LoadContext& ctx, int textureIndex, vk::Format format,
+												   const std::string& texName);
+	static entt::resource<Material> loadGltfMaterial(const LoadContext& ctx, int materialIndex);
+	static void processGltfNode(const LoadContext& ctx, int nodeIndex, Model& model);
 };
 
 } // namespace Fishy
