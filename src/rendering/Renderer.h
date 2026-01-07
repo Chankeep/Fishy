@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <volk.h>
 
 #if defined(__INTELLISENSE__) || !defined(USE_CPP20_MODULES)
@@ -10,6 +11,7 @@ import vulkan_hpp;
 
 #include "../resources/IBLEnvironment.h"
 #include "../resources/Mesh.h"
+#include "../resources/MeshGenerator.h"
 #include "../resources/Model.h"
 #include "DrawTypes.h"
 #include "GraphicsPipeline.h"
@@ -93,6 +95,8 @@ private:
 	void freeCommandBuffers();
 	void recreateSwapChain();
 	void createGraphicsPipeline();
+	void createSkyboxPipeline();
+	void createSkyboxMesh();
 	void createUniformBuffers();
 	void createGlobalSetLayout();
 	void createBindlessTextureSetLayout();
@@ -109,6 +113,7 @@ private:
 
 	void updateInstanceDataBuffer();
 	void renderIndirect(const vk::raii::CommandBuffer& cmd);
+	void renderSkybox(const vk::raii::CommandBuffer& cmd);
 	[[nodiscard]] vk::Format findDepthFormat();
 	void writeIBLDescriptors();
 
@@ -144,6 +149,7 @@ private:
 
 	// Graphics Pipeline
 	std::unique_ptr<GraphicsPipeline> _graphicsPipeline;
+	std::unique_ptr<GraphicsPipeline> _skyboxPipeline;
 
 	// Descriptor Set Layouts
 	vk::raii::DescriptorSetLayout _globalSetLayout = nullptr;				 // Set 0: Global Data
@@ -186,6 +192,11 @@ private:
 	std::unique_ptr<VulkanBuffer> _unifiedVertexBuffer;
 	std::unique_ptr<VulkanBuffer> _unifiedIndexBuffer;
 	bool _unifiedBuffersDirty = true;
+
+	// skybox geometry buffers
+	std::unique_ptr<VulkanBuffer> _skyboxVertexBuffer;
+	std::unique_ptr<VulkanBuffer> _skyboxIndexBuffer;
+	uint32_t _skyboxIndexCount;
 
 	// IBL environment (externally owned)
 	IBLEnvironment* _iblEnvironment = nullptr;

@@ -1,17 +1,18 @@
 #include "Renderer.h"
 
-#include "../ecs/components/MeshComponent.h"
-#include "../ecs/components/MeshRendererComponent.h"
-#include "../ecs/components/TransformComponent.h"
-#include "../ecs/systems/RenderSystem.h" // For RenderParams
-#include "../scene/Scene.h"
 #include "PipelineBuilder.h"
 #include "core/CommandPool.h"
 #include "core/LogSystem.h"
 #include "core/VulkanDevice.h"
 #include "core/VulkanUtils.h"
 #include "core/Window.h"
+#include "ecs/components/MeshComponent.h"
+#include "ecs/components/MeshRendererComponent.h"
+#include "ecs/components/TransformComponent.h"
+#include "ecs/systems/RenderSystem.h" // For RenderParams
+#include "resources/MeshGenerator.h"
 #include "resources/ResourceManager.h"
+#include "scene/Scene.h"
 #include "vulkan/vulkan.hpp"
 
 #include <algorithm>
@@ -43,6 +44,8 @@ Renderer::Renderer(VulkanDevice& device, Window& window, ResourceManager& resour
 
 	loadPipelineCache();
 	createGraphicsPipeline();
+	createSkyboxPipeline();
+	createSkyboxMesh();
 
 	createUniformBuffers();
 	createIndirectBuffer();
@@ -135,6 +138,7 @@ void Renderer::renderScene(Scene& scene, const RenderParams& params,
 	buildDrawBatchesFromScene(scene);
 
 	renderIndirect(cmd);
+	renderSkybox(cmd);
 
 	cmd.endRendering();
 
@@ -469,6 +473,21 @@ void Renderer::renderIndirect(const vk::raii::CommandBuffer& cmd) {
 	}
 }
 
+void Renderer::renderSkybox(const vk::raii::CommandBuffer& cmd) {
+	if (!_skyboxPipeline || !_skyboxVertexBuffer || !_skyboxIndexBuffer || !_iblEnvironment) {
+		return; // 如果没有 IBL 环境，不渲染 Skybox
+	}
+	_skyboxPipeline->bind(cmd);
+	// 绑定 Set 0（Global UBO + IBL textures）
+	cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *_skyboxPipeline->getLayout(), 0,
+						   *_frames[_currentFrameIndex].descriptorSet, nullptr);
+	// 绑定 Skybox 的顶点/索引缓冲
+	cmd.bindVertexBuffers(0, _skyboxVertexBuffer->getBuffer(), {0});
+	cmd.bindIndexBuffer(_skyboxIndexBuffer->getBuffer(), 0, vk::IndexType::eUint32);
+	// Draw
+	cmd.drawIndexed(_skyboxIndexCount, 1, 0, 0, 0);
+}
+
 void Renderer::createGraphicsPipeline() {
 	LogSystem::get().info("Creating graphics pipeline...");
 	const auto& vertShader = _resourceManager.getShader("shaders/PBRshader.slang", "vertMain");
@@ -495,6 +514,75 @@ void Renderer::createGraphicsPipeline() {
 
 	_graphicsPipeline = builder.build(*_device, nullptr, _pipelineCache);
 	LogSystem::get().info("Graphics pipeline created successfully");
+}
+
+void Renderer::createSkyboxPipeline() {
+	LogSystem::get().info("Creating skybox pipeline...");
+
+	const auto& vertShader = _resourceManager.getShader("shaders/Skybox.slang", "vertMain");
+	const auto& fragShader = _resourceManager.getShader("shaders/Skybox.slang", "fragMain");
+
+	auto bindingDescription = Vertex::getBindingDescription();
+	auto attributeDescriptions = Vertex::getAttributeDescriptions();
+
+	vk::PipelineVertexInputStateCreateInfo vertexInputInfo{
+		.vertexBindingDescriptionCount = 1,
+		.pVertexBindingDescriptions = &bindingDescription,
+		.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size()),
+		.pVertexAttributeDescriptions = attributeDescriptions.data()};
+
+	PipelineBuilder builder(**_device);
+
+	builder.setShaders(vertShader, fragShader, "main", "main")
+		.setVertexInput(vertexInputInfo)
+		.setInputTopology(vk::PrimitiveTopology::eTriangleList)
+		.setCullMode(vk::CullModeFlagBits::eFront, vk::FrontFace::eCounterClockwise)
+		.setLayout({*_globalSetLayout}, {})
+		.setRenderingFormats({_swapChain->getFormat()}, _depthFormat)
+		.setDepthStencilTest(false, true, vk::CompareOp::eLessOrEqual, false, vk::CompareOp::eAlways);
+
+	_skyboxPipeline = builder.build(*_device, nullptr, _pipelineCache);
+	LogSystem::get().info("Skybox pipeline created successfully");
+}
+
+void Renderer::createSkyboxMesh() {
+	LogSystem::get().info("Creating skybox mesh...");
+
+	auto cubeMesh = MeshGenerator::createCube();
+	const auto& vertices = cubeMesh->getVertices();
+	const auto& indices = cubeMesh->getIndices();
+
+	_skyboxIndexCount = indices.size();
+
+	vk::DeviceSize vertexBufferSize = sizeof(Vertex) * vertices.size();
+	_skyboxVertexBuffer = std::make_unique<VulkanBuffer>(
+		_device, vertexBufferSize, vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst,
+		vk::MemoryPropertyFlagBits::eDeviceLocal);
+
+	VulkanBuffer stagingVertex(_device, vertexBufferSize, vk::BufferUsageFlagBits::eTransferSrc,
+							   vk::MemoryPropertyFlagBits::eHostCoherent | vk::MemoryPropertyFlagBits::eHostVisible);
+
+	stagingVertex.map();
+	stagingVertex.upload(vertices.data(), vertexBufferSize);
+
+	vk::DeviceSize indexBufferSize = sizeof(uint32_t) * indices.size();
+	_skyboxIndexBuffer = std::make_unique<VulkanBuffer>(
+		_device, indexBufferSize, vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst,
+		vk::MemoryPropertyFlagBits::eDeviceLocal);
+
+	auto stagingIndex =
+		VulkanBuffer(_device, indexBufferSize, vk::BufferUsageFlagBits::eTransferSrc,
+					 vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+	stagingIndex.map();
+	stagingIndex.upload(indices.data(), indexBufferSize);
+
+	VulkanUtils::executeImmediate(_device, [&](auto& cmd) {
+		cmd.copyBuffer(stagingVertex.getBuffer(), _skyboxVertexBuffer->getBuffer(),
+					   vk::BufferCopy{.size = vertexBufferSize});
+		cmd.copyBuffer(stagingIndex.getBuffer(), _skyboxIndexBuffer->getBuffer(),
+					   vk::BufferCopy{.size = indexBufferSize});
+	});
+	LogSystem::get().info("Skybox mesh created: {} vertices, {} indices", vertices.size(), indices.size());
 }
 
 void Renderer::createUniformBuffers() {
