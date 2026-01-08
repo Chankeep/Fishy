@@ -7,6 +7,9 @@ namespace Fishy {
 
 Texture::Texture(const VulkanDevice& device, const std::string& path, vk::Format format)
 	: _device(device), _format(format) {
+#ifndef NDEBUG
+	_debugName = path;
+#endif
 	createTextureImage(path);
 	createTextureImageView();
 	createTextureSampler();
@@ -14,6 +17,10 @@ Texture::Texture(const VulkanDevice& device, const std::string& path, vk::Format
 
 Texture::Texture(const VulkanDevice& device, const unsigned char* data, size_t size, vk::Format format)
 	: _device(device), _format(format) {
+#ifndef NDEBUG
+	static int embeddedId = 0;
+	_debugName = "Texture_Embedded_" + std::to_string(embeddedId++);
+#endif
 	createTextureImageFromMemory(data, size);
 	createTextureImageView();
 	createTextureSampler();
@@ -21,6 +28,9 @@ Texture::Texture(const VulkanDevice& device, const unsigned char* data, size_t s
 
 Texture::Texture(const VulkanDevice& device, const unsigned char* pixels, int width, int height, vk::Format format)
 	: _device(device), _format(format) {
+#ifndef NDEBUG
+	_debugName = "Texture_Generated_" + std::to_string(width) + "x" + std::to_string(height);
+#endif
 	createTextureFromPixels(pixels, width, height);
 	createTextureImageView();
 	createTextureSampler();
@@ -112,6 +122,10 @@ void Texture::createTextureFromPixels(const unsigned char* pixels, int texWidth,
 
 	LogSystem::get().trace("VMA created texture image handle: {}", reinterpret_cast<uintptr_t>(_image));
 
+#ifndef NDEBUG
+	VulkanUtils::setDebugName(_device, _image, _debugName.c_str());
+#endif
+
 	// Transition layout and copy buffer to image
 	transitionImageLayout(vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
 	copyBufferToImage(stagingBuffer, texWidth, texHeight);
@@ -183,6 +197,10 @@ void Texture::createTextureImageView() {
 	};
 
 	_imageView = vk::raii::ImageView(*_device, viewInfo);
+
+#ifndef NDEBUG
+	VulkanUtils::setDebugName(_device, *_imageView, vk::ObjectType::eImageView, (_debugName + "_View").c_str());
+#endif
 }
 
 void Texture::createTextureSampler() {
@@ -206,6 +224,10 @@ void Texture::createTextureSampler() {
 	};
 
 	_sampler = vk::raii::Sampler(*_device, samplerInfo);
+
+#ifndef NDEBUG
+	VulkanUtils::setDebugName(_device, *_sampler, vk::ObjectType::eSampler, (_debugName + "_Sampler").c_str());
+#endif
 }
 
 } // namespace Fishy

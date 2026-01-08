@@ -11,6 +11,9 @@
 namespace Fishy {
 
 CubemapTexture::CubemapTexture(const VulkanDevice& device, const std::string& path) : _device(device) {
+#ifndef NDEBUG
+	_debugName = path;
+#endif
 	loadFromKTX2(path);
 	createImageView();
 	createSampler();
@@ -136,6 +139,10 @@ void CubemapTexture::loadFromKTX2(const std::string& path) {
 		throw std::runtime_error("Failed to create VMA image for cubemap");
 	}
 
+#ifndef NDEBUG
+	VulkanUtils::setDebugName(_device, _image, _debugName.c_str());
+#endif
+
 	// Execute all GPU commands in a single submission
 	VulkanUtils::executeImmediate(_device, [&](auto& cmd) {
 		// Transition to transfer dst
@@ -203,6 +210,10 @@ void CubemapTexture::createImageView() {
 	};
 
 	_imageView = vk::raii::ImageView(*_device, viewInfo);
+
+#ifndef NDEBUG
+	VulkanUtils::setDebugName(_device, *_imageView, vk::ObjectType::eImageView, (_debugName + "_View").c_str());
+#endif
 }
 
 void CubemapTexture::createSampler() {

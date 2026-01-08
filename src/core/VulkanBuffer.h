@@ -9,7 +9,7 @@ namespace Fishy {
 class VulkanBuffer {
 public:
 	VulkanBuffer(const VulkanDevice& device, vk::DeviceSize size, vk::BufferUsageFlags usage,
-				 vk::MemoryPropertyFlags properties);
+				 vk::MemoryPropertyFlags properties, const char* debugName = nullptr);
 	~VulkanBuffer();
 
 	VulkanBuffer(const VulkanBuffer&) = delete;
@@ -48,6 +48,10 @@ private:
 	VkBuffer _buffer = VK_NULL_HANDLE;
 	VmaAllocation _vmaAllocation = nullptr;
 	void* _mappedData = nullptr;
+
+#ifndef NDEBUG
+	std::string _debugName;
+#endif
 };
 
 } // namespace Fishy

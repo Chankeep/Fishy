@@ -56,6 +56,10 @@ private:
 	VmaAllocation _vmaAllocation = nullptr;
 	vk::raii::ImageView _imageView = nullptr;
 	vk::raii::Sampler _sampler = nullptr;
+
+#ifndef NDEBUG
+	std::string _debugName;
+#endif
 };
 
 } // namespace Fishy

@@ -1,11 +1,5 @@
 #pragma once
 
-#if defined(__INTELLISENSE__) || !defined(USE_CPP20_MODULES)
-#include <vulkan/vulkan_raii.hpp>
-#else
-import vulkan_hpp;
-#endif
-
 #include "VulkanDevice.h"
 
 namespace Fishy {
@@ -14,6 +8,52 @@ namespace Fishy {
  * @brief Utility functions for Vulkan operations
  */
 namespace VulkanUtils {
+
+#ifndef NDEBUG
+/**
+ * @brief Set the debug name for a Vulkan object (VK_EXT_debug_utils)
+ */
+template <typename T>
+inline void setDebugName(const VulkanDevice& device, T handle, vk::ObjectType type, const char* name) {
+	if (!name)
+		return;
+	VkDebugUtilsObjectNameInfoEXT nameInfo = {VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT};
+	nameInfo.objectType = static_cast<VkObjectType>(type);
+	nameInfo.objectHandle = reinterpret_cast<uint64_t>(static_cast<typename T::NativeType>(handle));
+	nameInfo.pObjectName = name;
+
+	vkSetDebugUtilsObjectNameEXT(*(*device), &nameInfo);
+}
+
+// Helper overload for raw VkImage
+inline void setDebugName(const VulkanDevice& device, VkImage handle, const char* name) {
+	if (!name)
+		return;
+	VkDebugUtilsObjectNameInfoEXT nameInfo = {VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT};
+	nameInfo.objectType = VK_OBJECT_TYPE_IMAGE;
+	nameInfo.objectHandle = reinterpret_cast<uint64_t>(handle);
+	nameInfo.pObjectName = name;
+
+	vkSetDebugUtilsObjectNameEXT(*(*device), &nameInfo);
+}
+
+// Helper overload for raw VkBuffer
+inline void setDebugName(const VulkanDevice& device, VkBuffer handle, const char* name) {
+	if (!name)
+		return;
+	VkDebugUtilsObjectNameInfoEXT nameInfo = {VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT};
+	nameInfo.objectType = VK_OBJECT_TYPE_BUFFER;
+	nameInfo.objectHandle = reinterpret_cast<uint64_t>(handle);
+	nameInfo.pObjectName = name;
+
+	vkSetDebugUtilsObjectNameEXT(*(*device), &nameInfo);
+}
+#else
+// No-op in release
+template <typename T> inline void setDebugName(const VulkanDevice&, T, vk::ObjectType, const char*) {}
+inline void setDebugName(const VulkanDevice&, VkImage, const char*) {}
+inline void setDebugName(const VulkanDevice&, VkBuffer, const char*) {}
+#endif
 
 /**
  * @brief Execute commands immediately using a one-time command buffer

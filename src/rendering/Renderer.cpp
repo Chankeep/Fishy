@@ -389,6 +389,11 @@ void Renderer::createIndirectBuffer() {
 			vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
 
 		_frames[i].indirectBuffer->map();
+
+#ifndef NDEBUG
+		std::string debugName = "IndirectBuffer_Frame" + std::to_string(i);
+		VulkanUtils::setDebugName(_device, _frames[i].indirectBuffer->getBuffer(), debugName.c_str());
+#endif
 	}
 	LogSystem::get().trace("Created indirect draw buffers ({} bytes each)", bufferSize);
 }
@@ -527,6 +532,11 @@ void Renderer::createSkyboxMesh() {
 		_device, indexBufferSize, vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst,
 		vk::MemoryPropertyFlagBits::eDeviceLocal);
 
+#ifndef NDEBUG
+	VulkanUtils::setDebugName(_device, _skyboxVertexBuffer->getBuffer(), "Skybox_VertexBuffer");
+	VulkanUtils::setDebugName(_device, _skyboxIndexBuffer->getBuffer(), "Skybox_IndexBuffer");
+#endif
+
 	auto stagingIndex =
 		VulkanBuffer(_device, indexBufferSize, vk::BufferUsageFlagBits::eTransferSrc,
 					 vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
@@ -553,6 +563,11 @@ void Renderer::createUniformBuffers() {
 
 		// Persistent mapping: map once and keep it mapped
 		_frames[i].uniformBuffer->map();
+
+#ifndef NDEBUG
+		std::string debugName = "GlobalUBO_Frame" + std::to_string(i);
+		VulkanUtils::setDebugName(_device, _frames[i].uniformBuffer->getBuffer(), debugName.c_str());
+#endif
 	}
 }
 
@@ -791,6 +806,11 @@ void Renderer::createDepthResources() {
 		throw std::runtime_error("Failed to create VMA depth image!");
 	}
 
+#ifndef NDEBUG
+	std::string debugName = "DepthImage_" + std::to_string(extent.width) + "x" + std::to_string(extent.height);
+	VulkanUtils::setDebugName(_device, _depthImage, debugName.c_str());
+#endif
+
 	vk::ImageViewCreateInfo viewInfo{.image = _depthImage,
 									 .viewType = vk::ImageViewType::e2D,
 									 .format = _depthFormat,
@@ -805,6 +825,9 @@ void Renderer::createDepthResources() {
 	}
 
 	_depthImageView = vk::raii::ImageView(*_device, viewInfo);
+#ifndef NDEBUG
+	VulkanUtils::setDebugName(_device, *_depthImageView, vk::ObjectType::eImageView, (debugName + "_View").c_str());
+#endif
 	LogSystem::get().trace("Created depth image view");
 
 	// Perform explicit layout transition Undefined -> DepthStencilAttachmentOptimal
@@ -921,6 +944,11 @@ void Renderer::updateInstanceDataBuffer() {
 
 		// BDA: No descriptor update needed - address is passed via push constants
 		LogSystem::get().trace("[Bindless] Frame {} allocated instance SSBO ({} bytes)", _currentFrameIndex, allocSize);
+
+#ifndef NDEBUG
+		std::string debugName = "InstanceSSBO_Frame" + std::to_string(_currentFrameIndex);
+		VulkanUtils::setDebugName(_device, frame.instanceDataBuffer->getBuffer(), debugName.c_str());
+#endif
 	}
 
 	// Upload data
@@ -969,6 +997,11 @@ void Renderer::buildUnifiedBuffersFromScene(Scene& scene) {
 	_unifiedIndexBuffer = std::make_unique<VulkanBuffer>(
 		_device, indexBufferSize, vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst,
 		vk::MemoryPropertyFlagBits::eDeviceLocal);
+
+#ifndef NDEBUG
+	VulkanUtils::setDebugName(_device, _unifiedVertexBuffer->getBuffer(), "UnifiedVertexBuffer");
+	VulkanUtils::setDebugName(_device, _unifiedIndexBuffer->getBuffer(), "UnifiedIndexBuffer");
+#endif
 
 	auto stagingVertex =
 		VulkanBuffer(_device, vertexBufferSize, vk::BufferUsageFlagBits::eTransferSrc,

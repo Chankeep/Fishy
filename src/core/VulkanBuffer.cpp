@@ -39,8 +39,13 @@ static std::string getBufferUsageDescription(vk::BufferUsageFlags usage) {
 }
 
 VulkanBuffer::VulkanBuffer(const VulkanDevice& device, vk::DeviceSize size, vk::BufferUsageFlags usage,
-						   vk::MemoryPropertyFlags properties)
+						   vk::MemoryPropertyFlags properties, const char* debugName)
 	: _device(device), _size(size) {
+
+#ifndef NDEBUG
+	if (debugName)
+		_debugName = debugName;
+#endif
 
 	// 1. Create Buffer using VMA
 	VkBufferCreateInfo bufferInfo = {
@@ -81,6 +86,12 @@ VulkanBuffer::VulkanBuffer(const VulkanDevice& device, vk::DeviceSize size, vk::
 
 	std::string usageDesc = getBufferUsageDescription(usage);
 	LogSystem::get().trace("Created {} buffer: {} bytes ({:.2f} MB)", usageDesc, size, size / (1024.0 * 1024.0));
+
+#ifndef NDEBUG
+	if (!_debugName.empty()) {
+		VulkanUtils::setDebugName(_device, _buffer, _debugName.c_str());
+	}
+#endif
 }
 
 VulkanBuffer::~VulkanBuffer() {
