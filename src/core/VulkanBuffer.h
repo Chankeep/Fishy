@@ -21,6 +21,7 @@ public:
 	[[nodiscard]] vk::Buffer getBuffer() const { return vk::Buffer(_buffer); }
 	[[nodiscard]] vk::DeviceSize getSize() const { return _size; }
 	[[nodiscard]] void* getMappedPtr() const { return _mappedData; }
+	[[nodiscard]] uint64_t getDeviceAddress() const;
 	// Maps the memory to a host pointer.
 	// Use for HostVisible memory.
 	void* map(vk::DeviceSize offset = 0, vk::DeviceSize size = VK_WHOLE_SIZE);

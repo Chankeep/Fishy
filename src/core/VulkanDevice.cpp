@@ -58,6 +58,19 @@ void VulkanDevice::createLogicalDevice(const vkb::PhysicalDevice& physicalDevice
 	features13.synchronization2 = true;
 	features13.dynamicRendering = true;
 
+	// Vulkan 1.2 features (includes descriptor indexing - promoted from extension)
+	vk::PhysicalDeviceVulkan12Features features12;
+	features12.bufferDeviceAddress = true;
+	// Bindless textures
+	features12.shaderSampledImageArrayNonUniformIndexing = true;
+	features12.descriptorBindingSampledImageUpdateAfterBind = true;
+	// Bindless storage buffers (for dynamic instance data pools)
+	features12.descriptorBindingStorageBufferUpdateAfterBind = true;
+	// Common features
+	features12.runtimeDescriptorArray = true;
+	features12.descriptorBindingPartiallyBound = true;
+	features12.descriptorBindingVariableDescriptorCount = true;
+
 	// Vulkan 1.1 features
 	vk::PhysicalDeviceVulkan11Features features11;
 	features11.shaderDrawParameters = true;
@@ -65,35 +78,25 @@ void VulkanDevice::createLogicalDevice(const vkb::PhysicalDevice& physicalDevice
 	// Core features
 	vk::PhysicalDeviceFeatures2 features2;
 	features2.features.samplerAnisotropy = true;
+	features2.features.shaderInt64 = true; // Required for BDA (uint64_t in shaders)
 
 	// Extended dynamic state
 	vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT featuresExt;
 	featuresExt.extendedDynamicState = true;
 
-	// Descriptor indexing for bindless resources
-	vk::PhysicalDeviceDescriptorIndexingFeatures descriptorIndexingFeatures;
-	// Bindless textures
-	descriptorIndexingFeatures.shaderSampledImageArrayNonUniformIndexing = true;
-	descriptorIndexingFeatures.descriptorBindingSampledImageUpdateAfterBind = true;
-	// Bindless storage buffers (for dynamic instance data pools)
-	descriptorIndexingFeatures.descriptorBindingStorageBufferUpdateAfterBind = true;
-	// Common features
-	descriptorIndexingFeatures.runtimeDescriptorArray = true;
-	descriptorIndexingFeatures.descriptorBindingPartiallyBound = true;
-	descriptorIndexingFeatures.descriptorBindingVariableDescriptorCount = true;
-
 	LogSystem::get().info("[Bindless] Runtime streaming features enabled:");
 	LogSystem::get().info("  - Sampled image array + update after bind");
 	LogSystem::get().info("  - Storage buffer array + update after bind");
 	LogSystem::get().info("  - Runtime descriptor array, partially bound, variable count");
+	LogSystem::get().info("  - Buffer device address");
 
 	// Build logical device
 	vkb::DeviceBuilder device_builder{physicalDevice};
 	device_builder.add_pNext(&features13)
+		.add_pNext(&features12)
 		.add_pNext(&features11)
 		.add_pNext(&features2)
-		.add_pNext(&featuresExt)
-		.add_pNext(&descriptorIndexingFeatures);
+		.add_pNext(&featuresExt);
 
 	auto dev_ret = device_builder.build();
 	if (!dev_ret) {
@@ -136,6 +139,7 @@ void VulkanDevice::initVmaAllocator() {
 	VmaVulkanFunctions vulkanFunctions = {};
 	vulkanFunctions.vkGetInstanceProcAddr = vkGetInstanceProcAddr;
 	vulkanFunctions.vkGetDeviceProcAddr = vkGetDeviceProcAddr;
+	vulkanFunctions.vkCreateImage = vkCreateImage;
 
 	VmaAllocatorCreateInfo allocatorInfo = {};
 	allocatorInfo.physicalDevice = *_physicalDevice;
@@ -143,6 +147,7 @@ void VulkanDevice::initVmaAllocator() {
 	allocatorInfo.instance = *_instance;
 	allocatorInfo.vulkanApiVersion = VK_API_VERSION_1_3;
 	allocatorInfo.pVulkanFunctions = &vulkanFunctions;
+	allocatorInfo.flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
 
 	auto vma_res = vmaCreateAllocator(&allocatorInfo, &_vmaAllocator);
 

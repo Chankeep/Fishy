@@ -41,6 +41,11 @@ static constexpr uint32_t INITIAL_MAX_COMMANDS = 256;
 // Bindless texture array capacity
 static constexpr uint32_t MAX_BINDLESS_TEXTURES = 4096;
 
+struct PushConstants {
+	uint64_t instanceDataAddress;
+	uint64_t globalDataAddress;
+};
+
 /**
  * @brief Main renderer class.
  *
@@ -98,7 +103,7 @@ private:
 	void createSkyboxPipeline();
 	void createSkyboxMesh();
 	void createUniformBuffers();
-	void createGlobalSetLayout();
+	void createSetLayout();
 	void createBindlessTextureSetLayout();
 	void createBindlessDescriptorPool();
 	void createDescriptorPool();
@@ -116,7 +121,6 @@ private:
 	void renderSkybox(const vk::raii::CommandBuffer& cmd);
 	[[nodiscard]] vk::Format findDepthFormat();
 	void writeIBLDescriptors();
-
 	struct FrameData {
 		vk::raii::CommandBuffer commandBuffer = nullptr;
 		vk::raii::Semaphore imageAvailableSemaphore = nullptr;
@@ -152,9 +156,8 @@ private:
 	std::unique_ptr<GraphicsPipeline> _skyboxPipeline;
 
 	// Descriptor Set Layouts
-	vk::raii::DescriptorSetLayout _globalSetLayout = nullptr;				 // Set 0: Global Data
-	vk::raii::DescriptorSetLayout _bindlessTextureSetLayout = nullptr;		 // Set 1: Bindless Textures
-	vk::raii::DescriptorSetLayout _bindlessStorageBufferSetLayout = nullptr; // Set 2: Bindless SSBOs
+	vk::raii::DescriptorSetLayout _IBLSetLayout = nullptr;			   // Set 0: IBL textures
+	vk::raii::DescriptorSetLayout _bindlessTextureSetLayout = nullptr; // Set 1: Bindless Textures
 
 	// Descriptor Pools
 	vk::raii::DescriptorPool _descriptorPool = nullptr;			// For global sets

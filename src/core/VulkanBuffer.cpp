@@ -1,10 +1,10 @@
 #include "VulkanBuffer.h"
 #include "CommandPool.h"
 #include "LogSystem.h"
+#include "VulkanDevice.h"
 #include "VulkanUtils.h"
 #include <format>
 #include <iostream>
-
 
 namespace Fishy {
 
@@ -50,18 +50,21 @@ VulkanBuffer::VulkanBuffer(const VulkanDevice& device, vk::DeviceSize size, vk::
 		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
 	};
 
-	VmaAllocationCreateInfo allocInfo = {};
+	VmaAllocationCreateInfo allocInfo = {.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+												  VMA_ALLOCATION_CREATE_HOST_ACCESS_ALLOW_TRANSFER_INSTEAD_BIT |
+												  VMA_ALLOCATION_CREATE_MAPPED_BIT,
+										 .usage = VMA_MEMORY_USAGE_AUTO};
 
 	// Determine memory strategy based on requested properties
-	if (properties & vk::MemoryPropertyFlagBits::eHostVisible) {
-		// Strategy: Persistent mapping for frequently updated data (Uniform Buffers)
-		allocInfo.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
-		allocInfo.requiredFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
-		allocInfo.preferredFlags = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-	} else {
-		// Strategy: Device local for static data (Vertex/Index Buffers)
-		allocInfo.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
-	}
+	// if (properties & vk::MemoryPropertyFlagBits::eHostVisible) {
+	// 	// Strategy: Persistent mapping for frequently updated data (Uniform Buffers)
+	// 	allocInfo.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
+	// 	allocInfo.requiredFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
+	// 	allocInfo.preferredFlags = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+	// } else {
+	// 	// Strategy: Device local for static data (Vertex/Index Buffers)
+	// 	allocInfo.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+	// }
 
 	VmaAllocationInfo allocInfoOut;
 
@@ -141,6 +144,12 @@ void VulkanBuffer::copyBuffer(const vk::raii::CommandBuffer& cmd, const VulkanBu
 	copyRegion.dstOffset = 0;
 	copyRegion.size = size;
 	cmd.copyBuffer(srcBuffer.getHandle(), dstBuffer.getHandle(), copyRegion);
+}
+
+uint64_t VulkanBuffer::getDeviceAddress() const {
+	vk::BufferDeviceAddressInfo bufferAddressInfo{};
+	bufferAddressInfo.buffer = _buffer;
+	return _device->getBufferAddress(bufferAddressInfo);
 }
 
 } // namespace Fishy

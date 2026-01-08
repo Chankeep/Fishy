@@ -14,9 +14,9 @@ struct VSInput {
 struct GlobalUBO {
     float4x4 view;
     float4x4 proj;
-    float3 camPos;
-    float3 lightDir;
-    float3 lightColor;
+    float4 camPos;      // xyz = camera position, w = unused
+    float4 lightDir;    // xyz = light direction, w = unused
+    float4 lightColor;  // xyz = light color, w = unused
     // Debug visualization controls
     float debugViewInputs;   // 0=off, 1=baseColor, 2=normal, 3=AO, 4=emissive, 5=metallic, 6=roughness
     float debugViewEquation; // 0=off, 1=diffuse, 2=F, 3=G, 4=D, 5=specular
@@ -24,12 +24,12 @@ struct GlobalUBO {
     float prefilteredMipLevels;
     float iblIntensity;
 };
-[[vk::binding(0, 0)]] ConstantBuffer<GlobalUBO> ubo;
+
 
 // IBL textures (Set 0)
-[[vk::binding(1, 0)]] SamplerCube irradianceMap;
-[[vk::binding(2, 0)]] SamplerCube prefilteredEnvMap;
-[[vk::binding(3, 0)]] Sampler2D brdfLUT;
+[[vk::binding(0, 0)]] SamplerCube irradianceMap;
+[[vk::binding(1, 0)]] SamplerCube prefilteredEnvMap;
+[[vk::binding(2, 0)]] Sampler2D brdfLUT;
 
 // Set 1: Bindless Texture Array
 [[vk::binding(0, 1)]] Sampler2D g_Textures[];
@@ -37,6 +37,7 @@ struct GlobalUBO {
 // Set 2: Bindless Instance Data (SSBO Array)
 // Each instance contains transforms, texture indices, and material properties
 static const uint INVALID_TEXTURE_INDEX = 0xFFFFFFFF;
+
 
 struct InstanceData {
     // Transform data
@@ -69,7 +70,15 @@ struct InstanceData {
     float transmissionFactor; // KHR_materials_transmission
     float ior;                // KHR_materials_ior
 };
-[[vk::binding(0, 2)]] StructuredBuffer<InstanceData> g_Instances;
+// [[vk::binding(0, 2)]] StructuredBuffer<InstanceData> g_Instances;
+
+
+// Slang uses C-style pointers for Buffer Device Address
+// Push constants are passed as uniform parameters to entry points
+struct PushConstants {
+    InstanceData* instanceDataPtr;
+    GlobalUBO* globalDataPtr;
+};
 
 struct VSOutput {
     float4 pos : SV_Position;
@@ -277,14 +286,14 @@ float3 evaluateClearcoatBRDF(float3 N, float3 V, float3 L, float clearcoatRoughn
 // ============================================================================
 
 [shader("vertex")]
-VSOutput vertMain(VSInput input, uint instanceID : SV_InstanceID) {
-    // Get per-instance data from bindless SSBO
-    InstanceData inst = g_Instances[instanceID];
-    
+VSOutput vertMain(VSInput input, uniform PushConstants pc, uint instanceID : SV_InstanceID) {
+    // Get per-instance data via BDA pointer
+    InstanceData inst = pc.instanceDataPtr[instanceID];
+
     VSOutput output;
     float4 worldPos = mul(inst.model, float4(input.inPosition, 1.0));
     output.worldPos = worldPos.xyz;
-    output.pos = mul(ubo.proj, mul(ubo.view, worldPos));
+    output.pos = mul(pc.globalDataPtr.proj, mul(pc.globalDataPtr.view, worldPos));
     output.texCoord = input.inTexCoord;
     
     // Transform normal and tangent using precomputed normalMatrix
@@ -301,12 +310,12 @@ VSOutput vertMain(VSInput input, uint instanceID : SV_InstanceID) {
 
 // Fragment Shader
 [shader("fragment")]
-float4 fragMain(VSOutput vertIn) : SV_Target
+float4 fragMain(VSOutput vertIn, uniform PushConstants pc) : SV_Target
 {
     float2 uv = vertIn.texCoord;
     
-    // Get instance data for this fragment
-    InstanceData inst = g_Instances[vertIn.instanceID];
+    // Get instance data via BDA pointer
+    InstanceData inst = pc.instanceDataPtr[vertIn.instanceID];
     
     // Sample textures using bindless array
     float4 baseColorSample = sampleBindless(inst.baseColorIndex, uv, float4(1.0));
@@ -344,8 +353,8 @@ float4 fragMain(VSOutput vertIn) : SV_Target
     // Get normal - check if normal map is present (bit 5 = HasNormalMap)
     bool hasNormalMap = (inst.flags & (1 << 5)) != 0 && inst.normalIndex != INVALID_TEXTURE_INDEX;
     float3 n = hasNormalMap ? getNormalBindless(vertIn, inst) : normalize(vertIn.worldNormal);
-    float3 v = normalize(ubo.camPos - vertIn.worldPos);
-    float3 l = normalize(ubo.lightDir);
+    float3 v = normalize(pc.globalDataPtr.camPos.xyz - vertIn.worldPos);
+    float3 l = normalize(pc.globalDataPtr.lightDir.xyz);
     float3 h = normalize(l + v);
     float3 reflection = normalize(reflect(-v, n));
 
@@ -386,7 +395,7 @@ float4 fragMain(VSOutput vertIn) : SV_Target
     float3 specContrib = F * G * D / (4.0 * NdotL * NdotV);
     
     // Obtain final intensity as reflectance (BRDF) scaled by the energy of the light (cosine law)
-    float3 color = NdotL * ubo.lightColor * (diffuseContrib + specContrib);
+    float3 color = NdotL * pc.globalDataPtr.lightColor.xyz * (diffuseContrib + specContrib);
     
     // Clearcoat layer
     float clearcoatFactor = inst.clearcoatFactor;
@@ -397,7 +406,7 @@ float4 fragMain(VSOutput vertIn) : SV_Target
         float clearcoatRoughness = clamp(ccrSample.g * inst.clearcoatRoughnessFactor, MIN_ROUGHNESS, 1.0);
         
         float3 clearcoatN = getClearcoatNormalBindless(vertIn, inst, normalize(vertIn.worldNormal));
-        float3 clearcoatBRDF = evaluateClearcoatBRDF(clearcoatN, v, l, clearcoatRoughness) * ubo.lightColor;
+        float3 clearcoatBRDF = evaluateClearcoatBRDF(clearcoatN, v, l, clearcoatRoughness) * pc.globalDataPtr.lightColor.xyz;
         
         // Fresnel for clearcoat energy conservation
         float clearcoatNdotV = max(dot(clearcoatN, v), 0.0);
@@ -419,13 +428,13 @@ float4 fragMain(VSOutput vertIn) : SV_Target
     // ========================================================================
     
     float3 ambient = float3(0.0);
-    if (ubo.iblIntensity > 0.0) {
+    if (pc.globalDataPtr.iblIntensity > 0.0) {
         // Diffuse IBL - sample irradiance map with normal
         float3 irradiance = irradianceMap.Sample(n).rgb;
         float3 diffuseIBL = diffuseColor * irradiance;
         
         // Specular IBL - sample pre-filtered environment with reflection and roughness-based LOD
-        float lod = perceptualRoughness * ubo.prefilteredMipLevels;
+        float lod = perceptualRoughness * pc.globalDataPtr.prefilteredMipLevels;
         float3 prefilteredColor = prefilteredEnvMap.SampleLevel(reflection, lod).rgb;
         
         // BRDF LUT lookup for split-sum approximation
@@ -433,7 +442,7 @@ float4 fragMain(VSOutput vertIn) : SV_Target
         float3 specularIBL = prefilteredColor * (specularColor * brdf.x + brdf.y);
         
         // Combine diffuse and specular IBL
-        ambient = (diffuseIBL + specularIBL) * ubo.iblIntensity;
+        ambient = (diffuseIBL + specularIBL) * pc.globalDataPtr.iblIntensity;
     } else {
         // Fallback to simple ambient when IBL not available
         ambient = float3(0.03) * baseColor.rgb;
@@ -449,8 +458,8 @@ float4 fragMain(VSOutput vertIn) : SV_Target
     color += emissive;
     
     // Debug Visualization
-    if (ubo.debugViewInputs > 0.0) {
-        int index = int(ubo.debugViewInputs);
+    if (pc.globalDataPtr.debugViewInputs > 0.0) {
+        int index = int(pc.globalDataPtr.debugViewInputs);
         switch (index) {
             case 1: // Base Color
                 color = baseColor.rgb;
@@ -494,8 +503,8 @@ float4 fragMain(VSOutput vertIn) : SV_Target
     }
     
     // PBR equation debug visualization
-    if (ubo.debugViewEquation > 0.0) {
-        int index = int(ubo.debugViewEquation);
+    if (pc.globalDataPtr.debugViewEquation > 0.0) {
+        int index = int(pc.globalDataPtr.debugViewEquation);
         switch (index) {
             case 1: // Diffuse contribution
                 color = diffuseContrib;
@@ -529,3 +538,8 @@ float4 fragMain(VSOutput vertIn) : SV_Target
     
     return float4(color, baseColor.a);
 }
+
+
+
+
+

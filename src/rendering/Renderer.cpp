@@ -35,7 +35,7 @@ Renderer::Renderer(VulkanDevice& device, Window& window, ResourceManager& resour
 	createCommandBuffers();
 
 	// Descriptor set layouts
-	createGlobalSetLayout();
+	createSetLayout();
 	createBindlessTextureSetLayout(); // Creates both texture and SSBO bindless layouts
 
 	// Descriptor pools
@@ -129,13 +129,19 @@ void Renderer::renderScene(Scene& scene, const RenderParams& params,
 						   *_frames[_currentFrameIndex].descriptorSet, nullptr);
 	cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *_graphicsPipeline->getLayout(), 1, *_bindlessTextureSet,
 						   nullptr);
-	cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *_graphicsPipeline->getLayout(), 2,
-						   *_bindlessStorageBufferSet, nullptr);
 
 	// Build data from scene entities
 	buildInstanceDataFromScene(scene);
 	updateInstanceDataBuffer();
 	buildDrawBatchesFromScene(scene);
+
+	// Use Push Constant for BDA
+	uint64_t instanceAddress = _frames[_currentFrameIndex].instanceDataBuffer->getDeviceAddress();
+	uint64_t globalDataAddress = _frames[_currentFrameIndex].uniformBuffer->getDeviceAddress();
+	PushConstants pc{.instanceDataAddress = instanceAddress, .globalDataAddress = globalDataAddress};
+
+	cmd.pushConstants<PushConstants>(*_graphicsPipeline->getLayout(),
+									 vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, pc);
 
 	renderIndirect(cmd);
 	renderSkybox(cmd);
@@ -222,17 +228,16 @@ void Renderer::createSyncObjects() {
 	}
 }
 
-void Renderer::createGlobalSetLayout() {
-	// Set 0: Global data + IBL textures
-	// Binding 0: GlobalUBO
-	// Binding 1: irradianceMap (samplerCube)
-	// Binding 2: prefilteredEnvMap (samplerCube)
-	// Binding 3: brdfLUT (sampler2D)
+void Renderer::createSetLayout() {
+	// Set 0: IBL textures
+	// Binding 0: irradianceMap (samplerCube)
+	// Binding 1: prefilteredEnvMap (samplerCube)
+	// Binding 2: brdfLUT (sampler2D)
 	std::vector<vk::DescriptorSetLayoutBinding> bindings = {
 		{.binding = 0,
-		 .descriptorType = vk::DescriptorType::eUniformBuffer,
+		 .descriptorType = vk::DescriptorType::eCombinedImageSampler,
 		 .descriptorCount = 1,
-		 .stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment},
+		 .stageFlags = vk::ShaderStageFlagBits::eFragment},
 		{.binding = 1,
 		 .descriptorType = vk::DescriptorType::eCombinedImageSampler,
 		 .descriptorCount = 1,
@@ -241,24 +246,18 @@ void Renderer::createGlobalSetLayout() {
 		 .descriptorType = vk::DescriptorType::eCombinedImageSampler,
 		 .descriptorCount = 1,
 		 .stageFlags = vk::ShaderStageFlagBits::eFragment},
-		{.binding = 3,
-		 .descriptorType = vk::DescriptorType::eCombinedImageSampler,
-		 .descriptorCount = 1,
-		 .stageFlags = vk::ShaderStageFlagBits::eFragment},
 	};
 
 	vk::DescriptorSetLayoutCreateInfo layoutInfo{.bindingCount = static_cast<uint32_t>(bindings.size()),
 												 .pBindings = bindings.data()};
 
-	_globalSetLayout = vk::raii::DescriptorSetLayout(*_device, layoutInfo);
+	_IBLSetLayout = vk::raii::DescriptorSetLayout(*_device, layoutInfo);
 }
 
 void Renderer::createBindlessTextureSetLayout() {
 	LogSystem::get().info("[Bindless] Creating texture and SSBO set layouts (max {} entries)", MAX_BINDLESS_TEXTURES);
 
-	// ═══════════════════════════════════════════════════════════════════════════
 	// Set 1: Bindless Texture Array
-	// ═══════════════════════════════════════════════════════════════════════════
 	vk::DescriptorBindingFlags textureBindingFlags =
 		vk::DescriptorBindingFlagBits::eUpdateAfterBind |		 // Can update while bound to command buffer
 		vk::DescriptorBindingFlagBits::ePartiallyBound |		 // Not all slots need valid descriptors
@@ -280,31 +279,6 @@ void Renderer::createBindlessTextureSetLayout() {
 
 	_bindlessTextureSetLayout = vk::raii::DescriptorSetLayout(*_device, textureLayoutInfo);
 	LogSystem::get().info("[Bindless] Texture set layout created");
-
-	// ═══════════════════════════════════════════════════════════════════════════
-	// Set 2: Bindless Storage Buffer Array
-	// ═══════════════════════════════════════════════════════════════════════════
-	vk::DescriptorBindingFlags ssboBindingFlags = vk::DescriptorBindingFlagBits::eUpdateAfterBind |
-												  vk::DescriptorBindingFlagBits::ePartiallyBound |
-												  vk::DescriptorBindingFlagBits::eVariableDescriptorCount;
-
-	vk::DescriptorSetLayoutBindingFlagsCreateInfo ssboBindingFlagsInfo{.bindingCount = 1,
-																	   .pBindingFlags = &ssboBindingFlags};
-
-	vk::DescriptorSetLayoutBinding ssboBinding{.binding = 0,
-											   .descriptorType = vk::DescriptorType::eStorageBuffer,
-											   .descriptorCount = MAX_BINDLESS_TEXTURES, // Same capacity
-											   .stageFlags = vk::ShaderStageFlagBits::eVertex |
-															 vk::ShaderStageFlagBits::eFragment};
-
-	vk::DescriptorSetLayoutCreateInfo ssboLayoutInfo{.pNext = &ssboBindingFlagsInfo,
-													 .flags =
-														 vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool,
-													 .bindingCount = 1,
-													 .pBindings = &ssboBinding};
-
-	_bindlessStorageBufferSetLayout = vk::raii::DescriptorSetLayout(*_device, ssboLayoutInfo);
-	LogSystem::get().info("[Bindless] Storage buffer set layout created");
 }
 
 void Renderer::createBindlessDescriptorPool() {
@@ -326,9 +300,7 @@ void Renderer::createBindlessDescriptorPool() {
 }
 
 void Renderer::allocateDescriptorSets() {
-	// ═══════════════════════════════════════════════════════════════════════════
 	// Allocate Bindless Texture Set (Set 1)
-	// ═══════════════════════════════════════════════════════════════════════════
 	uint32_t textureVariableCount = MAX_BINDLESS_TEXTURES;
 
 	vk::DescriptorSetVariableDescriptorCountAllocateInfo textureVariableInfo{
@@ -343,44 +315,21 @@ void Renderer::allocateDescriptorSets() {
 	_bindlessTextureSet = std::move(textureSets[0]);
 	LogSystem::get().info("[Bindless] Texture descriptor set allocated");
 
-	// ═══════════════════════════════════════════════════════════════════════════
-	// Allocate Bindless SSBO Set (Set 2)
-	// ═══════════════════════════════════════════════════════════════════════════
-	uint32_t ssboVariableCount = MAX_BINDLESS_TEXTURES;
+	// Allocate Global Descriptor Sets (Set 0: IBL textures)
+	std::vector<vk::DescriptorSetLayout> IBLLayouts(MAX_FRAMES_IN_FLIGHT, *_IBLSetLayout);
 
-	vk::DescriptorSetVariableDescriptorCountAllocateInfo ssboVariableInfo{.descriptorSetCount = 1,
-																		  .pDescriptorCounts = &ssboVariableCount};
+	vk::DescriptorSetAllocateInfo IBLAllocInfo{.descriptorPool = *_descriptorPool,
+											   .descriptorSetCount = static_cast<uint32_t>(IBLLayouts.size()),
+											   .pSetLayouts = IBLLayouts.data()};
 
-	vk::DescriptorSetAllocateInfo ssboAllocInfo{.pNext = &ssboVariableInfo,
-												.descriptorPool = *_bindlessDescriptorPool,
-												.descriptorSetCount = 1,
-												.pSetLayouts = &*_bindlessStorageBufferSetLayout};
-
-	auto ssboSets = vk::raii::DescriptorSets(*_device, ssboAllocInfo);
-	_bindlessStorageBufferSet = std::move(ssboSets[0]);
-	LogSystem::get().info("[Bindless] Storage buffer descriptor set allocated");
-
-	// ═══════════════════════════════════════════════════════════════════════════
-	// Allocate Global Descriptor Sets (Set 0: UBO + IBL textures)
-	// ═══════════════════════════════════════════════════════════════════════════
-	std::vector<vk::DescriptorSetLayout> globalLayouts(MAX_FRAMES_IN_FLIGHT, *_globalSetLayout);
-
-	vk::DescriptorSetAllocateInfo globalAllocInfo{.descriptorPool = *_descriptorPool,
-												  .descriptorSetCount = static_cast<uint32_t>(globalLayouts.size()),
-												  .pSetLayouts = globalLayouts.data()};
-
-	auto globalSets = vk::raii::DescriptorSets(*_device, globalAllocInfo);
+	auto IBLSets = vk::raii::DescriptorSets(*_device, IBLAllocInfo);
 
 	// Get default textures for placeholders
 	auto defaultTex = _resourceManager.getDefaultWhiteTexture();
 	auto defaultCubemap = _resourceManager.getDefaultCubemap();
 
 	for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-		_frames[i].descriptorSet = std::move(globalSets[i]);
-
-		// UBO descriptor
-		vk::DescriptorBufferInfo uboInfo{
-			.buffer = _frames[i].uniformBuffer->getBuffer(), .offset = 0, .range = sizeof(UniformBufferObject)};
+		_frames[i].descriptorSet = std::move(IBLSets[i]);
 
 		// IBL placeholders (cubemaps)
 		vk::DescriptorImageInfo cubemapImageInfo{
@@ -396,17 +345,17 @@ void Renderer::allocateDescriptorSets() {
 			.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
 		};
 
-		std::array<vk::WriteDescriptorSet, 4> descriptorWrites{};
+		std::array<vk::WriteDescriptorSet, 3> descriptorWrites{};
 
-		// Binding 0: Global UBO
+		// Binding 0: IBL irradiance map
 		descriptorWrites[0].dstSet = *_frames[i].descriptorSet;
 		descriptorWrites[0].dstBinding = 0;
 		descriptorWrites[0].dstArrayElement = 0;
-		descriptorWrites[0].descriptorType = vk::DescriptorType::eUniformBuffer;
+		descriptorWrites[0].descriptorType = vk::DescriptorType::eCombinedImageSampler;
 		descriptorWrites[0].descriptorCount = 1;
-		descriptorWrites[0].pBufferInfo = &uboInfo;
+		descriptorWrites[0].pImageInfo = &cubemapImageInfo;
 
-		// Binding 1: IBL irradiance map
+		// Binding 1: IBL prefiltered map
 		descriptorWrites[1].dstSet = *_frames[i].descriptorSet;
 		descriptorWrites[1].dstBinding = 1;
 		descriptorWrites[1].dstArrayElement = 0;
@@ -414,21 +363,13 @@ void Renderer::allocateDescriptorSets() {
 		descriptorWrites[1].descriptorCount = 1;
 		descriptorWrites[1].pImageInfo = &cubemapImageInfo;
 
-		// Binding 2: IBL prefiltered map
+		// Binding 2: BRDF LUT
 		descriptorWrites[2].dstSet = *_frames[i].descriptorSet;
 		descriptorWrites[2].dstBinding = 2;
 		descriptorWrites[2].dstArrayElement = 0;
 		descriptorWrites[2].descriptorType = vk::DescriptorType::eCombinedImageSampler;
 		descriptorWrites[2].descriptorCount = 1;
-		descriptorWrites[2].pImageInfo = &cubemapImageInfo;
-
-		// Binding 3: BRDF LUT
-		descriptorWrites[3].dstSet = *_frames[i].descriptorSet;
-		descriptorWrites[3].dstBinding = 3;
-		descriptorWrites[3].dstArrayElement = 0;
-		descriptorWrites[3].descriptorType = vk::DescriptorType::eCombinedImageSampler;
-		descriptorWrites[3].descriptorCount = 1;
-		descriptorWrites[3].pImageInfo = &brdfLutImageInfo;
+		descriptorWrites[2].pImageInfo = &brdfLutImageInfo;
 
 		_device->updateDescriptorSets(descriptorWrites, {});
 	}
@@ -475,15 +416,22 @@ void Renderer::renderIndirect(const vk::raii::CommandBuffer& cmd) {
 
 void Renderer::renderSkybox(const vk::raii::CommandBuffer& cmd) {
 	if (!_skyboxPipeline || !_skyboxVertexBuffer || !_skyboxIndexBuffer || !_iblEnvironment) {
-		return; // 如果没有 IBL 环境，不渲染 Skybox
+		return;
 	}
 	_skyboxPipeline->bind(cmd);
-	// 绑定 Set 0（Global UBO + IBL textures）
+
 	cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *_skyboxPipeline->getLayout(), 0,
 						   *_frames[_currentFrameIndex].descriptorSet, nullptr);
-	// 绑定 Skybox 的顶点/索引缓冲
+
 	cmd.bindVertexBuffers(0, _skyboxVertexBuffer->getBuffer(), {0});
 	cmd.bindIndexBuffer(_skyboxIndexBuffer->getBuffer(), 0, vk::IndexType::eUint32);
+
+	// Push constants for skybox
+	uint64_t globalDataAddress = _frames[_currentFrameIndex].uniformBuffer->getDeviceAddress();
+	PushConstants pc{.instanceDataAddress = 0, .globalDataAddress = globalDataAddress};
+
+	cmd.pushConstants<PushConstants>(*_skyboxPipeline->getLayout(),
+									 vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, pc);
 	// Draw
 	cmd.drawIndexed(_skyboxIndexCount, 1, 0, 0, 0);
 }
@@ -502,13 +450,17 @@ void Renderer::createGraphicsPipeline() {
 		.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size()),
 		.pVertexAttributeDescriptions = attributeDescriptions.data()};
 
-	PipelineBuilder builder(**_device);
+	vk::PushConstantRange pushConstantRange{.stageFlags =
+												vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,
+											.offset = 0,
+											.size = sizeof(PushConstants)};
 
+	PipelineBuilder builder(**_device);
 	builder.setShaders(vertShader, fragShader, "main", "main")
 		.setVertexInput(vertexInputInfo)
 		.setInputTopology(vk::PrimitiveTopology::eTriangleList)
 		.setCullMode(vk::CullModeFlagBits::eBack, vk::FrontFace::eCounterClockwise)
-		.setLayout({*_globalSetLayout, *_bindlessTextureSetLayout, *_bindlessStorageBufferSetLayout}, {})
+		.setLayout({*_IBLSetLayout, *_bindlessTextureSetLayout}, {pushConstantRange})
 		.setRenderingFormats({_swapChain->getFormat()}, _depthFormat)
 		.setDepthStencilTest(true, true, vk::CompareOp::eLess, false, vk::CompareOp::eAlways);
 
@@ -531,13 +483,18 @@ void Renderer::createSkyboxPipeline() {
 		.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size()),
 		.pVertexAttributeDescriptions = attributeDescriptions.data()};
 
+	vk::PushConstantRange pushConstantRange{.stageFlags =
+												vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,
+											.offset = 0,
+											.size = sizeof(PushConstants)};
+
 	PipelineBuilder builder(**_device);
 
 	builder.setShaders(vertShader, fragShader, "main", "main")
 		.setVertexInput(vertexInputInfo)
 		.setInputTopology(vk::PrimitiveTopology::eTriangleList)
 		.setCullMode(vk::CullModeFlagBits::eFront, vk::FrontFace::eCounterClockwise)
-		.setLayout({*_globalSetLayout}, {})
+		.setLayout({*_IBLSetLayout}, {pushConstantRange})
 		.setRenderingFormats({_swapChain->getFormat()}, _depthFormat)
 		.setDepthStencilTest(false, true, vk::CompareOp::eLessOrEqual, false, vk::CompareOp::eAlways);
 
@@ -590,7 +547,8 @@ void Renderer::createUniformBuffers() {
 
 	for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
 		_frames[i].uniformBuffer = std::make_unique<VulkanBuffer>(
-			_device, bufferSize, vk::BufferUsageFlagBits::eUniformBuffer,
+			_device, bufferSize,
+			vk::BufferUsageFlagBits::eUniformBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress,
 			vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
 
 		// Persistent mapping: map once and keep it mapped
@@ -657,17 +615,17 @@ void Renderer::updateUniformBuffer(uint32_t frameIndex) {
 	if (_currentRenderParams) {
 		ubo.view = _currentRenderParams->viewMatrix;
 		ubo.proj = _currentRenderParams->projectionMatrix;
-		ubo.camPos = _currentRenderParams->cameraPosition;
-		ubo.lightDir = glm::normalize(_currentRenderParams->lightDirection);
-		ubo.lightColor = _currentRenderParams->lightColor;
+		ubo.camPos = glm::vec4(_currentRenderParams->cameraPosition, 0.0f);
+		ubo.lightDir = glm::vec4(glm::normalize(_currentRenderParams->lightDirection), 0.0f);
+		ubo.lightColor = glm::vec4(_currentRenderParams->lightColor, 0.0f);
 	} else {
 		// Fallback defaults if no RenderParams (shouldn't happen in normal use)
 		ubo.view = glm::mat4(1.0f);
 		ubo.proj = glm::perspective(glm::radians(45.0f),
 									static_cast<float>(extent.width) / static_cast<float>(extent.height), 0.1f, 100.0f);
-		ubo.camPos = glm::vec3(0.0f, 0.0f, 3.0f);
-		ubo.lightDir = glm::normalize(glm::vec3(1.0f, 1.0f, 1.0f));
-		ubo.lightColor = glm::vec3(5.0f, 5.0f, 5.0f);
+		ubo.camPos = glm::vec4(0.0f, 0.0f, 3.0f, 0.0f);
+		ubo.lightDir = glm::vec4(glm::normalize(glm::vec3(1.0f, 1.0f, 1.0f)), 0.0f);
+		ubo.lightColor = glm::vec4(5.0f, 5.0f, 5.0f, 0.0f);
 	}
 
 	// Debug settings
@@ -916,7 +874,7 @@ void Renderer::writeIBLDescriptors() {
 			.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
 		};
 
-		// BRDF LUT (binding 3)
+		// BRDF LUT (binding 2)
 		imageInfos[2] = {
 			.sampler = *_iblEnvironment->brdfLUT->getSampler(),
 			.imageView = *_iblEnvironment->brdfLUT->getImageView(),
@@ -928,7 +886,7 @@ void Renderer::writeIBLDescriptors() {
 		for (uint32_t j = 0; j < 3; j++) {
 			descriptorWrites[j] = {
 				.dstSet = *_frames[i].descriptorSet,
-				.dstBinding = j + 1, // Bindings 1, 2, 3
+				.dstBinding = j, // Bindings 0, 1, 2
 				.dstArrayElement = 0,
 				.descriptorCount = 1,
 				.descriptorType = vk::DescriptorType::eCombinedImageSampler,
@@ -957,22 +915,11 @@ void Renderer::updateInstanceDataBuffer() {
 			std::max(requiredSize, static_cast<vk::DeviceSize>(INITIAL_MAX_OBJECTS * sizeof(InstanceData)));
 
 		frame.instanceDataBuffer = std::make_unique<VulkanBuffer>(
-			_device, allocSize, vk::BufferUsageFlagBits::eStorageBuffer,
+			_device, allocSize, vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress,
 			vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
 		frame.instanceDataBuffer->map();
 
-		// Register to bindless SSBO - writes to Set 2, binding 0
-		vk::DescriptorBufferInfo bufferInfo{
-			.buffer = frame.instanceDataBuffer->getBuffer(), .offset = 0, .range = allocSize};
-
-		vk::WriteDescriptorSet write{.dstSet = *_bindlessStorageBufferSet,
-									 .dstBinding = 0,
-									 .dstArrayElement = 0, // Single SSBO at index 0
-									 .descriptorCount = 1,
-									 .descriptorType = vk::DescriptorType::eStorageBuffer,
-									 .pBufferInfo = &bufferInfo};
-
-		_device->updateDescriptorSets(write, {});
+		// BDA: No descriptor update needed - address is passed via push constants
 		LogSystem::get().trace("[Bindless] Frame {} allocated instance SSBO ({} bytes)", _currentFrameIndex, allocSize);
 	}
 

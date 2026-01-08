@@ -24,25 +24,30 @@ struct VSOutput {
 struct GlobalUBO {
     float4x4 view;
     float4x4 proj;
-    float3 camPos;
-    float3 lightDir;
-    float3 lightColor;
+    float4 camPos;
+    float4 lightDir;
+    float4 lightColor;
     float debugViewInputs;
     float debugViewEquation;
     float prefilteredMipLevels;
     float iblIntensity;
 };
-[[vk::binding(0, 0)]] ConstantBuffer<GlobalUBO> ubo;
 
-// IBL 预过滤环境贴图 (复用 Set 0, binding 2)
-[[vk::binding(2, 0)]] SamplerCube prefilteredEnvMap;
+
+// IBL 预过滤环境贴图 (Set 0, binding 1)
+[[vk::binding(1, 0)]] SamplerCube prefilteredEnvMap;
+
+struct PushConstants {
+    uint64_t unused;          // instanceDataAddress (Skybox 不用)
+    GlobalUBO* globalDataPtr;
+};
 
 // ============================================================================
 // Vertex Shader
 // ============================================================================
 
 [shader("vertex")]
-VSOutput vertMain(VSInput input) {
+VSOutput vertMain(VSInput input, uniform PushConstants pc) {
     VSOutput output;
     
     // 传递本地位置作为 Cubemap 采样方向
@@ -50,12 +55,12 @@ VSOutput vertMain(VSInput input) {
     
     // 移除 View 矩阵的平移分量，只保留旋转
     // 这样 Skybox 只随相机旋转而变化，不随平移而变化
-    float4x4 rotView = ubo.view;
+    float4x4 rotView = pc.globalDataPtr.view;
     rotView[0][3] = 0.0;
     rotView[1][3] = 0.0;
     rotView[2][3] = 0.0;
     
-    float4 clipPos = mul(ubo.proj, mul(rotView, float4(input.inPosition, 1.0)));
+    float4 clipPos = mul(pc.globalDataPtr.proj, mul(rotView, float4(input.inPosition, 1.0)));
     
     // 将 z 设为 w，确保深度始终为 1.0 (最远处)
     // NDC 深度 = z/w = w/w = 1.0
