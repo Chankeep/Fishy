@@ -37,10 +37,7 @@ Texture::Texture(const VulkanDevice& device, const unsigned char* pixels, int wi
 }
 
 Texture::~Texture() {
-	if (_vmaAllocation && _device.getVmaAllocator()) {
-		vmaDestroyImage(_device.getVmaAllocator(), _image, _vmaAllocation);
-	}
-	// RAII handles imageView and sampler cleanup
+	// RAII handles all cleanup via VulkanImage and Sampler destructors
 }
 
 void Texture::createTextureImage(const std::string& path) {
@@ -96,7 +93,7 @@ void Texture::createTextureFromPixels(const unsigned char* pixels, int texWidth,
 							   vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
 	stagingBuffer.upload(pixels, imageSize);
 
-	// Create Image using VMA (keep vk:: style, convert to Vk for VMA)
+	// Create Image using VulkanImage wrapper
 	vk::ImageCreateInfo imageInfo{
 		.imageType = vk::ImageType::e2D,
 		.format = _format,
@@ -112,18 +109,13 @@ void Texture::createTextureFromPixels(const unsigned char* pixels, int texWidth,
 	VmaAllocationCreateInfo allocInfo = {};
 	allocInfo.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
 
-	VkResult result = vmaCreateImage(_device.getVmaAllocator(), reinterpret_cast<const VkImageCreateInfo*>(&imageInfo),
-									 &allocInfo, &_image, &_vmaAllocation, nullptr);
+	_image = std::make_unique<VulkanImage>(_device.getVmaAllocator(), imageInfo, allocInfo);
 
-	if (result != VK_SUCCESS) {
-		LogSystem::get().error("Failed to create VMA image: {}x{}", texWidth, texHeight);
-		throw std::runtime_error("Failed to create VMA image!");
-	}
-
-	LogSystem::get().trace("VMA created texture image handle: {}", reinterpret_cast<uintptr_t>(_image));
+	LogSystem::get().trace("VMA created texture image handle: {}",
+						   reinterpret_cast<uintptr_t>(static_cast<VkImage>(_image->getImage())));
 
 #ifndef NDEBUG
-	VulkanUtils::setDebugName(_device, _image, _debugName.c_str());
+	VulkanUtils::setDebugName(_device, _image->getImage(), _debugName.c_str());
 #endif
 
 	// Transition layout and copy buffer to image
@@ -155,8 +147,8 @@ void Texture::transitionImageLayout(vk::ImageLayout oldLayout, vk::ImageLayout n
 	}
 
 	VulkanUtils::executeImmediate(_device, [&](auto& cmd) {
-		VulkanUtils::transitionImage(*cmd, _image, oldLayout, newLayout, srcAccess, dstAccess, srcStage, dstStage,
-									 vk::ImageAspectFlagBits::eColor);
+		VulkanUtils::transitionImage(*cmd, _image->getImage(), oldLayout, newLayout, srcAccess, dstAccess, srcStage,
+									 dstStage, vk::ImageAspectFlagBits::eColor);
 	});
 }
 
@@ -177,13 +169,12 @@ void Texture::copyBufferToImage(const VulkanBuffer& buffer, uint32_t width, uint
 			.imageExtent = {width, height, 1},
 		};
 
-		cmd.copyBufferToImage(buffer.getBuffer(), _image, vk::ImageLayout::eTransferDstOptimal, region);
+		cmd.copyBufferToImage(buffer.getBuffer(), _image->getImage(), vk::ImageLayout::eTransferDstOptimal, region);
 	});
 }
 
 void Texture::createTextureImageView() {
 	vk::ImageViewCreateInfo viewInfo{
-		.image = _image,
 		.viewType = vk::ImageViewType::e2D,
 		.format = _format,
 		.subresourceRange =
@@ -196,10 +187,10 @@ void Texture::createTextureImageView() {
 			},
 	};
 
-	_imageView = vk::raii::ImageView(*_device, viewInfo);
+	_image->createView(*_device, viewInfo);
 
 #ifndef NDEBUG
-	VulkanUtils::setDebugName(_device, *_imageView, vk::ObjectType::eImageView, (_debugName + "_View").c_str());
+	VulkanUtils::setDebugName(_device, *_image->getView(), vk::ObjectType::eImageView, (_debugName + "_View").c_str());
 #endif
 }
 

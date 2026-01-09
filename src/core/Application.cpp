@@ -175,6 +175,9 @@ void Application::createDefaultScene() {
 	auto meshHandle = _resourceManager.createMesh(entt::hashed_string{"__default_quad_mesh__"}, vertices, indices);
 	auto materialHandle = _resourceManager.createMaterial(entt::hashed_string{"__default_material__"});
 
+	// Pre-compute bindless texture indices for default material
+	_resourceManager.populateMaterialTextureIndices(*materialHandle);
+
 	// Create entity with mesh and renderer components
 	Entity entity = _scene->createEntity("DefaultQuad");
 	entity.addComponent<MeshComponent>(meshHandle);

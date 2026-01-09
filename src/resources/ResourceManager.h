@@ -20,7 +20,6 @@ import vulkan_hpp;
 #include <slang/slang-com-ptr.h>
 #include <slang/slang.h>
 
-
 namespace Fishy {
 
 class VulkanDevice;
@@ -133,6 +132,15 @@ public:
 	 * @brief Get a previously created material by its ID.
 	 */
 	[[nodiscard]] entt::resource<Material> getMaterial(entt::id_type id) const;
+
+	/**
+	 * @brief Pre-compute bindless texture indices for a material.
+	 *
+	 * Call this after assigning textures to a material to avoid per-frame hash lookups.
+	 * The indices are stored in mat.textureIndices for direct access during rendering.
+	 * @param mat The material to populate indices for.
+	 */
+	void populateMaterialTextureIndices(Material& mat);
 
 	// ========== Bindless Buffer API ==========
 	/// Register a buffer to the bindless SSBO array

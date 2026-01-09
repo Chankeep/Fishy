@@ -23,9 +23,7 @@ CubemapTexture::CubemapTexture(const VulkanDevice& device, const std::string& pa
 CubemapTexture::CubemapTexture(const VulkanDevice& device) : _device(device) {}
 
 CubemapTexture::~CubemapTexture() {
-	if (_vmaAllocation && _device.getVmaAllocator()) {
-		vmaDestroyImage(_device.getVmaAllocator(), _image, _vmaAllocation);
-	}
+	// RAII handles all cleanup via VulkanImage and Sampler destructors
 }
 
 void CubemapTexture::loadFromKTX2(const std::string& path) {
@@ -130,26 +128,19 @@ void CubemapTexture::loadFromKTX2(const std::string& path) {
 	allocInfo.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
 	allocInfo.priority = 1.0f;
 
-	VkResult vkResult =
-		vmaCreateImage(_device.getVmaAllocator(), reinterpret_cast<const VkImageCreateInfo*>(&imageInfo), &allocInfo,
-					   &_image, &_vmaAllocation, nullptr);
-
-	if (vkResult != VK_SUCCESS) {
-		ktxTexture_Destroy(ktxTexture(ktxTex));
-		throw std::runtime_error("Failed to create VMA image for cubemap");
-	}
+	_image = std::make_unique<VulkanImage>(_device.getVmaAllocator(), imageInfo, allocInfo);
 
 #ifndef NDEBUG
-	VulkanUtils::setDebugName(_device, _image, _debugName.c_str());
+	VulkanUtils::setDebugName(_device, _image->getImage(), _debugName.c_str());
 #endif
 
 	// Execute all GPU commands in a single submission
 	VulkanUtils::executeImmediate(_device, [&](auto& cmd) {
 		// Transition to transfer dst
-		VulkanUtils::transitionImage(*cmd, _image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal,
-									 vk::AccessFlagBits2::eNone, vk::AccessFlagBits2::eTransferWrite,
-									 vk::PipelineStageFlagBits2::eTopOfPipe, vk::PipelineStageFlagBits2::eTransfer,
-									 vk::ImageAspectFlagBits::eColor, _mipLevels, 6);
+		VulkanUtils::transitionImage(
+			*cmd, _image->getImage(), vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal,
+			vk::AccessFlagBits2::eNone, vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eTopOfPipe,
+			vk::PipelineStageFlagBits2::eTransfer, vk::ImageAspectFlagBits::eColor, _mipLevels, 6);
 
 		// Copy buffer to image for each mip level and face
 		std::vector<vk::BufferImageCopy> copyRegions;
@@ -179,10 +170,11 @@ void CubemapTexture::loadFromKTX2(const std::string& path) {
 			}
 		}
 
-		cmd.copyBufferToImage(stagingBuffer.getBuffer(), _image, vk::ImageLayout::eTransferDstOptimal, copyRegions);
+		cmd.copyBufferToImage(stagingBuffer.getBuffer(), _image->getImage(), vk::ImageLayout::eTransferDstOptimal,
+							  copyRegions);
 
 		// Transition to shader read
-		VulkanUtils::transitionImage(*cmd, _image, vk::ImageLayout::eTransferDstOptimal,
+		VulkanUtils::transitionImage(*cmd, _image->getImage(), vk::ImageLayout::eTransferDstOptimal,
 									 vk::ImageLayout::eShaderReadOnlyOptimal, vk::AccessFlagBits2::eTransferWrite,
 									 vk::AccessFlagBits2::eShaderRead, vk::PipelineStageFlagBits2::eTransfer,
 									 vk::PipelineStageFlagBits2::eFragmentShader, vk::ImageAspectFlagBits::eColor,
@@ -196,7 +188,6 @@ void CubemapTexture::loadFromKTX2(const std::string& path) {
 
 void CubemapTexture::createImageView() {
 	vk::ImageViewCreateInfo viewInfo{
-		.image = _image,
 		.viewType = vk::ImageViewType::eCube,
 		.format = _format,
 		.subresourceRange =
@@ -209,10 +200,10 @@ void CubemapTexture::createImageView() {
 			},
 	};
 
-	_imageView = vk::raii::ImageView(*_device, viewInfo);
+	_image->createView(*_device, viewInfo);
 
 #ifndef NDEBUG
-	VulkanUtils::setDebugName(_device, *_imageView, vk::ObjectType::eImageView, (_debugName + "_View").c_str());
+	VulkanUtils::setDebugName(_device, *_image->getView(), vk::ObjectType::eImageView, (_debugName + "_View").c_str());
 #endif
 }
 
@@ -289,20 +280,15 @@ void CubemapTexture::createFromData(const uint8_t* data, uint32_t size, vk::Form
 	VmaAllocationCreateInfo allocInfo = {};
 	allocInfo.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
 
-	VkResult result = vmaCreateImage(_device.getVmaAllocator(), reinterpret_cast<const VkImageCreateInfo*>(&imageInfo),
-									 &allocInfo, &_image, &_vmaAllocation, nullptr);
-
-	if (result != VK_SUCCESS) {
-		throw std::runtime_error("Failed to create VMA image for default cubemap");
-	}
+	_image = std::make_unique<VulkanImage>(_device.getVmaAllocator(), imageInfo, allocInfo);
 
 	// Execute all GPU commands in a single submission
 	VulkanUtils::executeImmediate(_device, [&](auto& cmd) {
 		// Transition to transfer dst
-		VulkanUtils::transitionImage(*cmd, _image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal,
-									 vk::AccessFlagBits2::eNone, vk::AccessFlagBits2::eTransferWrite,
-									 vk::PipelineStageFlagBits2::eTopOfPipe, vk::PipelineStageFlagBits2::eTransfer,
-									 vk::ImageAspectFlagBits::eColor, 1, 6);
+		VulkanUtils::transitionImage(*cmd, _image->getImage(), vk::ImageLayout::eUndefined,
+									 vk::ImageLayout::eTransferDstOptimal, vk::AccessFlagBits2::eNone,
+									 vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eTopOfPipe,
+									 vk::PipelineStageFlagBits2::eTransfer, vk::ImageAspectFlagBits::eColor, 1, 6);
 
 		// Copy buffer to image (all 6 faces)
 		std::vector<vk::BufferImageCopy> copyRegions;
@@ -323,10 +309,11 @@ void CubemapTexture::createFromData(const uint8_t* data, uint32_t size, vk::Form
 			});
 		}
 
-		cmd.copyBufferToImage(stagingBuffer.getBuffer(), _image, vk::ImageLayout::eTransferDstOptimal, copyRegions);
+		cmd.copyBufferToImage(stagingBuffer.getBuffer(), _image->getImage(), vk::ImageLayout::eTransferDstOptimal,
+							  copyRegions);
 
 		// Transition to shader read
-		VulkanUtils::transitionImage(*cmd, _image, vk::ImageLayout::eTransferDstOptimal,
+		VulkanUtils::transitionImage(*cmd, _image->getImage(), vk::ImageLayout::eTransferDstOptimal,
 									 vk::ImageLayout::eShaderReadOnlyOptimal, vk::AccessFlagBits2::eTransferWrite,
 									 vk::AccessFlagBits2::eShaderRead, vk::PipelineStageFlagBits2::eTransfer,
 									 vk::PipelineStageFlagBits2::eFragmentShader, vk::ImageAspectFlagBits::eColor, 1,

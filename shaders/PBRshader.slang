@@ -42,35 +42,42 @@ static const uint INVALID_TEXTURE_INDEX = 0xFFFFFFFF;
 struct InstanceData {
     // Transform data
     float4x4 model;
-    float4x4 normalMatrix;
 
-    // Bindless texture indices (UINT32_MAX = no texture)
+    // --- Material Factors (Packed into vec4s for alignment) ---
+    // Data 0: Base Color (RGBA)
+    float4 baseColorFactor;
+
+    // Data 1: Emissive (RGB) + Strength (A)
+    float4 emissiveFactor;
+
+    // Data 2: PBR Standard
+    // x: metallic, y: roughness, z: normalScale, w: occlusionStrength
+    float4 pbrFactors;
+
+    // Data 3: Advanced / Alpha
+    // x: alphaCutoff, y: transmission, z: ior, w: clearcoatFactor
+    float4 extraFactors1;
+
+    // Data 4: Clearcoat details
+    // x: clearcoatRoughness, y: unused, z: unused, w: unused
+    float4 extraFactors2;
+
+    // --- Bindless Indices (Integers) ---
     uint baseColorIndex;
     uint metallicRoughnessIndex;
     uint normalIndex;
     uint occlusionIndex;
+
     uint emissiveIndex;
     uint clearcoatIndex;
     uint clearcoatRoughnessIndex;
     uint clearcoatNormalIndex;
-    uint transmissionIndex;
-    uint _padding0[3]; // Align to 16 bytes for float4 baseColorFactor
 
-    // Material properties (inline)
-    float4 baseColorFactor;
-    float metallicFactor;
-    float roughnessFactor;
-    float normalScale;
-    float occlusionStrength;
-    float4 emissiveFactor;  // RGB + strength in w
-    float alphaCutoff;
-    uint flags;
-    float clearcoatFactor;
-    float clearcoatRoughnessFactor;
-    float transmissionFactor; // KHR_materials_transmission
-    float ior;                // KHR_materials_ior
+    uint transmissionIndex;
+    uint flags;     // Bitfield for alphaMode, doubleSided
+    uint objectID;  // Useful for mouse picking / debug
+    uint _pad0;     // Align to 16 bytes end
 };
-// [[vk::binding(0, 2)]] StructuredBuffer<InstanceData> g_Instances;
 
 
 // Slang uses C-style pointers for Buffer Device Address
@@ -178,7 +185,7 @@ float3x3 getTBN(VSOutput vertIn) {
 float3 getNormalBindless(VSOutput vertIn, InstanceData inst) {
     float4 normalSample = sampleBindless(inst.normalIndex, vertIn.texCoord, float4(0.5, 0.5, 1.0, 1.0));
     float3 tangentNormal = normalSample.rgb * 2.0 - 1.0;
-    tangentNormal.xy *= inst.normalScale;
+    tangentNormal.xy *= inst.pbrFactors.z; // normalScale
     tangentNormal = normalize(tangentNormal);
     
     return normalize(mul(tangentNormal, getTBN(vertIn)));
@@ -296,8 +303,9 @@ VSOutput vertMain(VSInput input, uniform PushConstants pc, uint instanceID : SV_
     output.pos = mul(pc.globalDataPtr.proj, mul(pc.globalDataPtr.view, worldPos));
     output.texCoord = input.inTexCoord;
     
-    // Transform normal and tangent using precomputed normalMatrix
-    float3x3 normalMat = (float3x3)inst.normalMatrix;
+    // Compute normal matrix from model matrix (transpose of inverse of upper-left 3x3)
+    // For uniform scaling, this is just the upper-left 3x3 of model matrix
+    float3x3 normalMat = (float3x3)inst.model;
     output.worldNormal = normalize(mul(normalMat, input.inNormal));
     output.worldTangent = normalize(mul(normalMat, input.inTangent.xyz));
     output.tangentW = input.inTangent.w;
@@ -324,16 +332,17 @@ float4 fragMain(VSOutput vertIn, uniform PushConstants pc) : SV_Target
     // Alpha handling
     uint alphaMode = (inst.flags >> 1) & 0x3;
     if (alphaMode == 1) { // MASK mode
-        if (baseColor.a < inst.alphaCutoff) {
+        if (baseColor.a < inst.extraFactors1.x) { // alphaCutoff
             discard;
         }
         baseColor.a = 1.0;
     }
     
     // glTF: metallic in B channel, roughness in G channel
+    // pbrFactors: x=metallic, y=roughness, z=normalScale, w=occlusionStrength
     float4 mrSample = sampleBindless(inst.metallicRoughnessIndex, uv, float4(1.0, 1.0, 1.0, 1.0));
-    float perceptualRoughness = clamp(mrSample.g * inst.roughnessFactor, MIN_ROUGHNESS, 1.0);
-    float metallic = clamp(mrSample.b * inst.metallicFactor, 0.0, 1.0);
+    float perceptualRoughness = clamp(mrSample.g * inst.pbrFactors.y, MIN_ROUGHNESS, 1.0); // roughnessFactor
+    float metallic = clamp(mrSample.b * inst.pbrFactors.x, 0.0, 1.0); // metallicFactor
     
     // Roughness is authored as perceptual roughness; convert by squaring
     float alphaRoughness = perceptualRoughness * perceptualRoughness;
@@ -398,12 +407,14 @@ float4 fragMain(VSOutput vertIn, uniform PushConstants pc) : SV_Target
     float3 color = NdotL * pc.globalDataPtr.lightColor.xyz * (diffuseContrib + specContrib);
     
     // Clearcoat layer
-    float clearcoatFactor = inst.clearcoatFactor;
+    // extraFactors1: x=alphaCutoff, y=transmission, z=ior, w=clearcoatFactor
+    // extraFactors2: x=clearcoatRoughness, yzw=unused
+    float clearcoatFactor = inst.extraFactors1.w;
     if (clearcoatFactor > 0.0) {
         float4 ccSample = sampleBindless(inst.clearcoatIndex, uv, float4(1.0));
         float clearcoatStrength = ccSample.r * clearcoatFactor;
         float4 ccrSample = sampleBindless(inst.clearcoatRoughnessIndex, uv, float4(1.0));
-        float clearcoatRoughness = clamp(ccrSample.g * inst.clearcoatRoughnessFactor, MIN_ROUGHNESS, 1.0);
+        float clearcoatRoughness = clamp(ccrSample.g * inst.extraFactors2.x, MIN_ROUGHNESS, 1.0);
         
         float3 clearcoatN = getClearcoatNormalBindless(vertIn, inst, normalize(vertIn.worldNormal));
         float3 clearcoatBRDF = evaluateClearcoatBRDF(clearcoatN, v, l, clearcoatRoughness) * pc.globalDataPtr.lightColor.xyz;
@@ -420,7 +431,7 @@ float4 fragMain(VSOutput vertIn, uniform PushConstants pc) : SV_Target
     bool hasOcclusion = (inst.flags & (1 << 6)) != 0 && inst.occlusionIndex != INVALID_TEXTURE_INDEX;
     if (hasOcclusion) {
         float ao = sampleBindless(inst.occlusionIndex, uv, float4(1.0)).r;
-        color = lerp(color, color * ao, inst.occlusionStrength);
+        color = lerp(color, color * ao, inst.pbrFactors.w); // occlusionStrength
     }
     
     // ========================================================================

@@ -339,6 +339,9 @@ entt::resource<Material> ModelLoader::loadGltfMaterial(const LoadContext& ctx, i
 		LogSystem::get().info("Material textures: none");
 	}
 
+	// Pre-compute bindless texture indices for this material
+	ctx.resourceManager.populateMaterialTextureIndices(material);
+
 	return materialHandle;
 }
 

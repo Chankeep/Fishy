@@ -2,6 +2,7 @@
 
 #include "../core/VulkanBuffer.h"
 #include "../core/VulkanDevice.h"
+#include "../core/VulkanImage.h"
 
 #include <memory>
 
@@ -36,8 +37,8 @@ public:
 	Texture(const Texture&) = delete;
 	Texture& operator=(const Texture&) = delete;
 
-	[[nodiscard]] VkImage getImage() const { return _image; }
-	[[nodiscard]] const vk::raii::ImageView& getImageView() const { return _imageView; }
+	[[nodiscard]] vk::Image getImage() const { return _image->getImage(); }
+	[[nodiscard]] const vk::raii::ImageView& getImageView() const { return _image->getView(); }
 	[[nodiscard]] const vk::raii::Sampler& getSampler() const { return _sampler; }
 
 private:
@@ -52,9 +53,7 @@ private:
 	const VulkanDevice& _device;
 	vk::Format _format;
 
-	VkImage _image = VK_NULL_HANDLE;
-	VmaAllocation _vmaAllocation = nullptr;
-	vk::raii::ImageView _imageView = nullptr;
+	std::unique_ptr<VulkanImage> _image;
 	vk::raii::Sampler _sampler = nullptr;
 
 #ifndef NDEBUG

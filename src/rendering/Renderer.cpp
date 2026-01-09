@@ -21,6 +21,7 @@
 #include <fstream>
 #include <glm/gtc/matrix_inverse.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <memory>
 #include <stdexcept>
 
 namespace Fishy {
@@ -72,10 +73,7 @@ Renderer::~Renderer() {
 	_unifiedVertexBuffer.reset();
 	_unifiedIndexBuffer.reset();
 
-	// Destroy depth image with VMA
-	if (_depthAllocation) {
-		vmaDestroyImage(_device.getVmaAllocator(), _depthImage, _depthAllocation);
-	}
+	// Destroy depth image
 }
 
 void Renderer::renderScene(Scene& scene, const RenderParams& params,
@@ -105,7 +103,7 @@ void Renderer::renderScene(Scene& scene, const RenderParams& params,
 												.storeOp = vk::AttachmentStoreOp::eStore,
 												.clearValue = clearColor};
 
-	vk::RenderingAttachmentInfo depthAttachment{.imageView = *_depthImageView,
+	vk::RenderingAttachmentInfo depthAttachment{.imageView = *_depthImage->getView(),
 												.imageLayout = vk::ImageLayout::eDepthAttachmentOptimal,
 												.loadOp = vk::AttachmentLoadOp::eClear,
 												.storeOp = vk::AttachmentStoreOp::eDontCare,
@@ -181,7 +179,21 @@ void Renderer::recreateSwapChain() {
 	}
 
 	LogSystem::get().info("Recreating swap chain: {}x{}", extent.width, extent.height);
-	_device->waitIdle();
+
+	// wait for all in-flight frames to complete instead of full device idle
+	std::vector<vk::Fence> fencesToWait;
+	for (const auto& frame : _frames) {
+		if (*frame.inFlightFence) {
+			fencesToWait.push_back(*frame.inFlightFence);
+		}
+	}
+
+	if (!fencesToWait.empty()) {
+		auto result = _device->waitForFences(fencesToWait, vk::True, FENCE_TIMEOUT);
+		if (result != vk::Result::eSuccess) {
+			LogSystem::get().error("Failed to wait for in-flight fences during SwapChain recreation");
+		}
+	}
 
 	if (_swapChain == nullptr) {
 		_swapChain = std::make_unique<SwapChain>(_device, _window.getSurface(), extent.width, extent.height);
@@ -769,13 +781,7 @@ vk::Format Renderer::findDepthFormat() {
 void Renderer::createDepthResources() {
 	// Destroy old depth resources if they exist (critical for recreateSwapChain)
 	// This prevents VMA "Unfreed dedicated allocations" error on program exit
-	if (_depthAllocation) {
-		// Reset ImageView first (it references the image)
-		_depthImageView = nullptr;
-		vmaDestroyImage(_device.getVmaAllocator(), _depthImage, _depthAllocation);
-		_depthImage = VK_NULL_HANDLE;
-		_depthAllocation = nullptr;
-	}
+	_depthImage.reset();
 
 	_depthFormat = findDepthFormat();
 	vk::Extent2D extent = getSwapChainExtent();
@@ -797,22 +803,16 @@ void Renderer::createDepthResources() {
 
 	VmaAllocationCreateInfo allocInfo = {};
 	allocInfo.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+	allocInfo.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
 
-	VkResult result = vmaCreateImage(_device.getVmaAllocator(), reinterpret_cast<const VkImageCreateInfo*>(&imageInfo),
-									 &allocInfo, &_depthImage, &_depthAllocation, nullptr);
-
-	if (result != VK_SUCCESS) {
-		LogSystem::get().error("Failed to create VMA depth image: {}x{}", extent.width, extent.height);
-		throw std::runtime_error("Failed to create VMA depth image!");
-	}
+	_depthImage = std::make_unique<VulkanImage>(_device.getVmaAllocator(), imageInfo, allocInfo);
 
 #ifndef NDEBUG
 	std::string debugName = "DepthImage_" + std::to_string(extent.width) + "x" + std::to_string(extent.height);
-	VulkanUtils::setDebugName(_device, _depthImage, debugName.c_str());
+	VulkanUtils::setDebugName(_device, _depthImage->getImage(), debugName.c_str());
 #endif
 
-	vk::ImageViewCreateInfo viewInfo{.image = _depthImage,
-									 .viewType = vk::ImageViewType::e2D,
+	vk::ImageViewCreateInfo viewInfo{.viewType = vk::ImageViewType::e2D,
 									 .format = _depthFormat,
 									 .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eDepth,
 														  .baseMipLevel = 0,
@@ -824,9 +824,10 @@ void Renderer::createDepthResources() {
 		viewInfo.subresourceRange.aspectMask |= vk::ImageAspectFlagBits::eStencil;
 	}
 
-	_depthImageView = vk::raii::ImageView(*_device, viewInfo);
+	_depthImage->createView(*_device, viewInfo);
 #ifndef NDEBUG
-	VulkanUtils::setDebugName(_device, *_depthImageView, vk::ObjectType::eImageView, (debugName + "_View").c_str());
+	VulkanUtils::setDebugName(_device, *_depthImage->getView(), vk::ObjectType::eImageView,
+							  (debugName + "_View").c_str());
 #endif
 	LogSystem::get().trace("Created depth image view");
 
@@ -837,7 +838,7 @@ void Renderer::createDepthResources() {
 
 		VulkanUtils::executeImmediate(_device, [&](auto& cmd) {
 			VulkanUtils::transitionImage(
-				*cmd, _depthImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal,
+				*cmd, *_depthImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal,
 				vk::AccessFlagBits2::eNone,
 				vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
 				vk::PipelineStageFlagBits2::eTopOfPipe,
@@ -1034,58 +1035,47 @@ void Renderer::buildInstanceDataFromScene(Scene& scene) {
 	for (auto entity : view) {
 		const auto& mesh = view.get<MeshComponent>(entity);
 		const auto& meshRenderer = view.get<MeshRendererComponent>(entity);
-		const auto& transform = view.get<TransformComponent>(entity);
+		auto& transform = view.get<TransformComponent>(entity);
+
+		transform.setRotationEuler(glm::vec3(glm::radians(90.0f), 0.0f, 0.0f));
 
 		if (!mesh.mesh || !meshRenderer.visible) {
 			continue;
 		}
 
 		// Build instance data from transform
-		InstanceData inst = InstanceData::fromModelMatrix(transform.worldMatrix);
+		InstanceData inst{};
+		inst.model = transform.worldMatrix;
 
 		// Fill material properties using entt::resource operator->
 		if (meshRenderer.material) {
 			const Material& mat = *meshRenderer.material;
 			inst.baseColorFactor = mat.params.baseColorFactor;
-			inst.metallicFactor = mat.params.metallicFactor;
-			inst.roughnessFactor = mat.params.roughnessFactor;
-			inst.normalScale = mat.params.normalScale;
-			inst.occlusionStrength = mat.params.occlusionStrength;
 			inst.emissiveFactor = glm::vec4(mat.params.emissiveFactor, mat.params.emissiveStrength);
-			inst.alphaCutoff = mat.params.alphaCutoff;
 
-			// Extension material properties
-			inst.clearcoatFactor = mat.params.clearcoatFactor;
-			inst.clearcoatRoughnessFactor = mat.params.clearcoatRoughnessFactor;
-			inst.transmissionFactor = mat.params.transmissionFactor;
-			inst.ior = mat.params.ior;
+			// Packed PBR factors: x=metallic, y=roughness, z=normalScale, w=occlusionStrength
+			inst.pbrFactors = glm::vec4(mat.params.metallicFactor, mat.params.roughnessFactor, mat.params.normalScale,
+										mat.params.occlusionStrength);
 
-			// Get texture indices from ResourceManager using pointer lookup
-			// entt::resource uses operator* to dereference, &(*handle) gets pointer
-			inst.baseColorIndex = mat.baseColorMap ? _resourceManager.getTextureBindlessIndex(&(*mat.baseColorMap))
-												   : INVALID_TEXTURE_INDEX;
-			inst.metallicRoughnessIndex = mat.metallicRoughnessMap
-											  ? _resourceManager.getTextureBindlessIndex(&(*mat.metallicRoughnessMap))
-											  : INVALID_TEXTURE_INDEX;
-			inst.normalIndex =
-				mat.normalMap ? _resourceManager.getTextureBindlessIndex(&(*mat.normalMap)) : INVALID_TEXTURE_INDEX;
-			inst.occlusionIndex = mat.occlusionMap ? _resourceManager.getTextureBindlessIndex(&(*mat.occlusionMap))
-												   : INVALID_TEXTURE_INDEX;
-			inst.emissiveIndex =
-				mat.emissiveMap ? _resourceManager.getTextureBindlessIndex(&(*mat.emissiveMap)) : INVALID_TEXTURE_INDEX;
+			// Advanced factors: x=alphaCutoff, y=transmission, z=ior, w=clearcoatFactor
+			inst.extraFactors1 = glm::vec4(mat.params.alphaCutoff, mat.params.transmissionFactor, mat.params.ior,
+										   mat.params.clearcoatFactor);
+
+			// Clearcoat details: x=clearcoatRoughness, yzw=unused
+			inst.extraFactors2 = glm::vec4(mat.params.clearcoatRoughnessFactor, 0.0f, 0.0f, 0.0f);
+
+			// Get texture indices from pre-computed material indices (avoids per-frame hash lookups)
+			inst.baseColorIndex = mat.textureIndices.baseColor;
+			inst.metallicRoughnessIndex = mat.textureIndices.metallicRoughness;
+			inst.normalIndex = mat.textureIndices.normal;
+			inst.occlusionIndex = mat.textureIndices.occlusion;
+			inst.emissiveIndex = mat.textureIndices.emissive;
 
 			// Extension texture indices
-			inst.clearcoatIndex = mat.clearcoatMap ? _resourceManager.getTextureBindlessIndex(&(*mat.clearcoatMap))
-												   : INVALID_TEXTURE_INDEX;
-			inst.clearcoatRoughnessIndex = mat.clearcoatRoughnessMap
-											   ? _resourceManager.getTextureBindlessIndex(&(*mat.clearcoatRoughnessMap))
-											   : INVALID_TEXTURE_INDEX;
-			inst.clearcoatNormalIndex = mat.clearcoatNormalMap
-											? _resourceManager.getTextureBindlessIndex(&(*mat.clearcoatNormalMap))
-											: INVALID_TEXTURE_INDEX;
-			inst.transmissionIndex = mat.transmissionMap
-										 ? _resourceManager.getTextureBindlessIndex(&(*mat.transmissionMap))
-										 : INVALID_TEXTURE_INDEX;
+			inst.clearcoatIndex = mat.textureIndices.clearcoat;
+			inst.clearcoatRoughnessIndex = mat.textureIndices.clearcoatRoughness;
+			inst.clearcoatNormalIndex = mat.textureIndices.clearcoatNormal;
+			inst.transmissionIndex = mat.textureIndices.transmission;
 
 			// Build texture flags - MUST match shader expectations in PBRshader.slang
 			// Shader reads: alphaMode = (flags >> 1) & 0x3, hasNormalMap = flags & (1<<5), hasOcclusion = flags &

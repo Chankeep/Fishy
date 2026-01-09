@@ -17,6 +17,7 @@ import vulkan_hpp;
 #include "GraphicsPipeline.h"
 #include "core/SwapChain.h"
 #include "core/VulkanBuffer.h"
+#include "core/VulkanImage.h"
 
 #include <functional>
 #include <memory>
@@ -140,9 +141,7 @@ private:
 	std::unique_ptr<SwapChain> _swapChain;
 
 	// Depth resources
-	VkImage _depthImage = VK_NULL_HANDLE;
-	VmaAllocation _depthAllocation = nullptr;
-	vk::raii::ImageView _depthImageView = nullptr;
+	std::unique_ptr<VulkanImage> _depthImage;
 	vk::Format _depthFormat = vk::Format::eUndefined;
 
 	// SwapChain image views

@@ -13,80 +13,56 @@ namespace Fishy {
 struct GPUMaterial;
 
 // Invalid texture index sentinel
-constexpr uint32_t INVALID_TEXTURE_INDEX = UINT32_MAX;
+constexpr uint32_t INVALID_TEXTURE_INDEX = 0xFFFFFFFF;
 
 // Per-instance data stored in bindless SSBO for GPU access
 // Layout must match shader InstanceData struct (std430)
 struct alignas(16) InstanceData {
 	// Transform data
-	glm::mat4 model;		// Per-object model matrix (world transform)
-	glm::mat4 normalMatrix; // transpose(inverse(mat3(model))) for correct normals
+	glm::mat4 model; // Per-object model matrix (world transform)
+					 // glm::mat4 normalMatrix; // transpose(inverse(mat3(model))) for correct normals
 
-	// Bindless texture indices (UINT32_MAX = no texture, use default)
-	uint32_t baseColorIndex;		  // Albedo map
-	uint32_t metallicRoughnessIndex;  // MetallicRoughness packed
-	uint32_t normalIndex;			  // Normal map
-	uint32_t occlusionIndex;		  // Ambient occlusion
-	uint32_t emissiveIndex;			  // Emissive map
-	uint32_t clearcoatIndex;		  // Clearcoat map
-	uint32_t clearcoatRoughnessIndex; // Clearcoat roughness
-	uint32_t clearcoatNormalIndex;	  // Clearcoat normal
-	uint32_t transmissionIndex;		  // Transmission map
-	uint32_t _padding0[3];			  // Align to 16 bytes for vec4 baseColorFactor
+	// --- Material Factors (Packed into vec4s for alignment) ---
 
-	// Material properties (inline to avoid extra UBO lookup)
-	glm::vec4 baseColorFactor; // RGBA base color multiplier
-	float metallicFactor;
-	float roughnessFactor;
-	float normalScale;
-	float occlusionStrength;
-	glm::vec4 emissiveFactor; // RGB + strength
-	float alphaCutoff;
-	uint32_t flags; // Material flags (doubleSided, alphaMode, etc.)
-	float clearcoatFactor;
-	float clearcoatRoughnessFactor;
-	float transmissionFactor; // KHR_materials_transmission
-	float ior;				  // KHR_materials_ior
+	// Data 0: Base Color (RGBA)
+	glm::vec4 baseColorFactor;
 
-	// Compute InstanceData from a model matrix with default values
-	[[nodiscard]] static InstanceData fromModelMatrix(const glm::mat4& modelMat) {
-		InstanceData data{};
-		static const glm::mat4 gltfCorrection =
-			glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
-		data.model = gltfCorrection * modelMat;
-		data.normalMatrix = glm::mat4(glm::inverseTranspose(glm::mat3(data.model)));
+	// Data 1: Emissive (RGB) + Strength (A)
+	glm::vec4 emissiveFactor;
 
-		// Default texture indices (invalid = use shader defaults)
-		data.baseColorIndex = INVALID_TEXTURE_INDEX;
-		data.metallicRoughnessIndex = INVALID_TEXTURE_INDEX;
-		data.normalIndex = INVALID_TEXTURE_INDEX;
-		data.occlusionIndex = INVALID_TEXTURE_INDEX;
-		data.emissiveIndex = INVALID_TEXTURE_INDEX;
-		data.clearcoatIndex = INVALID_TEXTURE_INDEX;
-		data.clearcoatRoughnessIndex = INVALID_TEXTURE_INDEX;
-		data.clearcoatNormalIndex = INVALID_TEXTURE_INDEX;
-		data.transmissionIndex = INVALID_TEXTURE_INDEX;
+	// Data 2: PBR Standard
+	// x: metallic, y: roughness, z: normalScale, w: occlusionStrength
+	glm::vec4 pbrFactors;
 
-		// Default material properties
-		data.baseColorFactor = glm::vec4(1.0f);
-		data.metallicFactor = 1.0f;
-		data.roughnessFactor = 1.0f;
-		data.normalScale = 1.0f;
-		data.occlusionStrength = 1.0f;
-		data.emissiveFactor = glm::vec4(0.0f);
-		data.alphaCutoff = 0.5f;
-		data.flags = 0;
-		data.clearcoatFactor = 0.0f;
-		data.clearcoatRoughnessFactor = 0.0f;
-		data.transmissionFactor = 0.0f;
-		data.ior = 1.5f;
+	// Data 3: Advanced / Alpha
+	// x: alphaCutoff, y: transmission, z: ior, w: clearcoatFactor
+	glm::vec4 extraFactors1;
 
-		return data;
-	}
+	// Data 4: Clearcoat details
+	// x: clearcoatRoughness, y: unused, z: unused, w: unused
+	glm::vec4 extraFactors2;
+
+	// --- Bindless Indices (Integers) ---
+	// Note: uints are 4 bytes. We group them to align to 16 bytes where possible
+	// or just let them trail. std430 aligns arrays/structs, but simple uints are 4-byte aligned.
+	uint32_t baseColorIndex;
+	uint32_t metallicRoughnessIndex;
+	uint32_t normalIndex;
+	uint32_t occlusionIndex;
+
+	uint32_t emissiveIndex;
+	uint32_t clearcoatIndex;
+	uint32_t clearcoatRoughnessIndex;
+	uint32_t clearcoatNormalIndex;
+
+	uint32_t transmissionIndex;
+	uint32_t flags;	   // Bitfield for alphaMode, doubleSided
+	uint32_t objectID; // Useful for mouse picking / debug
+	uint32_t _pad0;	   // Align to 16 bytes end
 };
 
-// Keep ObjectData as alias for backward compatibility
-using ObjectData = InstanceData;
+// Ensure struct size is valid for GPU arrays
+static_assert(sizeof(InstanceData) % 16 == 0, "InstanceData size must be multiple of 16 for std430");
 
 // Region of a mesh within unified vertex/index buffers
 struct MeshRegion {

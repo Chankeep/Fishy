@@ -1,256 +1,102 @@
-# TODOS
+### 🚨 Phase 0: 紧急修复与止血 (Immediate Fixes)
 
-## 🔴 High Priority (Critical Bugs & Performance)
-
-*(All items completed and archived)*
-
-## 🟡 Medium Priority
-
-- [ ] **Shader Reflection System (REQ-R-04)**
-  - Integrate SPIRV-Reflect library
-  - Add `ShaderReflection` struct for vertex inputs and descriptor bindings
-  - Auto-generate `PipelineVertexInputStateCreateInfo` and `DescriptorSetLayout`
-  - Validate shader/Material compatibility (glTF standard binding order)
-  - Cache reflection results in `ResourceManager`
-  - Eliminates manual layout duplication between C++ and shader
-
-- [ ] **Transfer Queue Async Upload (REQ-P-02)**
-  - Add dedicated transfer queue to `VulkanDevice` (query vkb::QueueType::transfer)
-  - Implement async resource upload with timeline semaphore sync
-  - Don't block graphics queue during texture/mesh loading
-  - Consider double-buffered staging buffer pool
-
-- [ ] **Mipmap Generation (REQ-P-03)**
-  - Generate mipmaps using `vkCmdBlitImage` chain
-  - Calculate mip levels: `floor(log2(max(width, height))) + 1`
-  - Update Sampler with `VK_SAMPLER_MIPMAP_MODE_LINEAR` and proper `maxLod`
-  - Enable anisotropic filtering (already have `samplerAnisotropy` feature enabled)
-
-- [ ] **KTX2 Texture Support (REQ-M-02)**
-  - Integrate libktx or Compressonator SDK
-  - Support BC7 (high quality), BC5 (normal maps), ASTC (mobile)
-  - Load pre-generated mipmaps from KTX2
-  - Consider GPU transcoding with Basis Universal
-
-- [ ] **ImGui Integration and Input Handling (REQ-I-02)**
-  - Complete ImGuiLayer implementation
-  - Add Scene Hierarchy panel with tree view
-  - Add Inspector panel for component editing
-  - Add Asset Browser with thumbnail preview
-  - Add render statistics overlay (draw calls, triangles, GPU time)
+*目标：修复内存安全隐患，消除显式同步等待，优化最明显的性能瓶颈。*
 
 
-## 🔧 Renderer Design Improvements
 
-- [ ] **Multi-Pipeline Support for Different Materials**
-  - Current: Single GraphicsPipeline for all objects
-  - Need pipelines for: Opaque, Alpha-Mask, Alpha-Blend, Double-Sided
-  - Select pipeline based on `Material::alphaMode` and `doubleSided` flags
-  - Consider pipeline derivatives for faster creation
 
-- [ ] **Depth Pre-Pass (Z-Prepass)**
-  - First pass: Depth-only rendering to fill depth buffer
-  - Second pass: Use `DepthCompareOp::eEqual` to avoid overdraw
-  - Significant performance gain for scenes with high depth complexity
+---
 
-- [ ] **Remove Blocking waitIdle() in Resource Creation**
-  - Current: `waitIdle()` called in depth resource creation (Renderer.cpp:587)
-  - Problem: Blocks GPU during swapchain recreation
-  - Fix: Use proper fence-based synchronization or per-resource fences
-  - Same issue in staged buffer uploads
+### 🏗️ Phase 1: 核心后端抽象 (Backend Abstraction)
 
-- [ ] **Secondary Command Buffers for Parallel Recording**
-  - Separate scene rendering and UI into secondary command buffers
-  - Enables multi-threaded command recording
-  - Current: Single primary command buffer for everything
+*目标：将资源管理与渲染逻辑分离，建立“帧”的概念。*
 
-## 🏗️ Architecture Improvements
+* [ ] **提取 `FrameContext` (每帧资源)**
+  * [ ] 创建 `core/FrameContext.h`。
+  * [ ] 将 `commandBuffer`, `imageAvailableSemaphore`, `renderFinishedSemaphore`, `inFlightFence` 移入此结构。
+  * [ ] 实现 `reset()` 方法：等待 Fence -> Reset Fence -> Reset CommandPool。
+  * [ ] **新增：** 添加 `LinearAllocator` (std::vector<uint8_t> + offset) 用于每帧动态数据（Indirect Commands, Dynamic UBOs）。
 
-- [ ] **Decouple Renderer from Scene Logic**
-  - Current: `Renderer::render()` directly iterates over `Model` primitives
-  - Problem: Violates single responsibility, hard to extend
-  - Solution: Introduce `RenderQueue` or `DrawList` abstraction
-  - Renderer should only receive pre-sorted draw commands
 
-- [ ] **Resource Lifetime Management with Reference Counting**
-  - Current: ResourceManager uses raw pointers for GPU resource lookup
-  - Problem: Dangling references if CPU-side objects are destroyed
-  - Solution: Use handle-based system with generation IDs
-  - Or use `std::weak_ptr` for cache entries
+* [ ] **创建 `RenderContext` (RHI 层)**
+  * [ ] 创建 `core/RenderContext.h/cpp`。
+  * [ ] 移入 `VulkanDevice`, `SwapChain`, `Surface` 的所有权。
+  * [ ] 实现 `FrameContext& beginFrame()`：处理 `acquireNextImage` 和同步等待。
+  * [ ] 实现 `void endFrame(FrameContext&)`：处理 `queueSubmit` 和 `queuePresent`。
+  * [ ] 此时 `Renderer` 类应该不再持有 `_device` 和 `_swapChain` 的直接所有权，而是持有 `RenderContext` 的引用。
 
-- [ ] **Frame Resource Ring Buffer**
-  - Current: Fixed `MAX_FRAMES_IN_FLIGHT = 2` with hardcoded arrays
-  - Improvement: Create proper `FrameResources` struct with all per-frame data
-  - Easier to manage and extend frame-local resources
 
-- [ ] **Proper Error Handling Strategy**
-  - Current: Mix of exceptions and return codes
-  - Standardize on one approach: prefer exceptions for initialization
-  - Add recovery paths for runtime errors (e.g., swapchain recreation)
+---
 
-- [ ] **Configuration System**
-  - Current: Hardcoded values (pool sizes, swapchain format preferences)
-  - Add engine configuration file (JSON/TOML)
-  - Runtime-adjustable graphics settings
+### 🚀 Phase 2: 数据导向管线 (DOD Data Pipeline)
 
-- [ ] **Render Graph / Frame Graph System**
-  - Abstract render pass dependencies and resource transitions
-  - Automatic barrier placement and resource aliasing
-  - Foundation for deferred rendering, post-processing, shadows
+*目标：将场景遍历逻辑移出渲染循环，利用 EnTT 系统。*
 
-## 🎨 Graphics Features (Future)
-w
-  - Directional light shadow maps (cascaded for large scenes)
-  - Point light shadow cubemaps
-  - Percentage-closer filtering (PCF)
+* [ ] **创建 `GeometrySystem` (ECS System)**
+  * [ ] 在 `ecs/systems/` 下创建 `GeometrySystem`。
+  * [ ] 移动 `buildInstanceDataFromScene` 和 `buildDrawBatchesFromScene` 的逻辑到 `GeometrySystem::update()`。
+  * [ ] **优化：** 使用 `registry.group<MeshComponent, TransformComponent>(...)` 确保内存连续性。
+  * [ ] **优化：** 仅在 Entity 变动或 Transform 变动时重建整个 Buffer（或实现 Dirty Flag）。
 
-- [ ] **Screen-Space Ambient Occlusion (SSAO)**
-  - Post-processing pass for contact shadows
-  - HBAO+ or GTAO algorithms
 
-- [ ] **HDR Rendering and Tone Mapping**
-  - Current: Reinhard tone mapping only
-  - Add ACES, Uncharted 2, AgX options
-  - Exposure control (auto-exposure)
-  - Bloom effect
+* [ ] **实现 GPU 数据上传逻辑**
+  * [ ] `GeometrySystem` 输出 `std::span<InstanceData>` 和 `std::span<DrawCommand>`。
+  * [ ] 利用 `FrameContext` 的 `LinearAllocator` 或 Staging Buffer 将数据上传到 GPU。
+  * [ ] `Renderer` 现在只需要接收 `VulkanBuffer` 的句柄，而不需要知道 `Scene` 的存在。
 
-- [ ] **Anti-Aliasing Options**
-  - MSAA support (sample count configuration)
-  - FXAA/TAA post-processing options
 
-## 🟢 Low Priority / Future
 
-- [ ] **Dynamic Descriptor Allocator (REQ-M-03)**
-  - Implement growable descriptor pool
-  - Support per-frame pool reset
-  - Remove fixed pool size limits
+---
 
-- [ ] **Resource Hashing (REQ-M-04)**
-  - Replace string keys with hash IDs (size_t/uint64_t)
-  - Faster resource lookup
+### 🎨 Phase 3: 模块化渲染图 (Render Graph & Passes)
 
-- [ ] **TransformSystem (REQ-S-02)**
-  - Use `std::vector<glm::mat4>` for contiguous storage
-  - Scene nodes store only index IDs
-  - Batch matrix updates
+*目标：解耦“做什么”（Pass）和“怎么做”（Backend）。*
 
-- [ ] **Frustum Culling (REQ-S-03)**
-  - Implement CPU AABB culling
-  - Output visible object indices
+* [ ] **定义 `IRenderPass` 接口**
+  * [ ] 定义 `RenderGraphData` 结构体（包含 CommandBuffer, Viewport, Global DescriptorSet）。
+  * [ ] 定义接口：`execute(const RenderGraphData& data, entt::registry& registry)`。
 
-## 🏗️ ECS Architecture (Future Refactor)
 
-> Migrate from current OOP architecture to Entity-Component-System for better data locality and extensibility
+* [ ] **拆分现有渲染逻辑**
+  * [ ] **`MainDrawPass`**: 封装 `_graphicsPipeline`，负责主要的 Indirect Draw。
+  * [ ] **`SkyboxPass`**: 封装 `_skyboxPipeline` 和 Skybox Mesh 渲染。
+  * [ ] **`UIPass`**: 封装 ImGui 或 UI 回调逻辑。
 
-### Architecture Diagram
 
-```mermaid
-graph TB
-    subgraph "Application Layer"
-        APP[Application]
-    end
+* [ ] **重构 `Renderer` 为 `RenderGraphExecutor`**
+  * [ ] `Renderer` 内部维护 `std::vector<std::unique_ptr<IRenderPass>>`。
+  * [ ] `render()` 函数变为简单的循环：
+```cpp
+auto& frame = ctx.beginFrame();
+// ... barriers ...
+for(auto& pass : passes) pass->execute(...);
+// ... barriers ...
+ctx.endFrame(frame);
 
-    subgraph "ECS Layer"
-        WORLD[World/Registry]
-        subgraph "Components"
-            TC[TransformComp]
-            MC[MeshComp]
-            MATC[MaterialComp]
-            CC[CameraComp]
-            LC[LightComp]
-        end
-        subgraph "Systems"
-            TS[TransformSystem]
-            CS[CameraSystem]
-            LS[LightSystem]
-            CULLS[CullingSystem]
-            RS[RenderSystem]
-        end
-    end
-
-    subgraph "Vulkan Layer"
-        REN[Renderer Core]
-        RM[ResourceManager]
-    end
-
-    APP --> WORLD
-    RS --> REN
-    REN --> RM
 ```
 
-### Renderer Role Changes After ECS
 
-After ECS migration, `Renderer` becomes a **low-level Vulkan wrapper** without scene logic:
-- ❌ No longer iterates over Model/Primitives
-- ❌ No longer owns Camera
-- ✅ Only handles beginFrame/endFrame, pipeline binding, draw command recording
 
-`RenderSystem` becomes the new rendering entry point: queries entities, sorts, calls Renderer.
 
-### Entity & World Management
-- [ ] **Entity Manager**
-  - Implement Entity ID system (sparse set or generational index)
-  - World/Registry manages all entities and components
-  - Consider using [entt](https://github.com/skypjack/entt) or custom implementation
 
-### Components (Pure Data)
-- [ ] **TransformComponent**
-  - `glm::vec3 position, rotation, scale`
-  - `glm::mat4 localMatrix, worldMatrix`
-  - `EntityID parent` (hierarchy relationship)
+---
 
-- [ ] **MeshComponent**
-  - `MeshHandle meshId` (points to Mesh in ResourceManager)
-  - `AABB boundingBox`
+### 🔧 Phase 4: 高级特性与清理 (Polish & Advanced)
 
-- [ ] **MaterialComponent**
-  - `MaterialHandle materialId`
-  - Runtime material parameter overrides
+*目标：利用 Modern C++ 和 Vulkan 新特性进一步提升。*
 
-- [ ] **CameraComponent**
-  - `float fov, nearPlane, farPlane`
-  - `glm::mat4 viewMatrix, projMatrix`
-  - `bool isActive`
+* [ ] **Pipeline 管理**
+  * [ ] 创建 `PipelineBuilder` 的缓存机制（Pipeline Library）。
+  * [ ] 避免在 `Renderer` 构造函数中硬编码创建 Pipeline，改为在 Pass `init` 时按需创建。
 
-- [ ] **LightComponent**
-  - `LightType type` (Directional, Point, Spot)
-  - `glm::vec3 color, float intensity`
-  - `float range, innerCone, outerCone`
 
-### Systems (Logic)
-- [ ] **TransformSystem**
-  - Calculate hierarchical transforms (parent-child)
-  - Update all dirty worldMatrix entries
-  - Upload transform data to GPU (SSBO)
+* [ ] **引入 `vk::StructureChain**`
+  * [ ] 检查所有 `pNext` 链的构建（如 `createBindlessTextureSetLayout`），改用 C++20 `vk::StructureChain` 以提高类型安全。
 
-- [ ] **CameraSystem**
-  - Update active camera's view/projection matrices
-  - Handle camera input controls
 
-- [ ] **LightSystem**
-  - Collect all lights in the scene
-  - Upload light data to GPU UBO/SSBO
-
-- [ ] **CullingSystem**
-  - Frustum Culling
-  - Occlusion Culling (optional)
-  - Output visible entity list
-
-- [ ] **RenderSystem**
-  - Get visible entities from CullingSystem
-  - Sort by material (reduce state changes)
-  - Record draw commands
-  - Manage render passes (Depth, Forward, UI)
-
-- [ ] **UISystem**
-  - ImGui rendering
-  - Handle UI input
-
-### Migration Path
-1. First implement Components and basic World
-2. Gradually migrate Renderer logic to RenderSystem
-3. TransformSystem replaces current Model matrix handling
-4. Finally migrate Camera and Light
+* [ ] **(Optional) Compute Shader Culling**
+  * [ ] 在 `GeometrySystem` 和 `MainDrawPass` 之间插入一个 `CullPass`。
+  * [ ] 使用 Compute Shader 生成 Indirect Draw Commands，而不是在 CPU 端生成。
 
 ## ✅ Archived
 
@@ -316,3 +162,20 @@ After ECS migration, `Renderer` becomes a **low-level Vulkan wrapper** without s
   - Pre-filtered environment map for specular
   - Irradiance map for diffuse
   - Integrates with existing PBR shader
+
+- [x] **封装 VMA Image (RAII Wrapper)** ✅ 2025-01-10
+  - [x] 创建 `core/VulkanImage.h` 类。
+  - [x] 将 `vmaCreateImage` 和 `vmaDestroyImage` 封装在构造/析构函数中。
+  - [x] 确保 `vk::raii::ImageView` 的成员变量声明顺序在 `VulkanImage` 之后（保证析构顺序：View -> Image）。
+  - [x] **关键修复：** 移除 `Renderer::~Renderer` 中手动调用 `vmaDestroyImage` 的代码。
+
+
+- [x] **优化 Bindless 纹理索引查找** ✅ 2025-01-10
+  - [x] 修改 `Material` 结构体，增加 `int32_t baseColorIndex`, `int32_t normalIndex` 等字段。
+  - [x] 在 `ResourceManager::loadMaterial` 或材质创建时，一次性计算好这些 Index。
+  - [x] **性能提升：** 在 `Renderer::buildInstanceDataFromScene` 中，移除所有 `getTextureBindlessIndex` 的哈希查找，直接读取整数。
+
+
+- [x] **移除 SwapChain 重建时的 `DeviceWaitIdle`** ✅ 2025-01-10
+  - [x] 修改 `recreateSwapChain`，仅等待旧 SwapChain 相关的 Fences。
+  - [x] 确保 `_frames` 资源在重建期间被正确回收或保留。

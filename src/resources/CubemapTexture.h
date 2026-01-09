@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../core/VulkanDevice.h"
+#include "../core/VulkanImage.h"
 
 #include <memory>
 #include <string>
@@ -32,8 +33,8 @@ public:
 	 */
 	[[nodiscard]] static std::shared_ptr<CubemapTexture> createDefault(const VulkanDevice& device);
 
-	[[nodiscard]] VkImage getImage() const { return _image; }
-	[[nodiscard]] const vk::raii::ImageView& getImageView() const { return _imageView; }
+	[[nodiscard]] vk::Image getImage() const { return _image->getImage(); }
+	[[nodiscard]] const vk::raii::ImageView& getImageView() const { return _image->getView(); }
 	[[nodiscard]] const vk::raii::Sampler& getSampler() const { return _sampler; }
 	[[nodiscard]] uint32_t getMipLevels() const { return _mipLevels; }
 
@@ -52,9 +53,7 @@ private:
 	uint32_t _height = 0;
 	uint32_t _mipLevels = 1;
 
-	VkImage _image = VK_NULL_HANDLE;
-	VmaAllocation _vmaAllocation = nullptr;
-	vk::raii::ImageView _imageView = nullptr;
+	std::unique_ptr<VulkanImage> _image;
 	vk::raii::Sampler _sampler = nullptr;
 #ifndef NDEBUG
 	std::string _debugName;

@@ -298,6 +298,27 @@ entt::resource<Material> ResourceManager::getMaterial(entt::id_type id) const {
 	return {};
 }
 
+void ResourceManager::populateMaterialTextureIndices(Material& mat) {
+	// Pre-compute bindless texture indices to avoid hash lookups in render loop
+	auto getIndex = [this](const entt::resource<Texture>& res) -> uint32_t {
+		if (!res)
+			return INVALID_TEXTURE_INDEX;
+		return getTextureBindlessIndex(&(*res));
+	};
+
+	mat.textureIndices.baseColor = getIndex(mat.baseColorMap);
+	mat.textureIndices.metallicRoughness = getIndex(mat.metallicRoughnessMap);
+	mat.textureIndices.normal = getIndex(mat.normalMap);
+	mat.textureIndices.occlusion = getIndex(mat.occlusionMap);
+	mat.textureIndices.emissive = getIndex(mat.emissiveMap);
+
+	// Extension textures
+	mat.textureIndices.clearcoat = getIndex(mat.clearcoatMap);
+	mat.textureIndices.clearcoatRoughness = getIndex(mat.clearcoatRoughnessMap);
+	mat.textureIndices.clearcoatNormal = getIndex(mat.clearcoatNormalMap);
+	mat.textureIndices.transmission = getIndex(mat.transmissionMap);
+}
+
 // ========== Buffer API ==========
 
 BufferHandle ResourceManager::registerBuffer(VulkanBuffer* buffer, vk::DeviceSize size) {

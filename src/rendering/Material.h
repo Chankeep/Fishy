@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../resources/Texture.h"
+#include "DrawTypes.h" // For INVALID_TEXTURE_INDEX
 #include <entt/entt.hpp>
 #include <glm/glm.hpp>
 
@@ -50,6 +51,20 @@ public:
 		float emissiveStrength = 1.0f;
 	};
 
+	struct TextureIndices {
+		uint32_t baseColor = INVALID_TEXTURE_INDEX;
+		uint32_t metallicRoughness = INVALID_TEXTURE_INDEX;
+		uint32_t normal = INVALID_TEXTURE_INDEX;
+		uint32_t occlusion = INVALID_TEXTURE_INDEX;
+		uint32_t emissive = INVALID_TEXTURE_INDEX;
+
+		// Extensions
+		uint32_t clearcoat = INVALID_TEXTURE_INDEX;
+		uint32_t clearcoatRoughness = INVALID_TEXTURE_INDEX;
+		uint32_t clearcoatNormal = INVALID_TEXTURE_INDEX;
+		uint32_t transmission = INVALID_TEXTURE_INDEX;
+	};
+
 	Material() = default;
 	~Material() = default;
 
@@ -71,6 +86,10 @@ public:
 	entt::resource<Texture> clearcoatRoughnessMap; // KHR_materials_clearcoat
 	entt::resource<Texture> clearcoatNormalMap;	   // KHR_materials_clearcoat
 	entt::resource<Texture> transmissionMap;	   // KHR_materials_transmission
+
+	// Pre-computed bindless texture indices (populated by ResourceManager after texture loading)
+	// These are computed once when materials are created/modified, avoiding per-frame hash lookups.
+	TextureIndices textureIndices;
 
 	PBRParameters params;
 };
