@@ -261,13 +261,14 @@ void Renderer::createBindlessTextureSetLayout() {
 												  .descriptorCount = MAX_BINDLESS_TEXTURES,
 												  .stageFlags = vk::ShaderStageFlagBits::eFragment};
 
-	vk::DescriptorSetLayoutCreateInfo textureLayoutInfo{
-		.pNext = &textureBindingFlagsInfo,
-		.flags = vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool, // Required for UPDATE_AFTER_BIND
-		.bindingCount = 1,
-		.pBindings = &textureBinding};
+	vk::StructureChain<vk::DescriptorSetLayoutCreateInfo, vk::DescriptorSetLayoutBindingFlagsCreateInfo> layoutChain{
+		vk::DescriptorSetLayoutCreateInfo{.flags = vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool,
+										  .bindingCount = 1,
+										  .pBindings = &textureBinding},
+		textureBindingFlagsInfo};
 
-	_bindlessTextureSetLayout = vk::raii::DescriptorSetLayout(*_device, textureLayoutInfo);
+	_bindlessTextureSetLayout =
+		vk::raii::DescriptorSetLayout(*_device, layoutChain.get<vk::DescriptorSetLayoutCreateInfo>());
 	LogSystem::get().info("[Bindless] Texture set layout created");
 }
 
@@ -296,12 +297,13 @@ void Renderer::allocateDescriptorSets() {
 	vk::DescriptorSetVariableDescriptorCountAllocateInfo textureVariableInfo{
 		.descriptorSetCount = 1, .pDescriptorCounts = &textureVariableCount};
 
-	vk::DescriptorSetAllocateInfo textureAllocInfo{.pNext = &textureVariableInfo,
-												   .descriptorPool = *_bindlessDescriptorPool,
-												   .descriptorSetCount = 1,
-												   .pSetLayouts = &*_bindlessTextureSetLayout};
+	vk::StructureChain<vk::DescriptorSetAllocateInfo, vk::DescriptorSetVariableDescriptorCountAllocateInfo> allocChain{
+		vk::DescriptorSetAllocateInfo{.descriptorPool = *_bindlessDescriptorPool,
+									  .descriptorSetCount = 1,
+									  .pSetLayouts = &*_bindlessTextureSetLayout},
+		textureVariableInfo};
 
-	auto textureSets = vk::raii::DescriptorSets(*_device, textureAllocInfo);
+	auto textureSets = vk::raii::DescriptorSets(*_device, allocChain.get<vk::DescriptorSetAllocateInfo>());
 	_bindlessTextureSet = std::move(textureSets[0]);
 	LogSystem::get().info("[Bindless] Texture descriptor set allocated");
 

@@ -200,9 +200,11 @@ std::unique_ptr<GraphicsPipeline> PipelineBuilder::build(const vk::raii::Device&
 
 	// Handle Dynamic Rendering vs RenderPass
 	vk::PipelineRenderingCreateInfo renderingInfo{};
+	vk::raii::Pipeline pipeline = nullptr;
 
 	if (renderPass) {
 		pipelineInfo.renderPass = renderPass;
+		pipeline = vk::raii::Pipeline(device, pipelineCache, pipelineInfo);
 	} else {
 		pipelineInfo.renderPass = nullptr;
 
@@ -210,14 +212,10 @@ std::unique_ptr<GraphicsPipeline> PipelineBuilder::build(const vk::raii::Device&
 		renderingInfo.pColorAttachmentFormats = _colorAttachmentFormats.data();
 		renderingInfo.depthAttachmentFormat = _depthAttachmentFormat;
 
-		pipelineInfo.pNext = &renderingInfo;
+		vk::StructureChain<vk::GraphicsPipelineCreateInfo, vk::PipelineRenderingCreateInfo> chain(pipelineInfo,
+																								  renderingInfo);
+		pipeline = vk::raii::Pipeline(device, pipelineCache, chain.get<vk::GraphicsPipelineCreateInfo>());
 	}
-
-	// 4. Create Pipeline (RAII)
-	// device.createGraphicsPipeline returns a std::pair<Result, raii::Pipeline> or directly raii::Pipeline
-	// (depending on if pipeline cache is used) As per vulkan_raii convention, it should be like this:
-
-	vk::raii::Pipeline pipeline(device, pipelineCache, pipelineInfo);
 
 	// 5. Return wrapper object
 	return std::make_unique<GraphicsPipeline>(std::move(layout), std::move(pipeline));
