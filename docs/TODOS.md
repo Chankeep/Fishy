@@ -1,21 +1,6 @@
-### 🚨 Phase 0: 紧急修复与止血 (Immediate Fixes)
-
-*目标：修复内存安全隐患，消除显式同步等待，优化最明显的性能瓶颈。*
-
-
-
-
----
-
 ### 🏗️ Phase 1: 核心后端抽象 (Backend Abstraction)
 
 *目标：将资源管理与渲染逻辑分离，建立“帧”的概念。*
-
-* [ ] **提取 `FrameContext` (每帧资源)**
-  * [ ] 创建 `core/FrameContext.h`。
-  * [ ] 将 `commandBuffer`, `imageAvailableSemaphore`, `renderFinishedSemaphore`, `inFlightFence` 移入此结构。
-  * [ ] 实现 `reset()` 方法：等待 Fence -> Reset Fence -> Reset CommandPool。
-  * [ ] **新增：** 添加 `LinearAllocator` (std::vector<uint8_t> + offset) 用于每帧动态数据（Indirect Commands, Dynamic UBOs）。
 
 
 * [ ] **创建 `RenderContext` (RHI 层)**
@@ -43,40 +28,6 @@
   * [ ] `GeometrySystem` 输出 `std::span<InstanceData>` 和 `std::span<DrawCommand>`。
   * [ ] 利用 `FrameContext` 的 `LinearAllocator` 或 Staging Buffer 将数据上传到 GPU。
   * [ ] `Renderer` 现在只需要接收 `VulkanBuffer` 的句柄，而不需要知道 `Scene` 的存在。
-
-
-
----
-
-### 🎨 Phase 3: 模块化渲染图 (Render Graph & Passes)
-
-*目标：解耦“做什么”（Pass）和“怎么做”（Backend）。*
-
-* [ ] **定义 `IRenderPass` 接口**
-  * [ ] 定义 `RenderGraphData` 结构体（包含 CommandBuffer, Viewport, Global DescriptorSet）。
-  * [ ] 定义接口：`execute(const RenderGraphData& data, entt::registry& registry)`。
-
-
-* [ ] **拆分现有渲染逻辑**
-  * [ ] **`MainDrawPass`**: 封装 `_graphicsPipeline`，负责主要的 Indirect Draw。
-  * [ ] **`SkyboxPass`**: 封装 `_skyboxPipeline` 和 Skybox Mesh 渲染。
-  * [ ] **`UIPass`**: 封装 ImGui 或 UI 回调逻辑。
-
-
-* [ ] **重构 `Renderer` 为 `RenderGraphExecutor`**
-  * [ ] `Renderer` 内部维护 `std::vector<std::unique_ptr<IRenderPass>>`。
-  * [ ] `render()` 函数变为简单的循环：
-```cpp
-auto& frame = ctx.beginFrame();
-// ... barriers ...
-for(auto& pass : passes) pass->execute(...);
-// ... barriers ...
-ctx.endFrame(frame);
-
-```
-
-
-
 
 
 ---
@@ -179,3 +130,24 @@ ctx.endFrame(frame);
 - [x] **移除 SwapChain 重建时的 `DeviceWaitIdle`** ✅ 2025-01-10
   - [x] 修改 `recreateSwapChain`，仅等待旧 SwapChain 相关的 Fences。
   - [x] 确保 `_frames` 资源在重建期间被正确回收或保留。
+
+- [x] **提取 `FrameContext` (每帧资源)** ✅ 2025-01-11
+  - [x] 创建 `core/FrameContext.h`。
+  - [x] 将 `commandBuffer`, `imageAvailableSemaphore`, `renderFinishedSemaphore`, `inFlightFence` 移入此结构。
+  - [x] 实现 `reset()` 方法：等待 Fence -> Reset Fence -> Reset CommandPool。
+  - [x] **新增：** 添加 `LinearAllocator` (std::vector<uint8_t> + offset) 用于每帧动态数据（Indirect Commands, Dynamic UBOs）。
+
+- [x] **定义 `IRenderPass` 接口** ✅ 2025-01-11
+  - [x] 定义 `RenderGraphData` 结构体（包含 CommandBuffer, Viewport, Global DescriptorSet）。
+  - [x] 定义接口：`execute(const RenderGraphData& data, entt::registry& registry)`。
+
+
+- [x] **拆分现有渲染逻辑** ✅ 2025-01-11
+  - [x] **`MainDrawPass`**: 封装 `_graphicsPipeline`，负责主要的 Indirect Draw。
+  - [x] **`SkyboxPass`**: 封装 `_skyboxPipeline` 和 Skybox Mesh 渲染。
+  - [x] **`UIPass`**: 封装 ImGui 或 UI 回调逻辑。
+
+
+- [x] **重构 `Renderer` 为 `RenderGraphExecutor`** ✅ 2025-01-11
+  - [x] `Renderer` 直接调用RenderGraph.execute，RenderGraph 内部维护 `std::vector<std::unique_ptr<IRenderPass>>`。
+  - [x] `render()` 函数变为简单的循环：

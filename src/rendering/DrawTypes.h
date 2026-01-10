@@ -1,5 +1,7 @@
 #pragma once
 
+#include "RenderConstants.h"
+
 #include <array>
 #include <cstdint>
 #include <glm/glm.hpp>
@@ -11,9 +13,6 @@ namespace Fishy {
 
 // Forward declarations
 struct GPUMaterial;
-
-// Invalid texture index sentinel
-constexpr uint32_t INVALID_TEXTURE_INDEX = 0xFFFFFFFF;
 
 // Per-instance data stored in bindless SSBO for GPU access
 // Layout must match shader InstanceData struct (std430)
@@ -73,7 +72,6 @@ struct MeshRegion {
 
 // A batch of draw commands sharing the same material
 struct DrawBatch {
-	GPUMaterial* material; // Material for this batch (deprecated - will be removed)
 	uint32_t firstCommand; // Offset into indirect buffer (command index)
 	uint32_t commandCount; // Number of draw commands in this batch
 };

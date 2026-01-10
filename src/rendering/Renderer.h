@@ -3,25 +3,24 @@
 #include <cstdint>
 #include <volk.h>
 
-#if defined(__INTELLISENSE__) || !defined(USE_CPP20_MODULES)
-#include <vulkan/vulkan_raii.hpp>
-#else
-import vulkan_hpp;
-#endif
-
 #include "../resources/IBLEnvironment.h"
 #include "../resources/Mesh.h"
 #include "../resources/MeshGenerator.h"
 #include "../resources/Model.h"
 #include "DrawTypes.h"
 #include "GraphicsPipeline.h"
+#include "PipelineManager.h"
+#include "RenderGraph.h"
 #include "core/SwapChain.h"
 #include "core/VulkanBuffer.h"
 #include "core/VulkanImage.h"
+#include "passes/UIPass.h"
 
 #include <functional>
 #include <memory>
 #include <vector>
+
+#include "RenderConstants.h"
 
 namespace Fishy {
 
@@ -31,21 +30,8 @@ class SwapChain;
 class ResourceManager;
 class CommandPool;
 class Scene;
+class UIPass;
 struct RenderParams;
-
-constexpr int MAX_FRAMES_IN_FLIGHT = 2;
-
-// Initial buffer sizes for indirect rendering
-static constexpr uint32_t INITIAL_MAX_OBJECTS = 256;
-static constexpr uint32_t INITIAL_MAX_COMMANDS = 256;
-
-// Bindless texture array capacity
-static constexpr uint32_t MAX_BINDLESS_TEXTURES = 4096;
-
-struct PushConstants {
-	uint64_t instanceDataAddress;
-	uint64_t globalDataAddress;
-};
 
 /**
  * @brief Main renderer class.
@@ -94,15 +80,15 @@ private:
 
 	// Rendering helpers
 	void updateUniformBuffer(uint32_t frameIndex);
+	void beginMainRenderPass(vk::CommandBuffer cmd);
 
 	// Initialization
 	void createCommandBuffers();
 	void createSyncObjects();
 	void freeCommandBuffers();
 	void recreateSwapChain();
-	void createGraphicsPipeline();
-	void createSkyboxPipeline();
-	void createSkyboxMesh();
+	void createPipelines();
+	void registerSkyboxPass();
 	void createUniformBuffers();
 	void createSetLayout();
 	void createBindlessTextureSetLayout();
@@ -118,8 +104,6 @@ private:
 	void buildInstanceDataFromScene(Scene& scene);
 
 	void updateInstanceDataBuffer();
-	void renderIndirect(const vk::raii::CommandBuffer& cmd);
-	void renderSkybox(const vk::raii::CommandBuffer& cmd);
 	[[nodiscard]] vk::Format findDepthFormat();
 	void writeIBLDescriptors();
 	struct FrameData {
@@ -150,9 +134,18 @@ private:
 	// Sync objects
 	std::vector<vk::raii::Semaphore> _renderFinishedSemaphores;
 
-	// Graphics Pipeline
-	std::unique_ptr<GraphicsPipeline> _graphicsPipeline;
-	std::unique_ptr<GraphicsPipeline> _skyboxPipeline;
+	// Pipeline Manager (owns all cached pipelines)
+	std::unique_ptr<PipelineManager> _pipelineManager;
+
+	// Render Graph (manages render passes)
+	RenderGraph _renderGraph;
+
+	// UI Pass (managed separately, has its own beginRendering/endRendering)
+	std::unique_ptr<UIPass> _uiPass;
+
+	// Current pipeline pointers (owned by _pipelineManager)
+	GraphicsPipeline* _graphicsPipeline = nullptr;
+	GraphicsPipeline* _skyboxPipeline = nullptr;
 
 	// Descriptor Set Layouts
 	vk::raii::DescriptorSetLayout _IBLSetLayout = nullptr;			   // Set 0: IBL textures
@@ -165,12 +158,6 @@ private:
 	// Bindless descriptor sets (global, persistent)
 	vk::raii::DescriptorSet _bindlessTextureSet = nullptr;
 	vk::raii::DescriptorSet _bindlessStorageBufferSet = nullptr;
-
-	// Pipeline Cache (disk-persistent)
-	vk::raii::PipelineCache _pipelineCache = nullptr;
-	static constexpr const char* PIPELINE_CACHE_FILENAME = "pipeline_cache.bin";
-	void loadPipelineCache();
-	void savePipelineCache();
 
 	// Frame Data
 	std::vector<FrameData> _frames;
@@ -194,11 +181,6 @@ private:
 	std::unique_ptr<VulkanBuffer> _unifiedVertexBuffer;
 	std::unique_ptr<VulkanBuffer> _unifiedIndexBuffer;
 	bool _unifiedBuffersDirty = true;
-
-	// skybox geometry buffers
-	std::unique_ptr<VulkanBuffer> _skyboxVertexBuffer;
-	std::unique_ptr<VulkanBuffer> _skyboxIndexBuffer;
-	uint32_t _skyboxIndexCount;
 
 	// IBL environment (externally owned)
 	IBLEnvironment* _iblEnvironment = nullptr;

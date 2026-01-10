@@ -1,5 +1,4 @@
 #include "ModelLoader.h"
-#include "../core/LogSystem.h"
 #include "../ecs/Entity.h"
 #include "../ecs/components/MeshComponent.h"
 #include "../ecs/components/MeshRendererComponent.h"

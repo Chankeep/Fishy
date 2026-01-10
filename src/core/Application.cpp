@@ -7,7 +7,6 @@
 #include "../ecs/components/MeshRendererComponent.h"
 #include "../ecs/components/TransformComponent.h"
 #include "../ui/DebugPanel.h"
-#include "LogSystem.h"
 #include <imgui.h>
 
 namespace Fishy {

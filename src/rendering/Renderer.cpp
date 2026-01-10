@@ -2,7 +2,6 @@
 
 #include "PipelineBuilder.h"
 #include "core/CommandPool.h"
-#include "core/LogSystem.h"
 #include "core/VulkanDevice.h"
 #include "core/VulkanUtils.h"
 #include "core/Window.h"
@@ -10,6 +9,9 @@
 #include "ecs/components/MeshRendererComponent.h"
 #include "ecs/components/TransformComponent.h"
 #include "ecs/systems/RenderSystem.h" // For RenderParams
+#include "passes/MainScenePass.h"
+#include "passes/SkyboxPass.h"
+#include "passes/UIPass.h"
 #include "resources/MeshGenerator.h"
 #include "resources/ResourceManager.h"
 #include "scene/Scene.h"
@@ -43,10 +45,9 @@ Renderer::Renderer(VulkanDevice& device, Window& window, ResourceManager& resour
 	createDescriptorPool();			// For global sets
 	createBindlessDescriptorPool(); // For bindless sets (UPDATE_AFTER_BIND)
 
-	loadPipelineCache();
-	createGraphicsPipeline();
-	createSkyboxPipeline();
-	createSkyboxMesh();
+	// Pipeline Manager (handles cache loading automatically)
+	_pipelineManager = std::make_unique<PipelineManager>(_device);
+	createPipelines();
 
 	createUniformBuffers();
 	createIndirectBuffer();
@@ -59,12 +60,21 @@ Renderer::Renderer(VulkanDevice& device, Window& window, ResourceManager& resour
 
 	createSyncObjects();
 
-	LogSystem::get().info("Renderer initialized successfully");
+	// Register render passes with their dependencies
+	_renderGraph.addPass<MainScenePass>(*_graphicsPipeline);
+	registerSkyboxPass();
+	// Note: UIPass is NOT in RenderGraph - it's managed separately
+	// because it requires its own beginRendering/endRendering
+	_uiPass = std::make_unique<UIPass>();
+
+	LogSystem::get().info("Renderer initialized successfully with {} render passes", _renderGraph.getPassCount());
 }
 
 Renderer::~Renderer() {
 	LogSystem::get().info("Shutting down Renderer...");
-	savePipelineCache();
+
+	// PipelineManager destructor will save cache automatically
+
 	_device->waitIdle();
 
 	freeCommandBuffers();
@@ -93,73 +103,41 @@ void Renderer::renderScene(Scene& scene, const RenderParams& params,
 								 vk::AccessFlagBits2::eColorAttachmentWrite, vk::PipelineStageFlagBits2::eTopOfPipe,
 								 vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::ImageAspectFlagBits::eColor);
 
-	vk::ClearValue clearColor{.color = {.float32 = {{0.01f, 0.01f, 0.02f, 1.0f}}}};
-	vk::ClearValue clearDepth{.depthStencil = {1.0f, 0}};
 	vk::Extent2D extent = _swapChain->getExtent();
-
-	vk::RenderingAttachmentInfo colorAttachment{.imageView = *_swapChainImageViews[_currentImageIndex],
-												.imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-												.loadOp = vk::AttachmentLoadOp::eClear,
-												.storeOp = vk::AttachmentStoreOp::eStore,
-												.clearValue = clearColor};
-
-	vk::RenderingAttachmentInfo depthAttachment{.imageView = *_depthImage->getView(),
-												.imageLayout = vk::ImageLayout::eDepthAttachmentOptimal,
-												.loadOp = vk::AttachmentLoadOp::eClear,
-												.storeOp = vk::AttachmentStoreOp::eDontCare,
-												.clearValue = clearDepth};
-
-	vk::RenderingInfo renderingInfo{.renderArea = vk::Rect2D{{0, 0}, extent},
-									.layerCount = 1,
-									.colorAttachmentCount = 1,
-									.pColorAttachments = &colorAttachment,
-									.pDepthAttachment = &depthAttachment};
-
-	cmd.beginRendering(renderingInfo);
-
-	_graphicsPipeline->bind(cmd);
-
-	cmd.setViewport(
-		0, vk::Viewport(0.0f, 0.0f, static_cast<float>(extent.width), static_cast<float>(extent.height), 0.0f, 1.0f));
-	cmd.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), extent));
-
-	cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *_graphicsPipeline->getLayout(), 0,
-						   *_frames[_currentFrameIndex].descriptorSet, nullptr);
-	cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *_graphicsPipeline->getLayout(), 1, *_bindlessTextureSet,
-						   nullptr);
+	beginMainRenderPass(cmd);
 
 	// Build data from scene entities
 	buildInstanceDataFromScene(scene);
 	updateInstanceDataBuffer();
 	buildDrawBatchesFromScene(scene);
 
-	// Use Push Constant for BDA
-	uint64_t instanceAddress = _frames[_currentFrameIndex].instanceDataBuffer->getDeviceAddress();
-	uint64_t globalDataAddress = _frames[_currentFrameIndex].uniformBuffer->getDeviceAddress();
-	PushConstants pc{.instanceDataAddress = instanceAddress, .globalDataAddress = globalDataAddress};
+	// Build RenderGraphContext with borrowed data
+	RenderGraphContext ctx{
+		.cmd = _frames[_currentFrameIndex].commandBuffer,
+		.viewportExtent = extent,
+		.params = params,
+		.globalDescriptorSet = *_frames[_currentFrameIndex].descriptorSet,
+		.bindlessTextureSet = *_bindlessTextureSet,
+		.instanceDataAddress = _frames[_currentFrameIndex].instanceDataBuffer->getDeviceAddress(),
+		.globalDataAddress = _frames[_currentFrameIndex].uniformBuffer->getDeviceAddress(),
+		.drawBatches = _drawBatches,
+		.indirectBuffer = _frames[_currentFrameIndex].indirectBuffer.get(),
+		.vertexBuffer = _unifiedVertexBuffer.get(),
+		.indexBuffer = _unifiedIndexBuffer.get(),
+		.iblEnvironment = _iblEnvironment,
+	};
 
-	cmd.pushConstants<PushConstants>(*_graphicsPipeline->getLayout(),
-									 vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, pc);
+	// Execute render graph (MainScenePass, SkyboxPass)
+	_renderGraph.execute(ctx, scene.getRegistry());
 
-	renderIndirect(cmd);
-	renderSkybox(cmd);
-
+	// End main scene rendering
 	cmd.endRendering();
 
-	if (uiRenderCallback) {
-		vk::RenderingAttachmentInfo uiColorAttachment{.imageView = *_swapChainImageViews[_currentImageIndex],
-													  .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-													  .loadOp = vk::AttachmentLoadOp::eLoad,
-													  .storeOp = vk::AttachmentStoreOp::eStore};
-
-		vk::RenderingInfo uiRenderingInfo{.renderArea = vk::Rect2D{{0, 0}, extent},
-										  .layerCount = 1,
-										  .colorAttachmentCount = 1,
-										  .pColorAttachments = &uiColorAttachment};
-
-		cmd.beginRendering(uiRenderingInfo);
-		uiRenderCallback(static_cast<VkCommandBuffer>(*cmd));
-		cmd.endRendering();
+	// Execute UIPass separately (has its own beginRendering/endRendering)
+	if (_uiPass && uiRenderCallback) {
+		_uiPass->setCallback(uiRenderCallback);
+		_uiPass->setImageView(*_swapChainImageViews[_currentImageIndex]);
+		_uiPass->execute(ctx, scene.getRegistry());
 	}
 
 	VulkanUtils::transitionImage(*cmd, _swapChain->getImages()[_currentImageIndex],
@@ -410,54 +388,10 @@ void Renderer::createIndirectBuffer() {
 	LogSystem::get().trace("Created indirect draw buffers ({} bytes each)", bufferSize);
 }
 
-void Renderer::renderIndirect(const vk::raii::CommandBuffer& cmd) {
-	if (!_unifiedVertexBuffer || !_unifiedIndexBuffer || _drawBatches.empty()) {
-		LogSystem::get().warn("[Render] Skipping: vertBuf={} idxBuf={} batches={}", (bool)_unifiedVertexBuffer,
-							  (bool)_unifiedIndexBuffer, _drawBatches.size());
-		return;
-	}
+void Renderer::createPipelines() {
+	LogSystem::get().info("Creating graphics pipelines...");
 
-	// Bind unified vertex and index buffers ONCE for all draw calls
-	cmd.bindVertexBuffers(0, _unifiedVertexBuffer->getBuffer(), {0});
-	cmd.bindIndexBuffer(_unifiedIndexBuffer->getBuffer(), 0, vk::IndexType::eUint32);
-
-	// Render using indirect draw calls
-	// With bindless, we don't need to rebind per-material - all textures accessible via indices
-	for (const auto& batch : _drawBatches) {
-		// Issue indirect draw call for all commands in this batch
-		cmd.drawIndexedIndirect(_frames[_currentFrameIndex].indirectBuffer->getBuffer(),
-								batch.firstCommand * sizeof(vk::DrawIndexedIndirectCommand), batch.commandCount,
-								sizeof(vk::DrawIndexedIndirectCommand));
-	}
-}
-
-void Renderer::renderSkybox(const vk::raii::CommandBuffer& cmd) {
-	if (!_skyboxPipeline || !_skyboxVertexBuffer || !_skyboxIndexBuffer || !_iblEnvironment) {
-		return;
-	}
-	_skyboxPipeline->bind(cmd);
-
-	cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *_skyboxPipeline->getLayout(), 0,
-						   *_frames[_currentFrameIndex].descriptorSet, nullptr);
-
-	cmd.bindVertexBuffers(0, _skyboxVertexBuffer->getBuffer(), {0});
-	cmd.bindIndexBuffer(_skyboxIndexBuffer->getBuffer(), 0, vk::IndexType::eUint32);
-
-	// Push constants for skybox
-	uint64_t globalDataAddress = _frames[_currentFrameIndex].uniformBuffer->getDeviceAddress();
-	PushConstants pc{.instanceDataAddress = 0, .globalDataAddress = globalDataAddress};
-
-	cmd.pushConstants<PushConstants>(*_skyboxPipeline->getLayout(),
-									 vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, pc);
-	// Draw
-	cmd.drawIndexed(_skyboxIndexCount, 1, 0, 0, 0);
-}
-
-void Renderer::createGraphicsPipeline() {
-	LogSystem::get().info("Creating graphics pipeline...");
-	const auto& vertShader = _resourceManager.getShader("shaders/PBRshader.slang", "vertMain");
-	const auto& fragShader = _resourceManager.getShader("shaders/PBRshader.slang", "fragMain");
-
+	// Common setup
 	auto bindingDescription = Vertex::getBindingDescription();
 	auto attributeDescriptions = Vertex::getAttributeDescriptions();
 
@@ -472,64 +406,56 @@ void Renderer::createGraphicsPipeline() {
 											.offset = 0,
 											.size = sizeof(PushConstants)};
 
-	PipelineBuilder builder(**_device);
-	builder.setShaders(vertShader, fragShader, "main", "main")
-		.setVertexInput(vertexInputInfo)
-		.setInputTopology(vk::PrimitiveTopology::eTriangleList)
-		.setCullMode(vk::CullModeFlagBits::eBack, vk::FrontFace::eCounterClockwise)
-		.setLayout({*_IBLSetLayout, *_bindlessTextureSetLayout}, {pushConstantRange})
-		.setRenderingFormats({_swapChain->getFormat()}, _depthFormat)
-		.setDepthStencilTest(true, true, vk::CompareOp::eLess, false, vk::CompareOp::eAlways);
+	// === PBR Pipeline ===
+	{
+		const auto& vertShader = _resourceManager.getShader("shaders/PBRshader.slang", "vertMain");
+		const auto& fragShader = _resourceManager.getShader("shaders/PBRshader.slang", "fragMain");
 
-	_graphicsPipeline = builder.build(*_device, nullptr, _pipelineCache);
-	LogSystem::get().info("Graphics pipeline created successfully");
+		PipelineBuilder builder(**_device);
+		builder.setShaderId(entt::hashed_string{"shaders/PBRshader.slang"}.value())
+			.setShaders(vertShader, fragShader, "main", "main")
+			.setVertexInput(vertexInputInfo)
+			.setInputTopology(vk::PrimitiveTopology::eTriangleList)
+			.setCullMode(vk::CullModeFlagBits::eBack, vk::FrontFace::eCounterClockwise)
+			.setLayout({*_IBLSetLayout, *_bindlessTextureSetLayout}, {pushConstantRange})
+			.setRenderingFormats({_swapChain->getFormat()}, _depthFormat)
+			.setDepthStencilTest(true, true, vk::CompareOp::eLess, false, vk::CompareOp::eAlways);
+
+		_graphicsPipeline = builder.build(*_pipelineManager);
+	}
+
+	// === Skybox Pipeline ===
+	{
+		const auto& vertShader = _resourceManager.getShader("shaders/Skybox.slang", "vertMain");
+		const auto& fragShader = _resourceManager.getShader("shaders/Skybox.slang", "fragMain");
+
+		PipelineBuilder builder(**_device);
+		builder.setShaderId(entt::hashed_string{"shaders/Skybox.slang"}.value())
+			.setShaders(vertShader, fragShader, "main", "main")
+			.setVertexInput(vertexInputInfo)
+			.setInputTopology(vk::PrimitiveTopology::eTriangleList)
+			.setCullMode(vk::CullModeFlagBits::eFront, vk::FrontFace::eCounterClockwise)
+			.setLayout({*_IBLSetLayout}, {pushConstantRange})
+			.setRenderingFormats({_swapChain->getFormat()}, _depthFormat)
+			.setDepthStencilTest(false, true, vk::CompareOp::eLessOrEqual, false, vk::CompareOp::eAlways);
+
+		_skyboxPipeline = builder.build(*_pipelineManager);
+	}
+
+	LogSystem::get().info("All pipelines created successfully");
 }
 
-void Renderer::createSkyboxPipeline() {
-	LogSystem::get().info("Creating skybox pipeline...");
-
-	const auto& vertShader = _resourceManager.getShader("shaders/Skybox.slang", "vertMain");
-	const auto& fragShader = _resourceManager.getShader("shaders/Skybox.slang", "fragMain");
-
-	auto bindingDescription = Vertex::getBindingDescription();
-	auto attributeDescriptions = Vertex::getAttributeDescriptions();
-
-	vk::PipelineVertexInputStateCreateInfo vertexInputInfo{
-		.vertexBindingDescriptionCount = 1,
-		.pVertexBindingDescriptions = &bindingDescription,
-		.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size()),
-		.pVertexAttributeDescriptions = attributeDescriptions.data()};
-
-	vk::PushConstantRange pushConstantRange{.stageFlags =
-												vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,
-											.offset = 0,
-											.size = sizeof(PushConstants)};
-
-	PipelineBuilder builder(**_device);
-
-	builder.setShaders(vertShader, fragShader, "main", "main")
-		.setVertexInput(vertexInputInfo)
-		.setInputTopology(vk::PrimitiveTopology::eTriangleList)
-		.setCullMode(vk::CullModeFlagBits::eFront, vk::FrontFace::eCounterClockwise)
-		.setLayout({*_IBLSetLayout}, {pushConstantRange})
-		.setRenderingFormats({_swapChain->getFormat()}, _depthFormat)
-		.setDepthStencilTest(false, true, vk::CompareOp::eLessOrEqual, false, vk::CompareOp::eAlways);
-
-	_skyboxPipeline = builder.build(*_device, nullptr, _pipelineCache);
-	LogSystem::get().info("Skybox pipeline created successfully");
-}
-
-void Renderer::createSkyboxMesh() {
+void Renderer::registerSkyboxPass() {
 	LogSystem::get().info("Creating skybox mesh...");
 
 	auto cubeMesh = MeshGenerator::createCube();
 	const auto& vertices = cubeMesh->getVertices();
 	const auto& indices = cubeMesh->getIndices();
 
-	_skyboxIndexCount = indices.size();
+	uint32_t indexCount = static_cast<uint32_t>(indices.size());
 
 	vk::DeviceSize vertexBufferSize = sizeof(Vertex) * vertices.size();
-	_skyboxVertexBuffer = std::make_unique<VulkanBuffer>(
+	auto vertexBuffer = std::make_unique<VulkanBuffer>(
 		_device, vertexBufferSize, vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst,
 		vk::MemoryPropertyFlagBits::eDeviceLocal);
 
@@ -540,13 +466,13 @@ void Renderer::createSkyboxMesh() {
 	stagingVertex.upload(vertices.data(), vertexBufferSize);
 
 	vk::DeviceSize indexBufferSize = sizeof(uint32_t) * indices.size();
-	_skyboxIndexBuffer = std::make_unique<VulkanBuffer>(
+	auto indexBuffer = std::make_unique<VulkanBuffer>(
 		_device, indexBufferSize, vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst,
 		vk::MemoryPropertyFlagBits::eDeviceLocal);
 
 #ifndef NDEBUG
-	VulkanUtils::setDebugName(_device, _skyboxVertexBuffer->getBuffer(), "Skybox_VertexBuffer");
-	VulkanUtils::setDebugName(_device, _skyboxIndexBuffer->getBuffer(), "Skybox_IndexBuffer");
+	VulkanUtils::setDebugName(_device, vertexBuffer->getBuffer(), "Skybox_VertexBuffer");
+	VulkanUtils::setDebugName(_device, indexBuffer->getBuffer(), "Skybox_IndexBuffer");
 #endif
 
 	auto stagingIndex =
@@ -556,12 +482,14 @@ void Renderer::createSkyboxMesh() {
 	stagingIndex.upload(indices.data(), indexBufferSize);
 
 	VulkanUtils::executeImmediate(_device, [&](auto& cmd) {
-		cmd.copyBuffer(stagingVertex.getBuffer(), _skyboxVertexBuffer->getBuffer(),
-					   vk::BufferCopy{.size = vertexBufferSize});
-		cmd.copyBuffer(stagingIndex.getBuffer(), _skyboxIndexBuffer->getBuffer(),
-					   vk::BufferCopy{.size = indexBufferSize});
+		cmd.copyBuffer(stagingVertex.getBuffer(), vertexBuffer->getBuffer(), vk::BufferCopy{.size = vertexBufferSize});
+		cmd.copyBuffer(stagingIndex.getBuffer(), indexBuffer->getBuffer(), vk::BufferCopy{.size = indexBufferSize});
 	});
+
 	LogSystem::get().info("Skybox mesh created: {} vertices, {} indices", vertices.size(), indices.size());
+
+	// Register SkyboxPass with ownership of buffers
+	_renderGraph.addPass<SkyboxPass>(*_skyboxPipeline, std::move(vertexBuffer), std::move(indexBuffer), indexCount);
 }
 
 void Renderer::createUniformBuffers() {
@@ -602,36 +530,31 @@ void Renderer::createDescriptorPool() {
 	_descriptorPool = vk::raii::DescriptorPool(*_device, poolInfo);
 }
 
-void Renderer::loadPipelineCache() {
-	std::vector<char> cacheData;
-	std::ifstream file(PIPELINE_CACHE_FILENAME, std::ios::binary | std::ios::ate);
-	if (file.is_open()) {
-		size_t fileSize = static_cast<size_t>(file.tellg());
-		cacheData.resize(fileSize);
-		file.seekg(0);
-		file.read(cacheData.data(), fileSize);
-		LogSystem::get().info("Loaded pipeline cache: {} bytes", fileSize);
-	} else {
-		LogSystem::get().info("No existing pipeline cache found, creating new one");
-	}
+// Rendering helpers implemented here
+void Renderer::beginMainRenderPass(vk::CommandBuffer cmd) {
+	vk::ClearValue clearColor{.color = {.float32 = {{0.01f, 0.01f, 0.02f, 1.0f}}}};
+	vk::ClearValue clearDepth{.depthStencil = {1.0f, 0}};
+	vk::Extent2D extent = _swapChain->getExtent();
 
-	vk::PipelineCacheCreateInfo cacheInfo{.initialDataSize = cacheData.size(),
-										  .pInitialData = cacheData.empty() ? nullptr : cacheData.data()};
-	_pipelineCache = vk::raii::PipelineCache(*_device, cacheInfo);
-}
+	vk::RenderingAttachmentInfo colorAttachment{.imageView = *_swapChainImageViews[_currentImageIndex],
+												.imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+												.loadOp = vk::AttachmentLoadOp::eClear,
+												.storeOp = vk::AttachmentStoreOp::eStore,
+												.clearValue = clearColor};
 
-void Renderer::savePipelineCache() {
-	if (!*_pipelineCache) {
-		return;
-	}
-	auto cacheData = _pipelineCache.getData();
-	std::ofstream file(PIPELINE_CACHE_FILENAME, std::ios::binary);
-	if (file.is_open()) {
-		file.write(reinterpret_cast<const char*>(cacheData.data()), cacheData.size());
-		LogSystem::get().info("Saved pipeline cache: {} bytes", cacheData.size());
-	} else {
-		LogSystem::get().warn("Failed to save pipeline cache to disk");
-	}
+	vk::RenderingAttachmentInfo depthAttachment{.imageView = *_depthImage->getView(),
+												.imageLayout = vk::ImageLayout::eDepthAttachmentOptimal,
+												.loadOp = vk::AttachmentLoadOp::eClear,
+												.storeOp = vk::AttachmentStoreOp::eDontCare,
+												.clearValue = clearDepth};
+
+	vk::RenderingInfo renderingInfo{.renderArea = vk::Rect2D{{0, 0}, extent},
+									.layerCount = 1,
+									.colorAttachmentCount = 1,
+									.pColorAttachments = &colorAttachment,
+									.pDepthAttachment = &depthAttachment};
+
+	cmd.beginRendering(renderingInfo);
 }
 
 void Renderer::updateUniformBuffer(uint32_t frameIndex) {
@@ -1110,7 +1033,6 @@ void Renderer::buildDrawBatchesFromScene(Scene& scene) {
 	}
 
 	_drawBatches.push_back({
-		.material = nullptr,
 		.firstCommand = 0,
 		.commandCount = 0,
 	});

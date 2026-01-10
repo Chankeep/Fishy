@@ -128,6 +128,40 @@ PipelineBuilder& PipelineBuilder::setRenderingFormats(const std::vector<vk::Form
 	return *this;
 }
 
+PipelineBuilder& PipelineBuilder::setShaderId(entt::id_type shaderId, entt::id_type variantId) {
+	_shaderId = shaderId;
+	_variantId = variantId;
+	return *this;
+}
+
+PipelineKey PipelineBuilder::generateKey() const {
+	uint8_t flags = 0;
+	if (_depthStencil.depthWriteEnable) {
+		flags |= PipelineKey::FLAG_DEPTH_WRITE;
+	}
+	if (_depthStencil.depthTestEnable) {
+		flags |= PipelineKey::FLAG_DEPTH_TEST;
+	}
+	if (_colorBlendAttachment.blendEnable) {
+		flags |= PipelineKey::FLAG_BLEND;
+	}
+
+	return PipelineKey{.shaderId = _shaderId,
+					   .variantId = _variantId,
+					   .colorFormat =
+						   _colorAttachmentFormats.empty() ? vk::Format::eUndefined : _colorAttachmentFormats[0],
+					   .depthFormat = _depthAttachmentFormat,
+					   .cullMode = _rasterizer.cullMode,
+					   .frontFace = _rasterizer.frontFace,
+					   .depthCompareOp = _depthStencil.depthCompareOp,
+					   .flags = flags};
+}
+
+GraphicsPipeline* PipelineBuilder::build(PipelineManager& manager) {
+	auto key = generateKey();
+	return manager.getOrCreate(key, *this);
+}
+
 std::unique_ptr<GraphicsPipeline> PipelineBuilder::build(const vk::raii::Device& device, vk::RenderPass renderPass,
 														 const vk::raii::PipelineCache& pipelineCache) {
 	// 1. Create Pipeline Layout (RAII)

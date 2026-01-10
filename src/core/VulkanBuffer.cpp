@@ -1,6 +1,5 @@
 #include "VulkanBuffer.h"
 #include "CommandPool.h"
-#include "LogSystem.h"
 #include "VulkanDevice.h"
 #include "VulkanUtils.h"
 #include <format>

@@ -1,5 +1,4 @@
 #include "CubemapTexture.h"
-#include "../core/CommandPool.h"
 #include "../core/VulkanBuffer.h"
 #include "../core/VulkanUtils.h"
 

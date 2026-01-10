@@ -1,6 +1,5 @@
 #define VOLK_IMPLEMENTATION
 #include "VulkanContext.h"
-#include "LogSystem.h"
 
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>

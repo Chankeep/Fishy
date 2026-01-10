@@ -1,6 +1,5 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "Texture.h"
-#include "../core/CommandPool.h"
 #include "../core/VulkanUtils.h"
 
 namespace Fishy {
