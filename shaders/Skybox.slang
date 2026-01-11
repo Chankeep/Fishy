@@ -24,6 +24,7 @@ struct VSOutput {
 struct GlobalUBO {
     float4x4 view;
     float4x4 proj;
+    float4x4 lightSpaceMatrix;
     float4 camPos;
     float4 lightDir;
     float4 lightColor;

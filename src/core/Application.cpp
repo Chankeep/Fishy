@@ -67,7 +67,7 @@ Application::Application()
 
 	// Load IBL environment
 	try {
-		_iblEnvironment = IBLEnvironment::load(_device, "assets/environments/field");
+		_iblEnvironment = IBLEnvironment::load(_device, "assets/environments/ennis");
 		_renderer.setIBLEnvironment(_iblEnvironment.get());
 	} catch (const std::exception& e) {
 		LogSystem::get().warn("Failed to load IBL environment: {}", e.what());

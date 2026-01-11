@@ -24,8 +24,8 @@ public:
 			ImGui::Separator();
 
 			const char* inputItems[] = {
-				"Off",		 "Base Color", "Shading Normal",   "AO",	  "Emissive", "Metallic",
-				"Roughness", "UV",		   "Geometric Normal", "Tangent", "Bitangent"};
+				"Off",		 "Base Color", "Shading Normal",   "AO",	  "Emissive",  "Metallic",
+				"Roughness", "UV",		   "Geometric Normal", "Tangent", "Bitangent", "Shadow"};
 			ImGui::Combo("View Input", &_settings.debugViewInputs, inputItems, IM_ARRAYSIZE(inputItems));
 
 			ImGui::Spacing();

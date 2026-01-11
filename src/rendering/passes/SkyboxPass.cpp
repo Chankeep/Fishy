@@ -11,6 +11,25 @@ void SkyboxPass::execute(RenderGraphContext& ctx, [[maybe_unused]] entt::registr
 		return;
 	}
 
+	// === Begin skybox render pass (load previous content) ===
+	vk::RenderingAttachmentInfo colorAttachment{.imageView = ctx.colorAttachmentView,
+												.imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+												.loadOp = vk::AttachmentLoadOp::eLoad, // Keep MainRenderPass output
+												.storeOp = vk::AttachmentStoreOp::eStore};
+
+	vk::RenderingAttachmentInfo depthAttachment{.imageView = ctx.depthAttachmentView,
+												.imageLayout = vk::ImageLayout::eDepthAttachmentOptimal,
+												.loadOp = vk::AttachmentLoadOp::eLoad, // Keep depth from MainRenderPass
+												.storeOp = vk::AttachmentStoreOp::eDontCare};
+
+	vk::RenderingInfo renderingInfo{.renderArea = vk::Rect2D{{0, 0}, ctx.viewportExtent},
+									.layerCount = 1,
+									.colorAttachmentCount = 1,
+									.pColorAttachments = &colorAttachment,
+									.pDepthAttachment = &depthAttachment};
+
+	ctx.cmd.beginRendering(renderingInfo);
+
 	// Bind skybox pipeline (owned by this pass)
 	_pipeline.bind(ctx.cmd);
 
@@ -35,6 +54,8 @@ void SkyboxPass::execute(RenderGraphContext& ctx, [[maybe_unused]] entt::registr
 
 	// Draw skybox
 	ctx.cmd.drawIndexed(_indexCount, 1, 0, 0, 0);
+
+	ctx.cmd.endRendering();
 }
 
 } // namespace Fishy

@@ -41,6 +41,14 @@ public:
 		return ref;
 	}
 
+	template <typename PassT> [[nodiscard]] PassT* getPass() {
+		for (auto& pass : _passes) {
+			if (auto* p = dynamic_cast<PassT*>(pass.get()))
+				return p;
+		}
+		return nullptr;
+	}
+
 	/**
 	 * @brief Execute all registered passes in order.
 	 * @param ctx Context containing borrowed data for rendering.

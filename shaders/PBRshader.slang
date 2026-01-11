@@ -14,6 +14,7 @@ struct VSInput {
 struct GlobalUBO {
     float4x4 view;
     float4x4 proj;
+    float4x4 lightSpaceMatrix;
     float4 camPos;      // xyz = camera position, w = unused
     float4 lightDir;    // xyz = light direction, w = unused
     float4 lightColor;  // xyz = light color, w = unused
@@ -25,11 +26,11 @@ struct GlobalUBO {
     float iblIntensity;
 };
 
-
 // IBL textures (Set 0)
 [[vk::binding(0, 0)]] SamplerCube irradianceMap;
 [[vk::binding(1, 0)]] SamplerCube prefilteredEnvMap;
 [[vk::binding(2, 0)]] Sampler2D brdfLUT;
+[[vk::binding(3, 0)]] Sampler2D shadowMap;
 
 // Set 1: Bindless Texture Array
 [[vk::binding(0, 1)]] Sampler2D g_Textures[];
@@ -179,6 +180,38 @@ float3x3 getTBN(VSOutput vertIn) {
     //                | N.x N.y N.z |
     // This is correct transformation from tangent space to world space.
     return float3x3(T, B, N);
+}
+
+float calculateShadow(float4 fragPosLightSpace, float3 N, float3 L)
+{
+    // Perspective divide
+    float3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
+    
+    // Transform to [0, 1] range
+    projCoords.xy = projCoords.xy * 0.5 + 0.5;
+    // Vulkan Y-axis is inverted
+    projCoords.y = 1.0 - projCoords.y;
+    
+    // Outside shadow map bounds
+    if (projCoords.z > 1.0 || projCoords.x < 0.0 || projCoords.x > 1.0 || 
+        projCoords.y < 0.0 || projCoords.y > 1.0) {
+        return 0.0;
+    }
+    
+    // Calculate bias based on surface angle to light
+    float bias = max(0.005 * (1.0 - dot(N, L)), 0.001);
+    
+    // PCF 3x3
+    float shadow = 0.0;
+    float2 texelSize = 1.0 / float2(2048.0, 2048.0);
+    for (int x = -1; x <= 1; x++) {
+        for (int y = -1; y <= 1; y++) {
+            float2 offset = float2(x, y) * texelSize;
+            float closestDepth = shadowMap.Sample(projCoords.xy + offset).r;
+            shadow += (projCoords.z - bias) > closestDepth ? 1.0 : 0.0;
+        }
+    }
+    return shadow / 9.0;
 }
 
 // Get normal from bindless normal map
@@ -404,7 +437,12 @@ float4 fragMain(VSOutput vertIn, uniform PushConstants pc) : SV_Target
     float3 specContrib = F * G * D / (4.0 * NdotL * NdotV);
     
     // Obtain final intensity as reflectance (BRDF) scaled by the energy of the light (cosine law)
-    float3 color = NdotL * pc.globalDataPtr.lightColor.xyz * (diffuseContrib + specContrib);
+    float3 directLight = NdotL * pc.globalDataPtr.lightColor.xyz * (diffuseContrib + specContrib);
+    
+    // Apply shadow
+    float4 fragPosLightSpace = mul(pc.globalDataPtr.lightSpaceMatrix, float4(vertIn.worldPos, 1.0));
+    float shadow = calculateShadow(fragPosLightSpace, n, l);
+    float3 color = directLight * (1.0 - shadow * 0.7);  // Shadow darkens direct light
     
     // Clearcoat layer
     // extraFactors1: x=alphaCutoff, y=transmission, z=ior, w=clearcoatFactor
@@ -458,7 +496,8 @@ float4 fragMain(VSOutput vertIn, uniform PushConstants pc) : SV_Target
         // Fallback to simple ambient when IBL not available
         ambient = float3(0.03) * baseColor.rgb;
     }
-    color += ambient;
+    // Apply shadow to ambient as well (reduced effect to simulate indirect shadow)
+    color += ambient * (1.0 - shadow * 0.3);
     
     // Emissive
     float emissiveStrength = inst.emissiveFactor.w;
@@ -508,6 +547,13 @@ float4 fragMain(VSOutput vertIn, uniform PushConstants pc) : SV_Target
                     color = TBN[1]*0.5+0.5;
                 }
                 break;
+            case 11: // Shadow
+                {
+                    float4 fragPosLightSpace = mul(pc.globalDataPtr.lightSpaceMatrix, float4(vertIn.worldPos, 1.0));
+                    float shadowVal = calculateShadow(fragPosLightSpace, n, l);
+                    color = float3(1.0 - shadowVal); // White = lit, Black = shadowed
+                }
+                break;
         }
         
         return float4(color, baseColor.a);
@@ -536,6 +582,8 @@ float4 fragMain(VSOutput vertIn, uniform PushConstants pc) : SV_Target
         color = linearToSRGB(color);
         return float4(color, baseColor.a);
     }
+
+    
 
     // ========================================================================
     // Tone mapping and gamma correction

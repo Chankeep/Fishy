@@ -46,6 +46,10 @@ struct RenderGraphContext {
 
 	// IBL environment for skybox rendering
 	IBLEnvironment* iblEnvironment = nullptr;
+
+	// Render attachments for passes that manage their own beginRendering/endRendering
+	vk::ImageView colorAttachmentView = nullptr;
+	vk::ImageView depthAttachmentView = nullptr;
 };
 
 /**

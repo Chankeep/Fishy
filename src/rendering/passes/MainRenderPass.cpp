@@ -1,15 +1,39 @@
-#include "MainScenePass.h"
+#include "MainRenderPass.h"
 
 #include "../GraphicsPipeline.h"
 #include "../RenderConstants.h"
 
 namespace Fishy {
 
-void MainScenePass::execute(RenderGraphContext& ctx, [[maybe_unused]] entt::registry& registry) {
+void MainRenderPass::execute(RenderGraphContext& ctx, [[maybe_unused]] entt::registry& registry) {
 	// Early exit if resources are not available
 	if (!ctx.vertexBuffer || !ctx.indexBuffer || ctx.drawBatches.empty()) {
 		return;
 	}
+
+	// === Begin main render pass ===
+	vk::ClearValue clearColor{.color = {.float32 = {{0.01f, 0.01f, 0.02f, 1.0f}}}};
+	vk::ClearValue clearDepth{.depthStencil = {1.0f, 0}};
+
+	vk::RenderingAttachmentInfo colorAttachment{.imageView = ctx.colorAttachmentView,
+												.imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+												.loadOp = vk::AttachmentLoadOp::eClear,
+												.storeOp = vk::AttachmentStoreOp::eStore,
+												.clearValue = clearColor};
+
+	vk::RenderingAttachmentInfo depthAttachment{.imageView = ctx.depthAttachmentView,
+												.imageLayout = vk::ImageLayout::eDepthAttachmentOptimal,
+												.loadOp = vk::AttachmentLoadOp::eClear,
+												.storeOp = vk::AttachmentStoreOp::eDontCare,
+												.clearValue = clearDepth};
+
+	vk::RenderingInfo renderingInfo{.renderArea = vk::Rect2D{{0, 0}, ctx.viewportExtent},
+									.layerCount = 1,
+									.colorAttachmentCount = 1,
+									.pColorAttachments = &colorAttachment,
+									.pDepthAttachment = &depthAttachment};
+
+	ctx.cmd.beginRendering(renderingInfo);
 
 	// Bind pipeline (owned by this pass)
 	_pipeline.bind(ctx.cmd);
@@ -41,6 +65,8 @@ void MainScenePass::execute(RenderGraphContext& ctx, [[maybe_unused]] entt::regi
 									batch.firstCommand * sizeof(vk::DrawIndexedIndirectCommand), batch.commandCount,
 									sizeof(vk::DrawIndexedIndirectCommand));
 	}
+
+	ctx.cmd.endRendering();
 }
 
 } // namespace Fishy

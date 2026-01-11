@@ -1,15 +1,19 @@
 #include "Renderer.h"
 
 #include "PipelineBuilder.h"
+#include "RenderConstants.h"
 #include "core/CommandPool.h"
+#include "core/LogSystem.h"
 #include "core/VulkanDevice.h"
+#include "core/VulkanImage.h"
 #include "core/VulkanUtils.h"
 #include "core/Window.h"
 #include "ecs/components/MeshComponent.h"
 #include "ecs/components/MeshRendererComponent.h"
 #include "ecs/components/TransformComponent.h"
 #include "ecs/systems/RenderSystem.h" // For RenderParams
-#include "passes/MainScenePass.h"
+#include "passes/MainRenderPass.h"
+#include "passes/ShadowMapPass.h"
 #include "passes/SkyboxPass.h"
 #include "passes/UIPass.h"
 #include "resources/MeshGenerator.h"
@@ -61,7 +65,8 @@ Renderer::Renderer(VulkanDevice& device, Window& window, ResourceManager& resour
 	createSyncObjects();
 
 	// Register render passes with their dependencies
-	_renderGraph.addPass<MainScenePass>(*_graphicsPipeline);
+	registerShadowMapPass();
+	_renderGraph.addPass<MainRenderPass>(*_graphicsPipeline);
 	registerSkyboxPass();
 	// Note: UIPass is NOT in RenderGraph - it's managed separately
 	// because it requires its own beginRendering/endRendering
@@ -82,8 +87,6 @@ Renderer::~Renderer() {
 
 	_unifiedVertexBuffer.reset();
 	_unifiedIndexBuffer.reset();
-
-	// Destroy depth image
 }
 
 void Renderer::renderScene(Scene& scene, const RenderParams& params,
@@ -94,25 +97,55 @@ void Renderer::renderScene(Scene& scene, const RenderParams& params,
 
 	const auto& cmd = _frames[_currentFrameIndex].commandBuffer;
 
-	// Store params for updateUniformBuffer
+	// Update uniforms
 	_currentRenderParams = &params;
 	updateUniformBuffer(_currentFrameIndex);
 
+	// Prepare swapchain for rendering
+	prepareSwapchainForRendering(cmd);
+
+	// Build scene data for rendering
+	buildSceneData(scene);
+
+	// Create render context
+	RenderGraphContext ctx = createRenderContext(params);
+
+	// Execute render graph (ShadowMapPass, MainRenderPass, SkyboxPass)
+	_renderGraph.execute(ctx, scene.getRegistry());
+
+	// Execute UI pass
+	executeUIPass(ctx, scene.getRegistry(), uiRenderCallback);
+
+	// Prepare swapchain for presentation
+	prepareSwapchainForPresent(cmd);
+
+	endFrame();
+}
+
+void Renderer::prepareSwapchainForRendering(const vk::raii::CommandBuffer& cmd) {
 	VulkanUtils::transitionImage(*cmd, _swapChain->getImages()[_currentImageIndex], vk::ImageLayout::eUndefined,
-								 vk::ImageLayout::eColorAttachmentOptimal, {},
+								 vk::ImageLayout::eColorAttachmentOptimal, vk::AccessFlagBits2::eNone,
 								 vk::AccessFlagBits2::eColorAttachmentWrite, vk::PipelineStageFlagBits2::eTopOfPipe,
 								 vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::ImageAspectFlagBits::eColor);
+}
 
-	vk::Extent2D extent = _swapChain->getExtent();
-	beginMainRenderPass(cmd);
+void Renderer::prepareSwapchainForPresent(const vk::raii::CommandBuffer& cmd) {
+	VulkanUtils::transitionImage(*cmd, _swapChain->getImages()[_currentImageIndex],
+								 vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::ePresentSrcKHR,
+								 vk::AccessFlagBits2::eColorAttachmentWrite, vk::AccessFlagBits2::eNone,
+								 vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+								 vk::PipelineStageFlagBits2::eBottomOfPipe, vk::ImageAspectFlagBits::eColor);
+}
 
-	// Build data from scene entities
-	buildInstanceDataFromScene(scene);
+void Renderer::buildSceneData(Scene& scene) {
+	buildInstanceData(scene);
 	updateInstanceDataBuffer();
-	buildDrawBatchesFromScene(scene);
+	buildDrawBatches(scene);
+}
 
-	// Build RenderGraphContext with borrowed data
-	RenderGraphContext ctx{
+RenderGraphContext Renderer::createRenderContext(const RenderParams& params) {
+	vk::Extent2D extent = _swapChain->getExtent();
+	return RenderGraphContext{
 		.cmd = _frames[_currentFrameIndex].commandBuffer,
 		.viewportExtent = extent,
 		.params = params,
@@ -125,28 +158,18 @@ void Renderer::renderScene(Scene& scene, const RenderParams& params,
 		.vertexBuffer = _unifiedVertexBuffer.get(),
 		.indexBuffer = _unifiedIndexBuffer.get(),
 		.iblEnvironment = _iblEnvironment,
+		.colorAttachmentView = *_swapChainImageViews[_currentImageIndex],
+		.depthAttachmentView = *_depthImage->getView(),
 	};
+}
 
-	// Execute render graph (MainScenePass, SkyboxPass)
-	_renderGraph.execute(ctx, scene.getRegistry());
-
-	// End main scene rendering
-	cmd.endRendering();
-
-	// Execute UIPass separately (has its own beginRendering/endRendering)
+void Renderer::executeUIPass(RenderGraphContext& ctx, entt::registry& registry,
+							 std::function<void(VkCommandBuffer)>& uiRenderCallback) {
 	if (_uiPass && uiRenderCallback) {
 		_uiPass->setCallback(uiRenderCallback);
 		_uiPass->setImageView(*_swapChainImageViews[_currentImageIndex]);
-		_uiPass->execute(ctx, scene.getRegistry());
+		_uiPass->execute(ctx, registry);
 	}
-
-	VulkanUtils::transitionImage(*cmd, _swapChain->getImages()[_currentImageIndex],
-								 vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::ePresentSrcKHR,
-								 vk::AccessFlagBits2::eColorAttachmentWrite, {},
-								 vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-								 vk::PipelineStageFlagBits2::eBottomOfPipe, vk::ImageAspectFlagBits::eColor);
-
-	endFrame();
 }
 
 void Renderer::recreateSwapChain() {
@@ -219,10 +242,11 @@ void Renderer::createSyncObjects() {
 }
 
 void Renderer::createSetLayout() {
-	// Set 0: IBL textures
+	// Set 0: IBL and shadow map textures
 	// Binding 0: irradianceMap (samplerCube)
 	// Binding 1: prefilteredEnvMap (samplerCube)
 	// Binding 2: brdfLUT (sampler2D)
+	// Binding 3: shadow depth map (sampler2D)
 	std::vector<vk::DescriptorSetLayoutBinding> bindings = {
 		{.binding = 0,
 		 .descriptorType = vk::DescriptorType::eCombinedImageSampler,
@@ -233,6 +257,10 @@ void Renderer::createSetLayout() {
 		 .descriptorCount = 1,
 		 .stageFlags = vk::ShaderStageFlagBits::eFragment},
 		{.binding = 2,
+		 .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+		 .descriptorCount = 1,
+		 .stageFlags = vk::ShaderStageFlagBits::eFragment},
+		{.binding = 3,
 		 .descriptorType = vk::DescriptorType::eCombinedImageSampler,
 		 .descriptorCount = 1,
 		 .stageFlags = vk::ShaderStageFlagBits::eFragment},
@@ -408,6 +436,26 @@ void Renderer::createPipelines() {
 											.offset = 0,
 											.size = sizeof(PushConstants)};
 
+	// === Shadow Pipeline
+	{
+		{
+			const auto& vertShader = _resourceManager.getShader("shaders/ShadowMap.slang", "vertMain");
+			const auto& fragShader = _resourceManager.getShader("shaders/ShadowMap.slang", "fragMain");
+
+			PipelineBuilder builder(**_device);
+			builder.setShaderId(entt::hashed_string{"shaders/ShadowMap.slang"}.value())
+				.setShaders(vertShader, fragShader, "main", "main")
+				.setVertexInput(vertexInputInfo)
+				.setInputTopology(vk::PrimitiveTopology::eTriangleList)
+				.setCullMode(vk::CullModeFlagBits::eFront, vk::FrontFace::eCounterClockwise)
+				.setLayout({}, {pushConstantRange})				 // No descriptor sets for shadow pass
+				.setRenderingFormats({}, vk::Format::eD32Sfloat) // Depth-only, no color attachments
+				.setDepthStencilTest(true, true, vk::CompareOp::eLess, false, vk::CompareOp::eAlways);
+
+			_shadowPipeline = builder.build(*_pipelineManager);
+		}
+	}
+
 	// === PBR Pipeline ===
 	{
 		const auto& vertShader = _resourceManager.getShader("shaders/PBRshader.slang", "vertMain");
@@ -494,6 +542,70 @@ void Renderer::registerSkyboxPass() {
 	_renderGraph.addPass<SkyboxPass>(*_skyboxPipeline, std::move(vertexBuffer), std::move(indexBuffer), indexCount);
 }
 
+void Renderer::registerShadowMapPass() {
+	LogSystem::get().info("Creating shadowMap image...");
+	vk::ImageCreateInfo imageInfo{.imageType = vk::ImageType::e2D,
+								  .format = vk::Format::eD32Sfloat,
+								  .extent = {SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, 1},
+								  .mipLevels = 1,
+								  .arrayLayers = 1,
+								  .samples = vk::SampleCountFlagBits::e1,
+								  .tiling = vk::ImageTiling::eOptimal,
+								  .usage = vk::ImageUsageFlagBits::eDepthStencilAttachment |
+										   vk::ImageUsageFlagBits::eSampled,
+								  .sharingMode = vk::SharingMode::eExclusive,
+								  .initialLayout = vk::ImageLayout::eUndefined};
+
+	VmaAllocationCreateInfo allocInfo = {.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT,
+										 .usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
+
+	auto image = std::make_unique<VulkanImage>(_device.getVmaAllocator(), imageInfo, allocInfo);
+
+#ifndef NDEBUG
+	VulkanUtils::setDebugName(_device, image->getImage(), "ShadowMap Image");
+#endif
+
+	vk::ImageViewCreateInfo viewInfo{.viewType = vk::ImageViewType::e2D,
+									 .format = imageInfo.format,
+									 .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eDepth,
+														  .baseMipLevel = 0,
+														  .levelCount = 1,
+														  .baseArrayLayer = 0,
+														  .layerCount = 1}};
+
+	image->createView(*_device, viewInfo);
+
+#ifndef NDEBUG
+	VulkanUtils::setDebugName(_device, image->getImage(), "ShadowMap ImageView");
+#endif
+	LogSystem::get().info("Creating shadowMap sampler...");
+
+	auto properties = _device.getPhysicalDevice().getProperties();
+	vk::SamplerCreateInfo samplerInfo{
+		.magFilter = vk::Filter::eLinear,
+		.minFilter = vk::Filter::eLinear,
+		.mipmapMode = vk::SamplerMipmapMode::eLinear,
+		.addressModeU = vk::SamplerAddressMode::eRepeat,
+		.addressModeV = vk::SamplerAddressMode::eRepeat,
+		.addressModeW = vk::SamplerAddressMode::eRepeat,
+		.mipLodBias = 0.0f,
+		.anisotropyEnable = vk::True,
+		.maxAnisotropy = properties.limits.maxSamplerAnisotropy,
+		.compareEnable = vk::False,
+		.compareOp = vk::CompareOp::eAlways,
+		.minLod = 0.0f,
+		.maxLod = 0.0f,
+		.borderColor = vk::BorderColor::eIntOpaqueBlack,
+		.unnormalizedCoordinates = vk::False,
+	};
+
+	auto sampler = vk::raii::Sampler(*_device, samplerInfo);
+
+	_renderGraph.addPass<ShadowMapPass>(*_shadowPipeline, std::move(image), std::move(sampler));
+
+	LogSystem::get().info(" shadowMap image created: {}x{}", SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
+}
+
 void Renderer::createUniformBuffers() {
 	vk::DeviceSize bufferSize = sizeof(UniformBufferObject);
 
@@ -532,33 +644,6 @@ void Renderer::createDescriptorPool() {
 	_descriptorPool = vk::raii::DescriptorPool(*_device, poolInfo);
 }
 
-// Rendering helpers implemented here
-void Renderer::beginMainRenderPass(vk::CommandBuffer cmd) {
-	vk::ClearValue clearColor{.color = {.float32 = {{0.01f, 0.01f, 0.02f, 1.0f}}}};
-	vk::ClearValue clearDepth{.depthStencil = {1.0f, 0}};
-	vk::Extent2D extent = _swapChain->getExtent();
-
-	vk::RenderingAttachmentInfo colorAttachment{.imageView = *_swapChainImageViews[_currentImageIndex],
-												.imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-												.loadOp = vk::AttachmentLoadOp::eClear,
-												.storeOp = vk::AttachmentStoreOp::eStore,
-												.clearValue = clearColor};
-
-	vk::RenderingAttachmentInfo depthAttachment{.imageView = *_depthImage->getView(),
-												.imageLayout = vk::ImageLayout::eDepthAttachmentOptimal,
-												.loadOp = vk::AttachmentLoadOp::eClear,
-												.storeOp = vk::AttachmentStoreOp::eDontCare,
-												.clearValue = clearDepth};
-
-	vk::RenderingInfo renderingInfo{.renderArea = vk::Rect2D{{0, 0}, extent},
-									.layerCount = 1,
-									.colorAttachmentCount = 1,
-									.pColorAttachments = &colorAttachment,
-									.pDepthAttachment = &depthAttachment};
-
-	cmd.beginRendering(renderingInfo);
-}
-
 void Renderer::updateUniformBuffer(uint32_t frameIndex) {
 	auto extent = _swapChain->getExtent();
 	UniformBufferObject ubo{};
@@ -567,6 +652,10 @@ void Renderer::updateUniformBuffer(uint32_t frameIndex) {
 	if (_currentRenderParams) {
 		ubo.view = _currentRenderParams->viewMatrix;
 		ubo.proj = _currentRenderParams->projectionMatrix;
+		glm::vec3 lightPos = -glm::normalize(_currentRenderParams->lightDirection) * 20.0f;
+		glm::mat4 lightView = glm::lookAt(lightPos, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+		glm::mat4 lightProj = glm::ortho(-10.0f, 10.0f, -10.0f, 10.0f, 1.0f, 50.0f);
+		ubo.lightSpaceMatrix = lightProj * lightView;
 		ubo.camPos = glm::vec4(_currentRenderParams->cameraPosition, 0.0f);
 		ubo.lightDir = glm::vec4(glm::normalize(_currentRenderParams->lightDirection), 0.0f);
 		ubo.lightColor = glm::vec4(_currentRenderParams->lightColor, 0.0f);
@@ -796,18 +885,18 @@ void Renderer::createSwapChainImageViews() {
 void Renderer::setIBLEnvironment(IBLEnvironment* ibl) {
 	_iblEnvironment = ibl;
 	if (ibl) {
-		writeIBLDescriptors();
+		writeTextureDescriptors();
 		LogSystem::get().info("IBL environment set with {} mip levels", ibl->prefilteredMipLevels);
 	}
 }
 
-void Renderer::writeIBLDescriptors() {
+void Renderer::writeTextureDescriptors() {
 	if (!_iblEnvironment) {
 		return;
 	}
 
 	for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-		std::array<vk::DescriptorImageInfo, 3> imageInfos{};
+		std::array<vk::DescriptorImageInfo, 4> imageInfos{};
 
 		// Irradiance map (binding 1)
 		imageInfos[0] = {
@@ -830,9 +919,17 @@ void Renderer::writeIBLDescriptors() {
 			.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
 		};
 
-		std::array<vk::WriteDescriptorSet, 3> descriptorWrites{};
+		// Shadow Map (binding 3)
+		auto* shadowMapPass = _renderGraph.getPass<ShadowMapPass>();
+		imageInfos[3] = {
+			.sampler = shadowMapPass->getShadowMapSampler(),
+			.imageView = shadowMapPass->getShadowMapView(),
+			.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+		};
 
-		for (uint32_t j = 0; j < 3; j++) {
+		std::array<vk::WriteDescriptorSet, 4> descriptorWrites{};
+
+		for (uint32_t j = 0; j < 4; j++) {
 			descriptorWrites[j] = {
 				.dstSet = *_frames[i].descriptorSet,
 				.dstBinding = j, // Bindings 0, 1, 2
@@ -953,7 +1050,7 @@ void Renderer::buildUnifiedBuffersFromScene(Scene& scene) {
 						  allIndices.size());
 }
 
-void Renderer::buildInstanceDataFromScene(Scene& scene) {
+void Renderer::buildInstanceData(Scene& scene) {
 	_instanceData.clear();
 
 	auto view = scene.view<MeshComponent, MeshRendererComponent, TransformComponent>();
@@ -1022,7 +1119,7 @@ void Renderer::buildInstanceDataFromScene(Scene& scene) {
 	}
 }
 
-void Renderer::buildDrawBatchesFromScene(Scene& scene) {
+void Renderer::buildDrawBatches(Scene& scene) {
 	if (_unifiedBuffersDirty) {
 		buildUnifiedBuffersFromScene(scene);
 	}

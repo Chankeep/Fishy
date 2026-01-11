@@ -79,8 +79,13 @@ private:
 	void endFrame();
 
 	// Rendering helpers
+	void prepareSwapchainForRendering(const vk::raii::CommandBuffer& cmd);
+	void prepareSwapchainForPresent(const vk::raii::CommandBuffer& cmd);
 	void updateUniformBuffer(uint32_t frameIndex);
-	void beginMainRenderPass(vk::CommandBuffer cmd);
+	void buildSceneData(Scene& scene);
+	[[nodiscard]] RenderGraphContext createRenderContext(const RenderParams& params);
+	void executeUIPass(RenderGraphContext& ctx, entt::registry& registry,
+					   std::function<void(VkCommandBuffer)>& uiRenderCallback);
 
 	// Initialization
 	void createCommandBuffers();
@@ -88,6 +93,7 @@ private:
 	void freeCommandBuffers();
 	void recreateSwapChain();
 	void createPipelines();
+	void registerShadowMapPass();
 	void registerSkyboxPass();
 	void createUniformBuffers();
 	void createSetLayout();
@@ -100,12 +106,12 @@ private:
 	void createSwapChainImageViews();
 
 	void buildUnifiedBuffersFromScene(Scene& scene);
-	void buildDrawBatchesFromScene(Scene& scene);
-	void buildInstanceDataFromScene(Scene& scene);
+	void buildDrawBatches(Scene& scene);
+	void buildInstanceData(Scene& scene);
 
 	void updateInstanceDataBuffer();
 	[[nodiscard]] vk::Format findDepthFormat();
-	void writeIBLDescriptors();
+	void writeTextureDescriptors();
 	struct FrameData {
 		vk::raii::CommandBuffer commandBuffer = nullptr;
 		vk::raii::Semaphore imageAvailableSemaphore = nullptr;
@@ -144,6 +150,7 @@ private:
 	std::unique_ptr<UIPass> _uiPass;
 
 	// Current pipeline pointers (owned by _pipelineManager)
+	GraphicsPipeline* _shadowPipeline = nullptr;
 	GraphicsPipeline* _graphicsPipeline = nullptr;
 	GraphicsPipeline* _skyboxPipeline = nullptr;
 

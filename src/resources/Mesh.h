@@ -31,6 +31,7 @@ struct Vertex {
 struct UniformBufferObject {
 	glm::mat4 view;
 	glm::mat4 proj;
+	glm::mat4 lightSpaceMatrix;
 	glm::vec4 camPos;
 	glm::vec4 lightDir;
 	glm::vec4 lightColor;
