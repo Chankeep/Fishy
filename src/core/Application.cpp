@@ -38,10 +38,51 @@ Application::Application()
 
 	// Try to load a default model into the scene
 	auto modelPath = "assets/models/DamagedHelmet.glb";
+	auto planePath = "assets/models/ABeautifulGame.glb";
 	LogSystem::get().info("Loading default model: {}", modelPath);
-	if (!ModelLoader::loadModelIntoScene(modelPath, *_scene, _resourceManager)) {
-		LogSystem::get().warn("Failed to load model, creating default geometry");
+	auto result = ModelLoader::loadModelIntoScene(planePath, *_scene, _resourceManager);
+	if (!result) {
+		LogSystem::get().warn("Failed to load model: {}. Using fallback geometry.", result.error().message());
 		createDefaultScene();
+	} else {
+		// Create a single root entity for the entire model
+		Entity modelRoot = _scene->createEntity("ChessBoardRoot");
+		auto& rootTransform = modelRoot.getComponent<TransformComponent>();
+		rootTransform.setScale({10.0f, 10.0f, 10.0f});
+
+		// Reparent all loaded ROOT entities to the model root
+		for (auto& entity : result.value()) {
+			auto& transform = entity.getComponent<TransformComponent>();
+			if (transform.isRoot()) {
+				// Set parent without adjusting local transform (we want them relative to new root)
+				transform.parent = modelRoot.getHandle();
+				transform.dirty = true;
+			}
+		}
+	}
+
+	// Notify renderer that scene geometry changed
+	_renderer.markSceneDirty();
+
+	// Load second instance of the same model at a different position
+	auto result2 = ModelLoader::loadModelIntoScene(modelPath, *_scene, _resourceManager);
+	if (result2) {
+		// Create a root entity for the helmet model
+		Entity helmetRoot = _scene->createEntity("HelmetRoot");
+		auto& rootTransform = helmetRoot.getComponent<TransformComponent>();
+		rootTransform.setPosition(glm::vec3(0.0f, 1.5f, 0.0f));
+
+		// Reparent all loaded ROOT entities to the helmet root
+		for (auto& entity : result2.value()) {
+			auto& transform = entity.getComponent<TransformComponent>();
+			if (transform.isRoot()) {
+				transform.parent = helmetRoot.getHandle();
+				transform.dirty = true;
+			}
+		}
+
+		// Notify renderer again
+		_renderer.markSceneDirty();
 	}
 
 	// Create camera entity
@@ -50,7 +91,13 @@ Application::Application()
 	cam.primary = true;
 	cam.fov = 45.0f;
 	cam.nearClip = 0.1f;
-	cam.farClip = 100.0f;
+	cam.farClip = 30.0f;
+
+	// Position camera back so we can see the scene
+	auto& camTransform = cameraEntity.getComponent<TransformComponent>();
+	camTransform.position = glm::vec3(0.0f, 0.0f, 5.0f);
+	camTransform.dirty = true;
+
 	LogSystem::get().info("Camera entity created");
 
 	// Create a directional light entity

@@ -14,6 +14,7 @@ import vulkan_hpp;
 #include <queue>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <slang/slang-com-helper.h>
@@ -153,6 +154,25 @@ public:
 	[[nodiscard]] const vk::raii::ShaderModule& getShader(const std::string& filepath,
 														  const std::string& entryPoint = "");
 
+	// ========== Model Loading Cache API ==========
+	/**
+	 * @brief Check if a model has already been loaded into the scene.
+	 * @param filepath Path to the glTF file.
+	 * @return True if the model was previously loaded.
+	 */
+	[[nodiscard]] bool isModelLoaded(const std::string& filepath) const;
+
+	/**
+	 * @brief Mark a model as loaded (called by ModelLoader after successful load).
+	 * @param filepath Path to the glTF file.
+	 */
+	void markModelLoaded(const std::string& filepath);
+
+	/**
+	 * @brief Clear the loaded models tracking (useful for scene switches).
+	 */
+	void clearLoadedModels();
+
 	// Clear all cached resources
 	void clear();
 
@@ -206,6 +226,9 @@ private:
 	// Buffer slot management
 	std::queue<uint32_t> _freeBufferSlots;
 	uint32_t _nextBufferIndex = 0;
+
+	// Loaded model paths (to avoid redundant glTF parsing)
+	std::unordered_set<std::string> _loadedModelPaths;
 };
 
 } // namespace Fishy

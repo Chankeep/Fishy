@@ -4,6 +4,7 @@
 #include "DrawTypes.h" // For InstanceData types (includes RenderConstants.h)
 #include <entt/entt.hpp>
 #include <glm/glm.hpp>
+#include <variant>
 
 namespace Fishy {
 

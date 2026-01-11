@@ -4,6 +4,8 @@
 #include "../ecs/components/MeshRendererComponent.h"
 #include "../scene/Scene.h"
 #include "ResourceManager.h"
+#include "ecs/components/TagComponent.h"
+#include "ecs/components/TransformComponent.h"
 
 #define TINYGLTF_IMPLEMENTATION
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -11,6 +13,8 @@
 
 #include <filesystem>
 #include <glm/gtc/type_ptr.hpp>
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/matrix_decompose.hpp>
 #include <tiny_gltf.h>
 
 namespace Fishy {
@@ -130,6 +134,8 @@ struct ModelLoader::LoadContext {
 	ResourceManager& resourceManager;
 	uint32_t nextMeshId;	 // Counter for unique mesh IDs
 	uint32_t nextMaterialId; // Counter for unique material IDs
+	Scene* targetScene = nullptr;
+	std::vector<Entity> createdEntities;
 };
 
 // Generate unique cache ID for textures
@@ -203,6 +209,40 @@ static void setMaterialTexture(Material& mat, const std::string& path, entt::res
 		mat.occlusionMap = std::move(tex);
 	else if (path == "emissiveTexture")
 		mat.emissiveMap = std::move(tex);
+}
+// Apply glTF node transform to TransformComponent (TRS-first, matrix fallback)
+void ModelLoader::applyNodeTransform(const tinygltf::Node& node, TransformComponent& transform) {
+	// Priority 1: Use TRS directly (glTF spec recommendation for precision)
+	bool hasTRS = !node.translation.empty() || !node.rotation.empty() || !node.scale.empty();
+
+	if (hasTRS) {
+		if (!node.translation.empty()) {
+			transform.position =
+				glm::vec3(static_cast<float>(node.translation[0]), static_cast<float>(node.translation[1]),
+						  static_cast<float>(node.translation[2]));
+		}
+		if (!node.rotation.empty()) {
+			// glTF quaternion is [x, y, z, w], GLM constructor is (w, x, y, z)
+			transform.rotation = glm::quat(static_cast<float>(node.rotation[3]), // w
+										   static_cast<float>(node.rotation[0]), // x
+										   static_cast<float>(node.rotation[1]), // y
+										   static_cast<float>(node.rotation[2])	 // z
+			);
+		}
+		if (!node.scale.empty()) {
+			transform.scale = glm::vec3(static_cast<float>(node.scale[0]), static_cast<float>(node.scale[1]),
+										static_cast<float>(node.scale[2]));
+		}
+	}
+	// Priority 2: Matrix fallback (only if no TRS and matrix exists)
+	else if (node.matrix.size() == 16) {
+		glm::mat4 mat = glm::make_mat4(node.matrix.data());
+		glm::vec3 skew;
+		glm::vec4 perspective;
+		glm::decompose(mat, transform.scale, transform.rotation, transform.position, skew, perspective);
+	}
+
+	transform.dirty = true;
 }
 
 // Load material from glTF model
@@ -344,14 +384,36 @@ entt::resource<Material> ModelLoader::loadGltfMaterial(const LoadContext& ctx, i
 	return materialHandle;
 }
 
-// Process a glTF node recursively, extracting meshes and materials
-void ModelLoader::processGltfNode(const LoadContext& ctx, int nodeIndex, Model& model) {
+// Process a glTF node recursively, creating entities directly in the scene
+void ModelLoader::processGltfNode(LoadContext& ctx, int nodeIndex, Entity parentEntity) {
 	const auto& node = ctx.gltfModel.nodes[nodeIndex];
+
+	// Track the entity created for this node (for passing to children)
+	Entity currentNodeEntity{};
 
 	if (node.mesh >= 0) {
 		const auto& gltfMesh = ctx.gltfModel.meshes[node.mesh];
 
 		for (size_t primitiveIdx = 0; primitiveIdx < gltfMesh.primitives.size(); ++primitiveIdx) {
+			// Build entity name (conditional for Debug/Release)
+#ifndef NDEBUG
+			std::string entityName = node.name.empty() ? std::format("Node_{}_{}", nodeIndex, primitiveIdx) : node.name;
+#else
+			std::string entityName; // Empty string, SSO avoids heap allocation
+#endif
+
+			// Use wrapped Entity class
+			Entity entity = ctx.targetScene->createEntity(entityName);
+			ctx.createdEntities.push_back(entity);
+
+			auto& transform = entity.getComponent<TransformComponent>();
+			applyNodeTransform(node, transform);
+
+			// Set parent reference for hierarchy
+			if (parentEntity.isValid()) {
+				transform.parent = parentEntity.getHandle();
+			}
+
 			const auto& primitive = gltfMesh.primitives[primitiveIdx];
 			std::vector<Vertex> vertices;
 			std::vector<uint32_t> indices;
@@ -445,17 +507,54 @@ void ModelLoader::processGltfNode(const LoadContext& ctx, int nodeIndex, Model& 
 			// Load material
 			auto materialHandle = loadGltfMaterial(ctx, primitive.material);
 
-			model.addPrimitive({meshHandle, materialHandle});
+			// Add components to entity (using wrapped Entity API)
+			if (meshHandle) {
+				entity.addComponent<MeshComponent>(meshHandle);
+			}
+			if (materialHandle) {
+				entity.addComponent<MeshRendererComponent>(materialHandle);
+			} else {
+				entity.addComponent<MeshRendererComponent>();
+			}
+
+			// Use first primitive's entity as parent for children nodes
+			if (primitiveIdx == 0) {
+				currentNodeEntity = entity;
+			}
 		}
+	} else if (!node.children.empty()) {
+		// Node has no mesh but has children - create a pure transform entity
+#ifndef NDEBUG
+		std::string entityName = node.name.empty() ? std::format("TransformNode_{}", nodeIndex) : node.name;
+#else
+		std::string entityName;
+#endif
+		Entity entity = ctx.targetScene->createEntity(entityName);
+		ctx.createdEntities.push_back(entity);
+
+		auto& transform = entity.getComponent<TransformComponent>();
+		applyNodeTransform(node, transform);
+
+		if (parentEntity.isValid()) {
+			transform.parent = parentEntity.getHandle();
+		}
+
+		currentNodeEntity = entity;
 	}
 
-	// Recursively process children
+	// Recursively process children, passing current entity as parent
 	for (int child : node.children) {
-		processGltfNode(ctx, child, model);
+		processGltfNode(ctx, child, currentNodeEntity);
 	}
 }
 
-entt::resource<Model> ModelLoader::loadModel(const std::string& filepath, ResourceManager& resourceManager) {
+Result<std::vector<Entity>> ModelLoader::loadModelIntoScene(const std::string& filepath, Scene& scene,
+															ResourceManager& resourceManager) {
+	// Log if model was already loaded (entities will be created again, but resources are cached)
+	if (resourceManager.isModelLoaded(filepath)) {
+		LogSystem::get().info("Creating additional instance of model: {}", filepath);
+	}
+
 	tinygltf::Model gltfModel;
 	tinygltf::TinyGLTF loader;
 	std::string err;
@@ -477,8 +576,7 @@ entt::resource<Model> ModelLoader::loadModel(const std::string& filepath, Resour
 	}
 
 	if (!ret) {
-		LogSystem::get().error("Failed to parse glTF: {}", filepath);
-		return {};
+		return std::unexpected(ModelLoadError::make(ModelLoadError::Code::ParseFailed, err));
 	}
 
 	// Log extensions for debugging
@@ -488,51 +586,20 @@ entt::resource<Model> ModelLoader::loadModel(const std::string& filepath, Resour
 	std::filesystem::path modelPath(filepath);
 	std::string baseDir = modelPath.parent_path().string();
 
-	// Create context for helper functions
-	LoadContext ctx{gltfModel, filepath, baseDir, resourceManager, 0, 0};
+	// Create context with scene pointer
+	LoadContext ctx{gltfModel, filepath, baseDir, resourceManager, 0, 0, &scene};
 
-	// Create model (stored directly, not in cache for now - models are transient containers)
-	auto model = std::make_shared<Model>();
-
-	// Process scene nodes using extracted function
-	const auto& scene = gltfModel.scenes[gltfModel.defaultScene > -1 ? gltfModel.defaultScene : 0];
-	for (int nodeIndex : scene.nodes) {
-		processGltfNode(ctx, nodeIndex, *model);
+	// Process scene nodes directly into entities
+	const auto& gltfScene = gltfModel.scenes[gltfModel.defaultScene > -1 ? gltfModel.defaultScene : 0];
+	for (int nodeIndex : gltfScene.nodes) {
+		processGltfNode(ctx, nodeIndex);
 	}
 
-	LogSystem::get().info("Loaded model: {} with {} primitives", filepath, model->getPrimitives().size());
+	// Mark model as loaded to avoid redundant parsing
+	resourceManager.markModelLoaded(filepath);
 
-	// Return as entt::resource (wrapping the shared_ptr)
-	return entt::resource<Model>{model};
-}
-
-bool ModelLoader::loadModelIntoScene(const std::string& filepath, Scene& scene, ResourceManager& resourceManager) {
-	// Load model using existing function
-	auto model = loadModel(filepath, resourceManager);
-	if (!model) {
-		return false;
-	}
-
-	// Convert each primitive to an entity
-	for (const auto& primitive : model->getPrimitives()) {
-		// Create entity (automatically gets TagComponent and TransformComponent)
-		Entity entity = scene.createEntity("MeshEntity");
-
-		// Add mesh component
-		if (primitive.mesh) {
-			entity.addComponent<MeshComponent>(primitive.mesh);
-		}
-
-		// Add mesh renderer component
-		if (primitive.material) {
-			entity.addComponent<MeshRendererComponent>(primitive.material);
-		} else {
-			entity.addComponent<MeshRendererComponent>();
-		}
-	}
-
-	LogSystem::get().info("Loaded {} entities into scene from: {}", model->getPrimitives().size(), filepath);
-	return true;
+	LogSystem::get().info("Loaded model into scene from: {}", filepath);
+	return ctx.createdEntities;
 }
 
 } // namespace Fishy

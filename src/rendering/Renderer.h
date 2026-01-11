@@ -6,7 +6,6 @@
 #include "../resources/IBLEnvironment.h"
 #include "../resources/Mesh.h"
 #include "../resources/MeshGenerator.h"
-#include "../resources/Model.h"
 #include "DrawTypes.h"
 #include "GraphicsPipeline.h"
 #include "PipelineManager.h"
@@ -63,6 +62,12 @@ public:
 		_debugViewInputs = debugViewInputs;
 		_debugViewEquation = debugViewEquation;
 	}
+
+	/**
+	 * @brief Mark scene geometry as dirty, forcing a rebuild of unified buffers.
+	 * Call this after adding or removing entities with MeshComponents.
+	 */
+	void markSceneDirty() { _unifiedBuffersDirty = true; }
 
 	// Accessors
 	[[nodiscard]] float getAspectRatio() const;

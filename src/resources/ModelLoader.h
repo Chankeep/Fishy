@@ -1,7 +1,13 @@
 #pragma once
 
-#include "Model.h"
+#include "ecs/Entity.h"
 #include <entt/entt.hpp>
+
+#include "Texture.h"
+#include "core/Result.h"
+#include "ecs/components/TransformComponent.h"
+#include "rendering/Material.h"
+#include "tiny_gltf.h"
 #include <string>
 
 #if defined(__INTELLISENSE__) || !defined(USE_CPP20_MODULES)
@@ -17,11 +23,6 @@ class Scene;
 
 class ModelLoader {
 public:
-	// Loads a glTF model from the specified path.
-	// Uses ResourceManager to load textures if provided.
-	// Returns entt::resource<Model> for cache-friendly management.
-	[[nodiscard]] static entt::resource<Model> loadModel(const std::string& filepath, ResourceManager& resourceManager);
-
 	/**
 	 * @brief Load a glTF model directly into a Scene as entities.
 	 *
@@ -33,17 +34,20 @@ public:
 	 * @param resourceManager ResourceManager for texture loading.
 	 * @return True if loading succeeded.
 	 */
-	static bool loadModelIntoScene(const std::string& filepath, Scene& scene, ResourceManager& resourceManager);
+	[[nodiscard]] static Result<std::vector<Entity>> loadModelIntoScene(const std::string& filepath, Scene& scene,
+																		ResourceManager& resourceManager);
 
 private:
 	// Forward declarations for internal use
 	struct LoadContext;
 
-	// Helper functions extracted from loadModel
+	// Internal helper functions
 	static entt::resource<Texture> loadGltfTexture(const LoadContext& ctx, int textureIndex, vk::Format format,
 												   const std::string& texName);
 	static entt::resource<Material> loadGltfMaterial(const LoadContext& ctx, int materialIndex);
-	static void processGltfNode(const LoadContext& ctx, int nodeIndex, Model& model);
+	static void processGltfNode(LoadContext& ctx, int nodeIndex, Entity parentEntity = Entity{});
+
+	static void applyNodeTransform(const tinygltf::Node& node, TransformComponent& transform);
 };
 
 } // namespace Fishy

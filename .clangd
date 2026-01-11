@@ -1,8 +1,16 @@
 CompileFlags:
   Add:
-    - "-std=c++20"
+    - "/std:c++latest"
+    - "-Wno-unknown-attributes"
 
 Diagnostics:
   UnusedIncludes: None
   Suppress:
-    "invalid_consteval_call"
+    # C++23 compatibility issues with clangd
+    - "invalid_consteval_call"
+    - "no_member_template"
+    - "no_member"
+    - "typecheck_nonviable_condition"  # std::expected issues
+    - "err_undeclared_var_use"         # byte/variant not found
+    - "unknown_typename"               # VoidResult etc
+    - "*"  # Nuclear option: suppress all clangd errors (use MSVC for real errors)

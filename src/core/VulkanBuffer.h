@@ -1,8 +1,10 @@
 #pragma once
 
 #include "VulkanDevice.h"
+#include <cstddef>
 #include <cstdint>
 #include <span>
+
 
 namespace Fishy {
 

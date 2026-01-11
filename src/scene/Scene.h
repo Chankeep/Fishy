@@ -3,6 +3,7 @@
 #include <entt/entt.hpp>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace Fishy {
 
@@ -52,6 +53,23 @@ public:
 	template <typename... Components> [[nodiscard]] auto view() { return _registry.view<Components...>(); }
 
 	template <typename... Components> [[nodiscard]] auto view() const { return _registry.view<Components...>(); }
+
+	/**
+	 * @brief Get all entities in the scene as Entity wrappers.
+	 * @return Vector of Entity objects wrapping all alive entities.
+	 */
+	[[nodiscard]] std::vector<Entity> getAllEntities();
+
+	/**
+	 * @brief Get the number of alive entities in the scene.
+	 * @return Number of entities currently in the registry.
+	 */
+	[[nodiscard]] size_t entityCount() const {
+		if (auto* storage = _registry.storage<entt::entity>()) {
+			return storage->in_use();
+		}
+		return 0;
+	}
 
 private:
 	entt::registry _registry;

@@ -2,6 +2,7 @@
 
 #include "../GraphicsPipeline.h"
 #include "../RenderConstants.h"
+#include "core/LogSystem.h"
 
 namespace Fishy {
 

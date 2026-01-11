@@ -369,6 +369,14 @@ void ResourceManager::unregisterBuffer(BufferHandle handle) {
 	LogSystem::get().trace("[Bindless] Freed buffer slot {}", handle.index);
 }
 
+// ========== Model Loading Cache API ==========
+
+bool ResourceManager::isModelLoaded(const std::string& filepath) const { return _loadedModelPaths.contains(filepath); }
+
+void ResourceManager::markModelLoaded(const std::string& filepath) { _loadedModelPaths.insert(filepath); }
+
+void ResourceManager::clearLoadedModels() { _loadedModelPaths.clear(); }
+
 // ========== Shader API ==========
 
 const vk::raii::ShaderModule& ResourceManager::getShader(const std::string& filepath, const std::string& entryPoint) {
@@ -490,6 +498,9 @@ void ResourceManager::clear() {
 		_freeTextureSlots.pop();
 	while (!_freeBufferSlots.empty())
 		_freeBufferSlots.pop();
+
+	// Clear loaded models tracking
+	_loadedModelPaths.clear();
 
 	// Release Slang sessions (prevents memory leak popup on exit)
 	_slangSession = nullptr;

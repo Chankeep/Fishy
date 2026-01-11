@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.20)
 project(Fishy LANGUAGES C CXX)
 
 # 设置 C++ 标准 (Vulkan-Hpp 建议使用 C++20，或者至少 C++17)
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -146,6 +146,11 @@ FetchContent_Declare(
     GIT_SHALLOW    TRUE
 )
 FetchContent_MakeAvailable(libktx)
+
+if(MSVC)
+    # 禁用 libktx 的警告，避免第三方库的警告干扰
+    target_compile_options(ktx PRIVATE /W0)
+endif()
 
 # ------------------------------------------------------------------------------
 # EnTT - Entity Component System

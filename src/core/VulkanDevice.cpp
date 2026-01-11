@@ -78,7 +78,9 @@ void VulkanDevice::createLogicalDevice(const vkb::PhysicalDevice& physicalDevice
 	// Core features
 	vk::PhysicalDeviceFeatures2 features2;
 	features2.features.samplerAnisotropy = true;
-	features2.features.shaderInt64 = true; // Required for BDA (uint64_t in shaders)
+	features2.features.shaderInt64 = true;				 // Required for BDA (uint64_t in shaders)
+	features2.features.multiDrawIndirect = true;		 // Required for batch rendering with drawCount > 1
+	features2.features.drawIndirectFirstInstance = true; // Required for correct instance indexing in indirect draws
 
 	// Extended dynamic state
 	vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT featuresExt;

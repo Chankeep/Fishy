@@ -1,5 +1,8 @@
 #include "Renderer.h"
 
+#include <array>
+#include <limits>
+
 #include "PipelineBuilder.h"
 #include "RenderConstants.h"
 #include "core/CommandPool.h"
@@ -24,6 +27,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <fstream>
 #include <glm/gtc/matrix_inverse.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -68,6 +72,7 @@ Renderer::Renderer(VulkanDevice& device, Window& window, ResourceManager& resour
 	registerShadowMapPass();
 	_renderGraph.addPass<MainRenderPass>(*_graphicsPipeline);
 	registerSkyboxPass();
+
 	// Note: UIPass is NOT in RenderGraph - it's managed separately
 	// because it requires its own beginRendering/endRendering
 	_uiPass = std::make_unique<UIPass>();
@@ -652,12 +657,99 @@ void Renderer::updateUniformBuffer(uint32_t frameIndex) {
 	if (_currentRenderParams) {
 		ubo.view = _currentRenderParams->viewMatrix;
 		ubo.proj = _currentRenderParams->projectionMatrix;
-		glm::vec3 lightPos = -glm::normalize(_currentRenderParams->lightDirection) * 20.0f;
-		glm::mat4 lightView = glm::lookAt(lightPos, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-		glm::mat4 lightProj = glm::ortho(-10.0f, 10.0f, -10.0f, 10.0f, 1.0f, 50.0f);
+
+		// === Frustum-Based Light Space Matrix ===
+		// Use a limited shadow distance for higher resolution on nearby objects
+		constexpr float shadowDistance = 10.0f; // Max shadow render distance
+
+		// Build a shadow-specific projection with limited far plane
+		float aspect =
+			static_cast<float>(_swapChain->getExtent().width) / static_cast<float>(_swapChain->getExtent().height);
+
+		// Get near plane from current projection (typically 0.1)
+		// For shadow: use original near, but limit far to shadowDistance
+		glm::mat4 shadowProj = ubo.proj;
+
+		// Compute camera frustum corners for shadow distance
+		// Use a smaller far plane for tighter shadow bounds
+		glm::mat4 limitedProj = glm::perspective(glm::radians(45.0f), aspect, 0.1f, shadowDistance);
+		limitedProj[1][1] *= -1.0f; // Vulkan Y-flip
+		glm::mat4 invViewProj = glm::inverse(limitedProj * ubo.view);
+
+		// NDC corners of the view frustum (Vulkan Z: 0 to 1)
+		std::array<glm::vec4, 8> ndcCorners = {{
+			{-1, -1, 0, 1},
+			{1, -1, 0, 1},
+			{-1, 1, 0, 1},
+			{1, 1, 0, 1}, // Near plane
+			{-1, -1, 1, 1},
+			{1, -1, 1, 1},
+			{-1, 1, 1, 1},
+			{1, 1, 1, 1} // Far plane
+		}};
+
+		std::array<glm::vec3, 8> worldCorners;
+		for (int i = 0; i < 8; ++i) {
+			glm::vec4 p = invViewProj * ndcCorners[i];
+			worldCorners[i] = glm::vec3(p) / p.w;
+		}
+
+		// Step 2: Build light view matrix
+		glm::vec3 lightDir = glm::normalize(_currentRenderParams->lightDirection);
+
+		// Use frustum center as look-at target for better centering
+		glm::vec3 frustumCenter{0.0f};
+		for (const auto& corner : worldCorners) {
+			frustumCenter += corner;
+		}
+		frustumCenter /= 8.0f;
+
+		glm::vec3 lightPos = frustumCenter - lightDir; // Place light far enough
+		glm::mat4 lightView = glm::lookAt(lightPos, frustumCenter, glm::vec3(0.0f, 1.0f, 0.0f));
+
+		// Step 3: Transform frustum corners to light space and compute AABB
+		float minX = std::numeric_limits<float>::max();
+		float maxX = std::numeric_limits<float>::lowest();
+		float minY = std::numeric_limits<float>::max();
+		float maxY = std::numeric_limits<float>::lowest();
+		float minZ = std::numeric_limits<float>::max();
+		float maxZ = std::numeric_limits<float>::lowest();
+
+		for (const auto& corner : worldCorners) {
+			glm::vec4 lightSpacePos = lightView * glm::vec4(corner, 1.0f);
+			minX = std::min(minX, lightSpacePos.x);
+			maxX = std::max(maxX, lightSpacePos.x);
+			minY = std::min(minY, lightSpacePos.y);
+			maxY = std::max(maxY, lightSpacePos.y);
+			minZ = std::min(minZ, lightSpacePos.z);
+			maxZ = std::max(maxZ, lightSpacePos.z);
+		}
+
+		// Step 4: Extend Z bounds to capture shadow casters behind the camera
+		// Use a smaller extension for tighter bounds
+		float zExtension = 3.0f;
+		minZ -= zExtension;
+
+		// Minimal padding - let the frustum define the bounds tightly
+		float padding = 1.0f;
+		minX -= padding;
+		maxX += padding;
+		minY -= padding;
+		maxY += padding;
+
+		// Step 5: Build orthographic projection from AABB
+		float nearPlane = -maxZ;
+		float farPlane = -minZ;
+		if (nearPlane >= farPlane) {
+			nearPlane = 0.1f;
+			farPlane = 200.0f;
+		}
+		glm::mat4 lightProj = glm::ortho(minX, maxX, minY, maxY, nearPlane, farPlane);
+		lightProj[1][1] *= -1.0f; // Flip Y for Vulkan
+
 		ubo.lightSpaceMatrix = lightProj * lightView;
 		ubo.camPos = glm::vec4(_currentRenderParams->cameraPosition, 0.0f);
-		ubo.lightDir = glm::vec4(glm::normalize(_currentRenderParams->lightDirection), 0.0f);
+		ubo.lightDir = glm::vec4(lightDir, 0.0f);
 		ubo.lightColor = glm::vec4(_currentRenderParams->lightColor, 0.0f);
 	} else {
 		// Fallback defaults if no RenderParams (shouldn't happen in normal use)
@@ -1058,8 +1150,6 @@ void Renderer::buildInstanceData(Scene& scene) {
 		const auto& mesh = view.get<MeshComponent>(entity);
 		const auto& meshRenderer = view.get<MeshRendererComponent>(entity);
 		auto& transform = view.get<TransformComponent>(entity);
-
-		transform.setRotationEuler(glm::vec3(glm::radians(90.0f), 0.0f, 0.0f));
 
 		if (!mesh.mesh || !meshRenderer.visible) {
 			continue;

@@ -78,7 +78,7 @@ struct PushConstants {
 // ============================================================================
 
 [shader("vertex")]
-VSOutput vertMain(VSInput input, uniform PushConstants pc, uint instanceID : SV_InstanceID) {
+VSOutput vertMain(VSInput input, uniform PushConstants pc, uint instanceID : SV_StartInstanceLocation) {
     InstanceData inst = pc.instanceDataPtr[instanceID];
     float4 worldPos = mul(inst.model, float4(input.inPosition, 1.0));
     VSOutput output;

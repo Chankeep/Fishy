@@ -187,10 +187,8 @@ float calculateShadow(float4 fragPosLightSpace, float3 N, float3 L)
     // Perspective divide
     float3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
     
-    // Transform to [0, 1] range
+    // Transform to [0, 1] range (Y-flip is handled in lightProj on CPU)
     projCoords.xy = projCoords.xy * 0.5 + 0.5;
-    // Vulkan Y-axis is inverted
-    projCoords.y = 1.0 - projCoords.y;
     
     // Outside shadow map bounds
     if (projCoords.z > 1.0 || projCoords.x < 0.0 || projCoords.x > 1.0 || 
@@ -326,9 +324,10 @@ float3 evaluateClearcoatBRDF(float3 N, float3 V, float3 L, float clearcoatRoughn
 // ============================================================================
 
 [shader("vertex")]
-VSOutput vertMain(VSInput input, uniform PushConstants pc, uint instanceID : SV_InstanceID) {
+VSOutput vertMain(VSInput input, uniform PushConstants pc, uint instanceID : SV_StartInstanceLocation) {
     // Get per-instance data via BDA pointer
     InstanceData inst = pc.instanceDataPtr[instanceID];
+    
 
     VSOutput output;
     float4 worldPos = mul(inst.model, float4(input.inPosition, 1.0));
@@ -442,7 +441,7 @@ float4 fragMain(VSOutput vertIn, uniform PushConstants pc) : SV_Target
     // Apply shadow
     float4 fragPosLightSpace = mul(pc.globalDataPtr.lightSpaceMatrix, float4(vertIn.worldPos, 1.0));
     float shadow = calculateShadow(fragPosLightSpace, n, l);
-    float3 color = directLight * (1.0 - shadow * 0.7);  // Shadow darkens direct light
+    float3 color = directLight * (1.0 - shadow * 0.9);  // Shadow darkens direct light (90% reduction)
     
     // Clearcoat layer
     // extraFactors1: x=alphaCutoff, y=transmission, z=ior, w=clearcoatFactor
@@ -497,7 +496,7 @@ float4 fragMain(VSOutput vertIn, uniform PushConstants pc) : SV_Target
         ambient = float3(0.03) * baseColor.rgb;
     }
     // Apply shadow to ambient as well (reduced effect to simulate indirect shadow)
-    color += ambient * (1.0 - shadow * 0.3);
+    color += ambient * (1.0 - shadow * 0.5);  // Ambient also darkened in shadow (50% reduction)
     
     // Emissive
     float emissiveStrength = inst.emissiveFactor.w;

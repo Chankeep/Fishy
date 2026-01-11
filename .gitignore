@@ -33,7 +33,6 @@ CMakeUserPresets.json
 *.vcxproj.user
 *.vcxproj.filters
 .vs/
-.agent/
 .cache/
 .claude/
 
