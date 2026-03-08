@@ -33,7 +33,7 @@ vkb::PhysicalDevice VulkanDevice::selectPhysicalDevice() {
 	vkb::Instance vkb_inst;
 	vkb_inst.instance = *_instance;
 	vkb::PhysicalDeviceSelector selector{vkb_inst};
-	auto phys_ret = selector.set_surface(*_surface).set_minimum_version(1, 3).select();
+	auto phys_ret = selector.set_surface(*_surface).set_minimum_version(1, 3).add_required_extension(VK_KHR_SWAPCHAIN_MUTABLE_FORMAT_EXTENSION_NAME).select();
 
 	if (!phys_ret) {
 		LogSystem::get().error("Failed to select physical device: {}", phys_ret.error().message());
