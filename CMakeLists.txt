@@ -105,19 +105,32 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(spdlog)
 
 # ------------------------------------------------------------------------------
-# tinygltf - glTF 模型加载
+# fastgltf - glTF 模型加载
 # ------------------------------------------------------------------------------
-set(TINYGLTF_HEADER_ONLY ON CACHE INTERNAL "")
-set(TINYGLTF_BUILD_LOADER_EXAMPLE OFF CACHE INTERNAL "")
-set(TINYGLTF_INSTALL OFF CACHE INTERNAL "")
+set(FASTGLTF_COMPILE_AS_CPP20 ON CACHE BOOL "" FORCE)
 
 FetchContent_Declare(
-    tinygltf
-    GIT_REPOSITORY https://github.com/syoyo/tinygltf.git
-    GIT_TAG        v2.9.3
+    fastgltf
+    GIT_REPOSITORY https://github.com/spnda/fastgltf.git
+    GIT_TAG        v0.9.0
     GIT_SHALLOW    TRUE
 )
-FetchContent_MakeAvailable(tinygltf)
+FetchContent_MakeAvailable(fastgltf)
+
+# ------------------------------------------------------------------------------
+# stb - Image loading (previously bundled in tinygltf)
+# ------------------------------------------------------------------------------
+FetchContent_Declare(
+    stb
+    GIT_REPOSITORY https://github.com/nothings/stb.git
+    GIT_TAG        master
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(stb)
+
+# stb is header-only, create interface target
+add_library(stb INTERFACE)
+target_include_directories(stb INTERFACE ${stb_SOURCE_DIR})
 
 # ------------------------------------------------------------------------------
 # VMA - Vulkan Memory Allocator
@@ -247,7 +260,8 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     vk-bootstrap::vk-bootstrap
     volk::volk
     spdlog::spdlog
-    tinygltf
+    fastgltf
+    stb
     GPUOpen::VulkanMemoryAllocator
     ktx
     EnTT::EnTT

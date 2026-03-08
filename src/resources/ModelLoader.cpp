@@ -4,18 +4,25 @@
 #include "../ecs/components/MeshRendererComponent.h"
 #include "../scene/Scene.h"
 #include "ResourceManager.h"
+#include "core/Result.h"
 #include "ecs/components/TagComponent.h"
 #include "ecs/components/TransformComponent.h"
+#include "entt/core/fwd.hpp"
+#include "entt/resource/resource.hpp"
+#include "fastgltf/math.hpp"
+#include "fastgltf/util.hpp"
 
-#define TINYGLTF_IMPLEMENTATION
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-// STB_IMAGE_IMPLEMENTATION is defined in Texture.cpp
-
+#include <expected>
 #include <filesystem>
 #include <glm/gtc/type_ptr.hpp>
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/matrix_decompose.hpp>
-#include <tiny_gltf.h>
+
+#include <fastgltf/core.hpp>
+#include <fastgltf/tools.hpp>
+#include <fastgltf/types.hpp>
+#include <fastgltf/util.hpp>
+#include <fastgltf/glm_element_traits.hpp>
 
 namespace Fishy {
 
@@ -33,6 +40,18 @@ constexpr const char* DRACO = "KHR_draco_mesh_compression";
 constexpr const char* MESH_QUANTIZATION = "KHR_mesh_quantization";
 } // namespace GltfExtensions
 
+// Context struct to hold shared state between helper functions
+struct ModelLoader::LoadContext {
+	const fastgltf::Asset& gltfModel;
+	const std::string& filepath;
+	const std::string& baseDir;
+	ResourceManager& resourceManager;
+	uint32_t nextMeshId;	 // Counter for unique mesh IDs
+	uint32_t nextMaterialId; // Counter for unique material IDs
+	Scene* targetScene = nullptr;
+	std::vector<Entity> createdEntities;
+};
+
 // Helper to join strings with a delimiter
 static std::string joinStrings(const std::vector<std::string>& strings, const std::string& delimiter = ", ") {
 	if (strings.empty())
@@ -45,7 +64,7 @@ static std::string joinStrings(const std::vector<std::string>& strings, const st
 }
 
 // Log glTF model extensions for debugging
-static void logGltfExtensions(const tinygltf::Model& gltfModel) {
+static void logGltfExtensions(const fastgltf::Asset& gltfModel) {
 	if (!gltfModel.extensionsUsed.empty()) {
 		LogSystem::get().info("glTF extensions used:");
 		for (const auto& ext : gltfModel.extensionsUsed) {
@@ -56,17 +75,17 @@ static void logGltfExtensions(const tinygltf::Model& gltfModel) {
 	if (!gltfModel.extensionsRequired.empty()) {
 		LogSystem::get().info("glTF extensions required:");
 		for (const auto& ext : gltfModel.extensionsRequired) {
-			std::string extInfo = "  - " + ext;
-			if (ext == GltfExtensions::CLEARCOAT || ext == GltfExtensions::TRANSMISSION || ext == GltfExtensions::IOR ||
-				ext == GltfExtensions::VOLUME || ext == GltfExtensions::SHEEN || ext == GltfExtensions::SPECULAR ||
-				ext == GltfExtensions::EMISSIVE_STRENGTH) {
+			std::string extInfo = "  - " + std::string(ext);
+			if (ext == GltfExtensions::CLEARCOAT || ext == GltfExtensions::TRANSMISSION ||
+				ext == GltfExtensions::IOR || ext == GltfExtensions::VOLUME || ext == GltfExtensions::SHEEN ||
+				ext == GltfExtensions::SPECULAR || ext == GltfExtensions::EMISSIVE_STRENGTH) {
 				extInfo += " (material extension - partial support)";
 			} else if (ext == GltfExtensions::TEXTURE_BASISU) {
 				extInfo += " (requires KTX2/Basis Universal - NOT YET SUPPORTED)";
 			} else if (ext == GltfExtensions::DRACO) {
 				extInfo += " (requires Draco - NOT SUPPORTED)";
 			} else if (ext == GltfExtensions::MESH_QUANTIZATION) {
-				extInfo += " (mesh quantization - supported via tinygltf)";
+				extInfo += " (mesh quantization - supported via fastgltf)";
 			} else {
 				extInfo += " (UNKNOWN)";
 			}
@@ -126,22 +145,10 @@ static void computeTangents(std::vector<Vertex>& vertices, const std::vector<uin
 	LogSystem::get().trace("Computed {} vertex tangents", vertices.size());
 }
 
-// Context struct to hold shared state between helper functions
-struct ModelLoader::LoadContext {
-	const tinygltf::Model& gltfModel;
-	const std::string& filepath;
-	const std::string& baseDir;
-	ResourceManager& resourceManager;
-	uint32_t nextMeshId;	 // Counter for unique mesh IDs
-	uint32_t nextMaterialId; // Counter for unique material IDs
-	Scene* targetScene = nullptr;
-	std::vector<Entity> createdEntities;
-};
-
 // Generate unique cache ID for textures
 static entt::id_type makeTextureId(const std::string& filepath, int textureIndex, vk::Format format) {
-	std::string key =
-		filepath + "_tex_" + std::to_string(textureIndex) + "_fmt_" + std::to_string(static_cast<int>(format));
+	std::string key = filepath + "_tex_" + std::to_string(textureIndex) + "_fmt_" +
+					  std::to_string(static_cast<int>(format));
 	return entt::hashed_string{key.c_str()};
 }
 
@@ -152,49 +159,67 @@ static entt::id_type makeMeshId(const std::string& filepath, uint32_t meshIndex)
 }
 
 // Generate unique cache ID for materials
-static entt::id_type makeMaterialId(const std::string& filepath, int materialIndex) {
+static entt::id_type makeMaterialId(const std::string& filepath, size_t materialIndex) {
 	std::string key = filepath + "_mat_" + std::to_string(materialIndex);
 	return entt::hashed_string{key.c_str()};
 }
 
 // Load texture from glTF model
-entt::resource<Texture> ModelLoader::loadGltfTexture(const LoadContext& ctx, int textureIndex, vk::Format format,
-													 const std::string& texName) {
-	if (textureIndex < 0 || textureIndex >= static_cast<int>(ctx.gltfModel.textures.size())) {
+entt::resource<Texture> ModelLoader::loadGltfTexture(const LoadContext& ctx, size_t textureIndex,
+													 vk::Format format, const std::string& texName) {
+	if (textureIndex >= ctx.gltfModel.textures.size()) {
 		return {};
 	}
 
-	int imageIndex = ctx.gltfModel.textures[textureIndex].source;
-	if (imageIndex < 0 || imageIndex >= static_cast<int>(ctx.gltfModel.images.size())) {
+	const auto& texture = ctx.gltfModel.textures[textureIndex];
+	if (!texture.imageIndex.has_value()) {
+		return {};
+	}
+
+	size_t imageIndex = texture.imageIndex.value();
+	if (imageIndex >= ctx.gltfModel.images.size()) {
 		return {};
 	}
 
 	const auto& img = ctx.gltfModel.images[imageIndex];
 
-	if (!img.uri.empty()) {
-		// External file - resolve relative to model directory
-		std::string texPath = ctx.baseDir.empty() ? img.uri : ctx.baseDir + "/" + img.uri;
-		LogSystem::get().trace("{}: [External file] {}", texName, texPath);
-		entt::id_type id = entt::hashed_string{texPath.c_str()};
-		return ctx.resourceManager.loadTexture(id, texPath, format);
-	} else if (img.bufferView >= 0) {
-		// Embedded: load from glTF buffer
-		const auto& bufferView = ctx.gltfModel.bufferViews[img.bufferView];
-		const auto& buffer = ctx.gltfModel.buffers[bufferView.buffer];
-		const unsigned char* data = buffer.data.data() + bufferView.byteOffset;
-		size_t size = bufferView.byteLength;
+	return std::visit(
+		fastgltf::visitor{
+			[&](const fastgltf::sources::BufferView& bvSource) -> entt::resource<Texture> {
+				const auto& bufferView = ctx.gltfModel.bufferViews[bvSource.bufferViewIndex];
+				const auto& buffer = ctx.gltfModel.buffers[bufferView.bufferIndex];
 
-		entt::id_type id = makeTextureId(ctx.filepath, textureIndex, format);
-		LogSystem::get().trace("{}: [Embedded buffer] {} bytes", texName, size);
-		return ctx.resourceManager.loadTextureFromMemory(id, data, size, format);
-	} else if (!img.image.empty()) {
-		// Image data loaded by tinygltf (decoded in memory)
-		entt::id_type id = makeTextureId(ctx.filepath, textureIndex, format);
-		LogSystem::get().trace("{}: [Decoded image] {} bytes", texName, img.image.size());
-		return ctx.resourceManager.loadTextureFromMemory(id, img.image.data(), img.image.size(), format);
-	}
+				return std::visit(
+					fastgltf::visitor{[&](const auto& source) -> entt::resource<Texture> {
+						if constexpr (requires { source.bytes; }) {
+							const auto* data = reinterpret_cast<const unsigned char*>(source.bytes.data() +
+																					  bufferView.byteOffset);
+							size_t size = bufferView.byteLength;
 
-	return {};
+							entt::id_type id = makeTextureId(ctx.filepath, textureIndex, format);
+							LogSystem::get().trace("{}: [Embedded buffer] {} bytes", texName, size);
+							return ctx.resourceManager.loadTextureFromMemory(id, data, size, format);
+						} else {
+							LogSystem::get().warn("{}: Unsupported buffer data source", texName);
+							return {};
+						}
+					}},
+					buffer.data);
+			},
+
+			[&](const fastgltf::sources::URI& uriSource) -> entt::resource<Texture> {
+				auto path = uriSource.uri.path();
+				std::string texPath =
+					ctx.baseDir.empty() ? std::string(path) : ctx.baseDir + "/" + std::string(path);
+				LogSystem::get().trace("{}: [External file] {}", texName, texPath);
+				entt::id_type id = entt::hashed_string{texPath.c_str()};
+				return ctx.resourceManager.loadTexture(id, texPath, format);
+			},
+			[&](const auto&) -> entt::resource<Texture> {
+				LogSystem::get().warn("{}: Unsupported image data source", texName);
+				return {};
+			}},
+		img.data);
 }
 
 // Helper: set texture on material
@@ -209,45 +234,36 @@ static void setMaterialTexture(Material& mat, const std::string& path, entt::res
 		mat.occlusionMap = std::move(tex);
 	else if (path == "emissiveTexture")
 		mat.emissiveMap = std::move(tex);
+	// Extension textures
+	else if (path == "KHR_materials_clearcoat.clearcoatTexture")
+		mat.clearcoatMap = std::move(tex);
+	else if (path == "KHR_materials_clearcoat.clearcoatRoughnessTexture")
+		mat.clearcoatRoughnessMap = std::move(tex);
+	else if (path == "KHR_materials_clearcoat.clearcoatNormalTexture")
+		mat.clearcoatNormalMap = std::move(tex);
+	else if (path == "KHR_materials_transmission.transmissionTexture")
+		mat.transmissionMap = std::move(tex);
 }
 // Apply glTF node transform to TransformComponent (TRS-first, matrix fallback)
-void ModelLoader::applyNodeTransform(const tinygltf::Node& node, TransformComponent& transform) {
-	// Priority 1: Use TRS directly (glTF spec recommendation for precision)
-	bool hasTRS = !node.translation.empty() || !node.rotation.empty() || !node.scale.empty();
-
-	if (hasTRS) {
-		if (!node.translation.empty()) {
-			transform.position =
-				glm::vec3(static_cast<float>(node.translation[0]), static_cast<float>(node.translation[1]),
-						  static_cast<float>(node.translation[2]));
-		}
-		if (!node.rotation.empty()) {
-			// glTF quaternion is [x, y, z, w], GLM constructor is (w, x, y, z)
-			transform.rotation = glm::quat(static_cast<float>(node.rotation[3]), // w
-										   static_cast<float>(node.rotation[0]), // x
-										   static_cast<float>(node.rotation[1]), // y
-										   static_cast<float>(node.rotation[2])	 // z
-			);
-		}
-		if (!node.scale.empty()) {
-			transform.scale = glm::vec3(static_cast<float>(node.scale[0]), static_cast<float>(node.scale[1]),
-										static_cast<float>(node.scale[2]));
-		}
-	}
-	// Priority 2: Matrix fallback (only if no TRS and matrix exists)
-	else if (node.matrix.size() == 16) {
-		glm::mat4 mat = glm::make_mat4(node.matrix.data());
+void ModelLoader::applyNodeTransform(const fastgltf::Node& node, TransformComponent& transform) {
+	if (auto* trs = std::get_if<fastgltf::TRS>(&node.transform)) {
+		transform.position = glm::make_vec3(trs->translation.data());
+		// fastgltf quaternion is [x, y, z, w], GLM is (w, x, y, z)
+		transform.rotation =
+			glm::quat(trs->rotation[3], trs->rotation[0], trs->rotation[1], trs->rotation[2]);
+		transform.scale = glm::make_vec3(trs->scale.data());
+	} else if (auto* mat = std::get_if<fastgltf::math::fmat4x4>(&node.transform)) {
+		glm::mat4 m = glm::make_mat4(mat->data());
 		glm::vec3 skew;
 		glm::vec4 perspective;
-		glm::decompose(mat, transform.scale, transform.rotation, transform.position, skew, perspective);
+		glm::decompose(m, transform.scale, transform.rotation, transform.position, skew, perspective);
 	}
-
 	transform.dirty = true;
 }
 
 // Load material from glTF model
-entt::resource<Material> ModelLoader::loadGltfMaterial(const LoadContext& ctx, int materialIndex) {
-	if (materialIndex < 0 || materialIndex >= static_cast<int>(ctx.gltfModel.materials.size())) {
+entt::resource<Material> ModelLoader::loadGltfMaterial(const LoadContext& ctx, size_t materialIndex) {
+	if (materialIndex >= ctx.gltfModel.materials.size()) {
 		return {};
 	}
 
@@ -260,116 +276,80 @@ entt::resource<Material> ModelLoader::loadGltfMaterial(const LoadContext& ctx, i
 	}
 
 	const auto& gltfMat = ctx.gltfModel.materials[materialIndex];
-	const auto& pbr = gltfMat.pbrMetallicRoughness;
+	const auto& pbr = gltfMat.pbrData;
 
 	// Create material in cache
 	auto materialHandle = ctx.resourceManager.createMaterial(materialId);
 	Material& material = *materialHandle;
 
-	// PBR Factors (Metallic Roughness)
+	// === PBR Factors (Metallic Roughness) ===
 	material.params.baseColorFactor = glm::make_vec4(pbr.baseColorFactor.data());
-	material.params.metallicFactor = static_cast<float>(pbr.metallicFactor);
-	material.params.roughnessFactor = static_cast<float>(pbr.roughnessFactor);
+	material.params.metallicFactor = pbr.metallicFactor;
+	material.params.roughnessFactor = pbr.roughnessFactor;
 
-	// Emissive
+	// === Emissive ===
 	material.params.emissiveFactor = glm::make_vec3(gltfMat.emissiveFactor.data());
 
-	// Alpha
-	if (gltfMat.alphaMode == "MASK") {
+	// === Alpha ===
+	switch (gltfMat.alphaMode) {
+	case fastgltf::AlphaMode::Mask:
 		material.params.alphaMode = Material::PBRParameters::AlphaMode::MASK;
-	} else if (gltfMat.alphaMode == "BLEND") {
+		break;
+	case fastgltf::AlphaMode::Blend:
 		material.params.alphaMode = Material::PBRParameters::AlphaMode::BLEND;
-	} else {
+		break;
+	default:
 		material.params.alphaMode = Material::PBRParameters::AlphaMode::OPAQUE_MODE;
+		break;
 	}
-	material.params.alphaCutoff = static_cast<float>(gltfMat.alphaCutoff);
+	material.params.alphaCutoff = gltfMat.alphaCutoff;
 	material.params.doubleSided = gltfMat.doubleSided;
 
-	// Normal Scale & Occlusion Strength
-	material.params.normalScale = static_cast<float>(gltfMat.normalTexture.scale);
-	material.params.occlusionStrength = static_cast<float>(gltfMat.occlusionTexture.strength);
+	// === Normal Scale & Occlusion Strength ===
+	material.params.normalScale = gltfMat.normalTexture.has_value() ? gltfMat.normalTexture->scale : 1.0f;
+	material.params.occlusionStrength =
+		gltfMat.occlusionTexture.has_value() ? gltfMat.occlusionTexture->strength : 1.0f;
 
-	// Standard texture paths
-	struct TextureDef {
-		const char* name;
-		int index;
-		vk::Format format;
-	};
-	std::vector<TextureDef> textureDefs = {
-		{"pbr.baseColorTexture", pbr.baseColorTexture.index, vk::Format::eR8G8B8A8Srgb},
-		{"pbr.metallicRoughnessTexture", pbr.metallicRoughnessTexture.index, vk::Format::eR8G8B8A8Unorm},
-		{"normalTexture", gltfMat.normalTexture.index, vk::Format::eR8G8B8A8Unorm},
-		{"occlusionTexture", gltfMat.occlusionTexture.index, vk::Format::eR8G8B8A8Unorm},
-		{"emissiveTexture", gltfMat.emissiveTexture.index, vk::Format::eR8G8B8A8Srgb},
-	};
-
+	// === Standard texture paths ===
 	std::vector<std::string> loadedTextureNames;
-	for (const auto& texDef : textureDefs) {
-		if (texDef.index >= 0) {
-			auto tex = loadGltfTexture(ctx, texDef.index, texDef.format, texDef.name);
-			setMaterialTexture(material, texDef.name, std::move(tex));
-			if (material.baseColorMap || material.metallicRoughnessMap || material.normalMap || material.occlusionMap ||
-				material.emissiveMap) {
-				loadedTextureNames.emplace_back(texDef.name);
-			}
+
+	auto tryLoadTexture = [&](const auto& texInfo, vk::Format format, const char* name) {
+		if (texInfo.has_value()) {
+			auto tex = loadGltfTexture(ctx, texInfo->textureIndex, format, name);
+			setMaterialTexture(material, name, std::move(tex));
+			loadedTextureNames.emplace_back(name);
 		}
+	};
+
+	tryLoadTexture(pbr.baseColorTexture, vk::Format::eR8G8B8A8Srgb, "pbr.baseColorTexture");
+	tryLoadTexture(pbr.metallicRoughnessTexture, vk::Format::eR8G8B8A8Unorm, "pbr.metallicRoughnessTexture");
+	tryLoadTexture(gltfMat.normalTexture, vk::Format::eR8G8B8A8Unorm, "normalTexture");
+	tryLoadTexture(gltfMat.occlusionTexture, vk::Format::eR8G8B8A8Unorm, "occlusionTexture");
+	tryLoadTexture(gltfMat.emissiveTexture, vk::Format::eR8G8B8A8Srgb, "emissiveTexture");
+
+	// === Extension: Clearcoat ===
+	if (gltfMat.clearcoat) {
+		material.params.clearcoatFactor = gltfMat.clearcoat->clearcoatFactor;
+		material.params.clearcoatRoughnessFactor = gltfMat.clearcoat->clearcoatRoughnessFactor;
+
+		tryLoadTexture(gltfMat.clearcoat->clearcoatTexture, vk::Format::eR8G8B8A8Unorm,
+					   "KHR_materials_clearcoat.clearcoatTexture");
+		tryLoadTexture(gltfMat.clearcoat->clearcoatRoughnessTexture, vk::Format::eR8G8B8A8Unorm,
+					   "KHR_materials_clearcoat.clearcoatRoughnessTexture");
+		tryLoadTexture(gltfMat.clearcoat->clearcoatNormalTexture, vk::Format::eR8G8B8A8Unorm,
+					   "KHR_materials_clearcoat.clearcoatNormalTexture");
 	}
 
-	// Process extension textures
-	for (const auto& [extName, extValue] : gltfMat.extensions) {
-		if (extName == GltfExtensions::CLEARCOAT) {
-			std::string prefix = "KHR_materials_clearcoat.";
-			std::vector<std::pair<std::string, vk::Format>> clearcoatTextures = {
-				{"clearcoatTexture", vk::Format::eR8G8B8A8Unorm},
-				{"clearcoatRoughnessTexture", vk::Format::eR8G8B8A8Unorm},
-				{"clearcoatNormalTexture", vk::Format::eR8G8B8A8Unorm},
-			};
-
-			for (const auto& [texName, format] : clearcoatTextures) {
-				if (extValue.Has(texName)) {
-					int texIdx = extValue.Get(texName).Get("index").GetNumberAsInt();
-					std::string fullName = prefix + texName;
-					auto tex = loadGltfTexture(ctx, texIdx, format, fullName);
-
-					if (texName == "clearcoatTexture")
-						material.clearcoatMap = std::move(tex);
-					else if (texName == "clearcoatRoughnessTexture")
-						material.clearcoatRoughnessMap = std::move(tex);
-					else if (texName == "clearcoatNormalTexture")
-						material.clearcoatNormalMap = std::move(tex);
-
-					loadedTextureNames.push_back(fullName);
-				}
-			}
-
-			if (extValue.Has("clearcoatFactor"))
-				material.params.clearcoatFactor =
-					static_cast<float>(extValue.Get("clearcoatFactor").GetNumberAsDouble());
-			if (extValue.Has("clearcoatRoughnessFactor"))
-				material.params.clearcoatRoughnessFactor =
-					static_cast<float>(extValue.Get("clearcoatRoughnessFactor").GetNumberAsDouble());
-
-		} else if (extName == GltfExtensions::TRANSMISSION) {
-			std::string prefix = std::string(GltfExtensions::TRANSMISSION) + ".";
-			if (extValue.Has("transmissionTexture")) {
-				int texIdx = extValue.Get("transmissionTexture").Get("index").GetNumberAsInt();
-				auto tex = loadGltfTexture(ctx, texIdx, vk::Format::eR8G8B8A8Unorm, prefix + "transmissionTexture");
-				material.transmissionMap = std::move(tex);
-				loadedTextureNames.push_back(prefix + "transmissionTexture");
-			}
-			if (extValue.Has("transmissionFactor"))
-				material.params.transmissionFactor =
-					static_cast<float>(extValue.Get("transmissionFactor").GetNumberAsDouble());
-
-		} else if (extName == GltfExtensions::IOR) {
-			if (extValue.Has("ior"))
-				material.params.ior = static_cast<float>(extValue.Get("ior").GetNumberAsDouble());
-		} else if (extName == GltfExtensions::EMISSIVE_STRENGTH) {
-			if (extValue.Has("emissiveStrength"))
-				material.params.emissiveStrength =
-					static_cast<float>(extValue.Get("emissiveStrength").GetNumberAsDouble());
-		}
+	// === Extension: Transmission ===
+	if (gltfMat.transmission) {
+		material.params.transmissionFactor = gltfMat.transmission->transmissionFactor;
+		tryLoadTexture(gltfMat.transmission->transmissionTexture, vk::Format::eR8G8B8A8Unorm,
+					   "KHR_materials_transmission.transmissionTexture");
 	}
+
+	// === Extension: IOR & Emissive Strength ===
+	material.params.ior = gltfMat.ior;
+	material.params.emissiveStrength = gltfMat.emissiveStrength;
 
 	// Log loaded textures
 	if (!loadedTextureNames.empty()) {
@@ -385,19 +365,20 @@ entt::resource<Material> ModelLoader::loadGltfMaterial(const LoadContext& ctx, i
 }
 
 // Process a glTF node recursively, creating entities directly in the scene
-void ModelLoader::processGltfNode(LoadContext& ctx, int nodeIndex, Entity parentEntity) {
+void ModelLoader::processGltfNode(LoadContext& ctx, size_t nodeIndex, Entity parentEntity) {
 	const auto& node = ctx.gltfModel.nodes[nodeIndex];
 
 	// Track the entity created for this node (for passing to children)
 	Entity currentNodeEntity{};
 
-	if (node.mesh >= 0) {
-		const auto& gltfMesh = ctx.gltfModel.meshes[node.mesh];
+	if (node.meshIndex.has_value()) {
+		const auto& gltfMesh = ctx.gltfModel.meshes[node.meshIndex.value()];
 
 		for (size_t primitiveIdx = 0; primitiveIdx < gltfMesh.primitives.size(); ++primitiveIdx) {
 			// Build entity name (conditional for Debug/Release)
 #ifndef NDEBUG
-			std::string entityName = node.name.empty() ? std::format("Node_{}_{}", nodeIndex, primitiveIdx) : node.name;
+			std::string entityName =
+				node.name.empty() ? std::format("Node_{}_{}", nodeIndex, primitiveIdx) : std::string(node.name);
 #else
 			std::string entityName; // Empty string, SSO avoids heap allocation
 #endif
@@ -419,93 +400,64 @@ void ModelLoader::processGltfNode(LoadContext& ctx, int nodeIndex, Entity parent
 			std::vector<uint32_t> indices;
 
 			// Indices
-			if (primitive.indices >= 0) {
-				const auto& accessor = ctx.gltfModel.accessors[primitive.indices];
-				const auto& bufferView = ctx.gltfModel.bufferViews[accessor.bufferView];
-				const auto& buffer = ctx.gltfModel.buffers[bufferView.buffer];
-
-				const uint8_t* dataPtr = buffer.data.data() + bufferView.byteOffset + accessor.byteOffset;
-				size_t count = accessor.count;
-				indices.reserve(count);
-
-				if (accessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT) {
-					const uint16_t* buf = reinterpret_cast<const uint16_t*>(dataPtr);
-					for (size_t i = 0; i < count; ++i)
-						indices.push_back(buf[i]);
-				} else if (accessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT) {
-					const uint32_t* buf = reinterpret_cast<const uint32_t*>(dataPtr);
-					for (size_t i = 0; i < count; ++i)
-						indices.push_back(buf[i]);
-				} else if (accessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE) {
-					const uint8_t* buf = dataPtr;
-					for (size_t i = 0; i < count; ++i)
-						indices.push_back(buf[i]);
-				}
-			}
-
-			// Attributes
-			std::map<std::string, std::pair<const float*, int>> attributeBuffers;
-			std::vector<std::string> attributeNames;
-			size_t vertexCount = 0;
-
-			for (const auto& [attrName, accessorIdx] : primitive.attributes) {
-				const auto& accessor = ctx.gltfModel.accessors[accessorIdx];
-				const auto& bufferView = ctx.gltfModel.bufferViews[accessor.bufferView];
-				const auto& buffer = ctx.gltfModel.buffers[bufferView.buffer];
-
-				const float* dataPtr =
-					reinterpret_cast<const float*>(buffer.data.data() + bufferView.byteOffset + accessor.byteOffset);
-				int stride = accessor.ByteStride(bufferView) ? accessor.ByteStride(bufferView) / sizeof(float)
-															 : tinygltf::GetNumComponentsInType(accessor.type);
-
-				attributeBuffers[attrName] = {dataPtr, stride};
-				attributeNames.push_back(attrName);
-
-				if (vertexCount == 0)
-					vertexCount = accessor.count;
-			}
-
-			// Log all found attributes
-			{
-				bool hasTangent = attributeBuffers.contains("TANGENT");
-				LogSystem::get().info("Mesh attributes: [{}]{}", joinStrings(attributeNames),
-									  hasTangent ? "" : " (TANGENT will be computed)");
+			if (primitive.indicesAccessor.has_value()) {
+				auto& accessor = ctx.gltfModel.accessors[primitive.indicesAccessor.value()];
+				indices.resize(accessor.count);
+				fastgltf::copyFromAccessor<uint32_t>(ctx.gltfModel, accessor, indices.data());
 			}
 
 			// Build vertices from collected attributes
-			vertices.reserve(vertexCount);
-			for (size_t i = 0; i < vertexCount; ++i) {
-				Vertex v{};
+			auto* positionIt = primitive.findAttribute("POSITION");
+			size_t vertexCount = positionIt != primitive.attributes.end()
+									 ? ctx.gltfModel.accessors[positionIt->accessorIndex].count
+									 : 0;
+			vertices.resize(vertexCount);
 
-				if (auto it = attributeBuffers.find("POSITION"); it != attributeBuffers.end()) {
-					v.pos = glm::make_vec3(&it->second.first[i * it->second.second]);
-				}
-				if (auto it = attributeBuffers.find("NORMAL"); it != attributeBuffers.end()) {
-					v.normal = glm::make_vec3(&it->second.first[i * it->second.second]);
-				}
-				if (auto it = attributeBuffers.find("TEXCOORD_0"); it != attributeBuffers.end()) {
-					v.texCoord = glm::make_vec2(&it->second.first[i * it->second.second]);
-				}
-				if (auto it = attributeBuffers.find("TANGENT"); it != attributeBuffers.end()) {
-					v.tangent = glm::make_vec4(&it->second.first[i * it->second.second]);
-				}
+			// POSITION
+			if (positionIt != primitive.attributes.end()) {
+				fastgltf::iterateAccessorWithIndex<glm::vec3>(
+					ctx.gltfModel, ctx.gltfModel.accessors[positionIt->accessorIndex],
+					[&](glm::vec3 pos, size_t idx) { vertices[idx].pos = pos; });
+			}
 
-				vertices.push_back(v);
+			// NORMAL
+			if (auto* it = primitive.findAttribute("NORMAL"); it != primitive.attributes.end()) {
+				fastgltf::iterateAccessorWithIndex<glm::vec3>(
+					ctx.gltfModel, ctx.gltfModel.accessors[it->accessorIndex],
+					[&](glm::vec3 n, size_t idx) { vertices[idx].normal = n; });
+			}
+
+			// TEXCOORD_0
+			if (auto* it = primitive.findAttribute("TEXCOORD_0"); it != primitive.attributes.end()) {
+				fastgltf::iterateAccessorWithIndex<glm::vec2>(
+					ctx.gltfModel, ctx.gltfModel.accessors[it->accessorIndex],
+					[&](glm::vec2 uv, size_t idx) { vertices[idx].texCoord = uv; });
+			}
+
+			// TANGENT
+			bool hasTangent = false;
+			if (auto* it = primitive.findAttribute("TANGENT"); it != primitive.attributes.end()) {
+				hasTangent = true;
+				fastgltf::iterateAccessorWithIndex<glm::vec4>(
+					ctx.gltfModel, ctx.gltfModel.accessors[it->accessorIndex],
+					[&](glm::vec4 t, size_t idx) { vertices[idx].tangent = t; });
 			}
 
 			// Compute tangents on CPU if not provided by the model
-			bool hasTangent = attributeBuffers.contains("TANGENT");
 			if (!hasTangent && !indices.empty()) {
 				computeTangents(vertices, indices);
 			}
 
 			// Create mesh in cache with unique ID
-			uint32_t meshIdCounter = static_cast<uint32_t>(node.mesh * 1000 + primitiveIdx);
+			uint32_t meshIdCounter = static_cast<uint32_t>(node.meshIndex.value() * 1000 + primitiveIdx);
 			entt::id_type meshId = makeMeshId(ctx.filepath, meshIdCounter);
 			auto meshHandle = ctx.resourceManager.createMesh(meshId, vertices, indices);
 
 			// Load material
-			auto materialHandle = loadGltfMaterial(ctx, primitive.material);
+			entt::resource<Material> materialHandle;
+			if (primitive.materialIndex.has_value()) {
+				materialHandle = loadGltfMaterial(ctx, primitive.materialIndex.value());
+			}
 
 			// Add components to entity (using wrapped Entity API)
 			if (meshHandle) {
@@ -525,7 +477,7 @@ void ModelLoader::processGltfNode(LoadContext& ctx, int nodeIndex, Entity parent
 	} else if (!node.children.empty()) {
 		// Node has no mesh but has children - create a pure transform entity
 #ifndef NDEBUG
-		std::string entityName = node.name.empty() ? std::format("TransformNode_{}", nodeIndex) : node.name;
+		std::string entityName = node.name.empty() ? std::format("TransformNode_{}", nodeIndex) : std::string(node.name);
 #else
 		std::string entityName;
 #endif
@@ -543,7 +495,7 @@ void ModelLoader::processGltfNode(LoadContext& ctx, int nodeIndex, Entity parent
 	}
 
 	// Recursively process children, passing current entity as parent
-	for (int child : node.children) {
+	for (size_t child : node.children) {
 		processGltfNode(ctx, child, currentNodeEntity);
 	}
 }
@@ -555,49 +507,42 @@ Result<std::vector<Entity>> ModelLoader::loadModelIntoScene(const std::string& f
 		LogSystem::get().info("Creating additional instance of model: {}", filepath);
 	}
 
-	tinygltf::Model gltfModel;
-	tinygltf::TinyGLTF loader;
-	std::string err;
-	std::string warn;
+	fastgltf::Parser parser(
+		fastgltf::Extensions::KHR_materials_clearcoat | fastgltf::Extensions::KHR_materials_transmission |
+		fastgltf::Extensions::KHR_materials_ior | fastgltf::Extensions::KHR_materials_emissive_strength |
+		fastgltf::Extensions::KHR_mesh_quantization);
 
-	bool ret = false;
-	if (filepath.ends_with(".glb")) {
-		ret = loader.LoadBinaryFromFile(&gltfModel, &err, &warn, filepath);
-	} else {
-		ret = loader.LoadASCIIFromFile(&gltfModel, &err, &warn, filepath);
+	auto data = fastgltf::GltfDataBuffer::FromPath(filepath);
+	if (data.error() != fastgltf::Error::None) {
+		return std::unexpected(
+			ModelLoadError::make(ModelLoadError::Code::ParseFailed, "Failed to read file: " + filepath));
 	}
 
-	if (!warn.empty()) {
-		LogSystem::get().info("TinyGLTF Warning: {}", warn);
-	}
-
-	if (!err.empty()) {
-		LogSystem::get().error("TinyGLTF Error: {}", err);
-	}
-
-	if (!ret) {
-		return std::unexpected(ModelLoadError::make(ModelLoadError::Code::ParseFailed, err));
+	auto asset = parser.loadGltf(data.get(), std::filesystem::path(filepath).parent_path(),
+								 fastgltf::Options::LoadExternalBuffers);
+	if (asset.error() != fastgltf::Error::None) {
+		return std::unexpected(
+			ModelLoadError::make(ModelLoadError::Code::ParseFailed, "Failed to parse glTF: " + filepath));
 	}
 
 	// Log extensions for debugging
-	logGltfExtensions(gltfModel);
+	logGltfExtensions(asset.get());
 
-	// Get base directory for resolving relative texture paths
-	std::filesystem::path modelPath(filepath);
-	std::string baseDir = modelPath.parent_path().string();
+	// Get base directory
+	std::string baseDir = std::filesystem::path(filepath).parent_path().string();
 
 	// Create context with scene pointer
-	LoadContext ctx{gltfModel, filepath, baseDir, resourceManager, 0, 0, &scene};
+	LoadContext ctx{asset.get(), filepath, baseDir, resourceManager, 0, 0, &scene};
 
 	// Process scene nodes directly into entities
-	const auto& gltfScene = gltfModel.scenes[gltfModel.defaultScene > -1 ? gltfModel.defaultScene : 0];
-	for (int nodeIndex : gltfScene.nodes) {
+	size_t sceneIndex = asset->defaultScene.has_value() ? asset->defaultScene.value() : 0;
+	auto& gltfScene = asset->scenes[sceneIndex];
+	for (size_t nodeIndex : gltfScene.nodeIndices) {
 		processGltfNode(ctx, nodeIndex);
 	}
 
 	// Mark model as loaded to avoid redundant parsing
 	resourceManager.markModelLoaded(filepath);
-
 	LogSystem::get().info("Loaded model into scene from: {}", filepath);
 	return ctx.createdEntities;
 }
