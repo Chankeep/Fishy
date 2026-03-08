@@ -1,16 +1,40 @@
 CompileFlags:
+  CompilationDatabase: build/x64-Debug
+  Compiler: clang-cl
   Add:
     - "/std:c++latest"
+    # MSVC STL & Windows SDK include paths (cl.exe finds these via env vars, clangd cannot)
+    - "-imsvc"
+    - "D:\\Software\\Microsoft Visual Studio\\2026\\VC\\Tools\\MSVC\\14.50.35717\\include"
+    - "-imsvc"
+    - "D:\\Windows Kits\\10\\Include\\10.0.26100.0\\ucrt"
+    - "-imsvc"
+    - "D:\\Windows Kits\\10\\Include\\10.0.26100.0\\shared"
+    - "-imsvc"
+    - "D:\\Windows Kits\\10\\Include\\10.0.26100.0\\um"
+    # MSVC compatibility flags
+    - "-fms-compatibility"
+    - "-fms-extensions"
     - "-Wno-unknown-attributes"
+    - "-Wno-microsoft-enum-value"
 
 Diagnostics:
   UnusedIncludes: None
   Suppress:
-    # C++23 compatibility issues with clangd
+    # C++23/C++20 features clangd may not fully understand
     - "invalid_consteval_call"
     - "no_member_template"
     - "no_member"
-    - "typecheck_nonviable_condition"  # std::expected issues
-    - "err_undeclared_var_use"         # byte/variant not found
-    - "unknown_typename"               # VoidResult etc
-    - "*"  # Nuclear option: suppress all clangd errors (use MSVC for real errors)
+    - "typecheck_nonviable_condition"
+    - "err_undeclared_var_use"
+    - "unknown_typename"
+    - "err_typename_missing"
+    - "auto_not_allowed"
+    - "typename_nested_not_found"
+    - "unknown_nested_typename_suggest"
+    - "err_no_template_suggest"
+    - "typecheck_call_too_few_args"
+    - "ovl_no_viable_member_function_in_call"  # LogFormat implicit conversion with source_location
+    - "-Wc++17-extensions"
+    - "fatal_too_many_errors"
+    # Note: Use MSVC (Visual Studio) for accurate C++23 error checking
