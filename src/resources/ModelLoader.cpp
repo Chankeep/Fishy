@@ -26,19 +26,8 @@
 
 namespace Fishy {
 
-// glTF extension names
-namespace GltfExtensions {
-constexpr const char* CLEARCOAT = "KHR_materials_clearcoat";
-constexpr const char* TRANSMISSION = "KHR_materials_transmission";
-constexpr const char* IOR = "KHR_materials_ior";
-constexpr const char* VOLUME = "KHR_materials_volume";
-constexpr const char* SHEEN = "KHR_materials_sheen";
-constexpr const char* SPECULAR = "KHR_materials_specular";
-constexpr const char* EMISSIVE_STRENGTH = "KHR_materials_emissive_strength";
-constexpr const char* TEXTURE_BASISU = "KHR_texture_basisu";
-constexpr const char* DRACO = "KHR_draco_mesh_compression";
-constexpr const char* MESH_QUANTIZATION = "KHR_mesh_quantization";
-} // namespace GltfExtensions
+// Core includes and aliases
+using namespace std::literals;
 
 // Context struct to hold shared state between helper functions
 struct ModelLoader::LoadContext {
@@ -76,15 +65,19 @@ static void logGltfExtensions(const fastgltf::Asset& gltfModel) {
 		LogSystem::get().info("glTF extensions required:");
 		for (const auto& ext : gltfModel.extensionsRequired) {
 			std::string extInfo = "  - " + std::string(ext);
-			if (ext == GltfExtensions::CLEARCOAT || ext == GltfExtensions::TRANSMISSION ||
-				ext == GltfExtensions::IOR || ext == GltfExtensions::VOLUME || ext == GltfExtensions::SHEEN ||
-				ext == GltfExtensions::SPECULAR || ext == GltfExtensions::EMISSIVE_STRENGTH) {
+			if (ext == fastgltf::extensions::KHR_materials_clearcoat ||
+				ext == fastgltf::extensions::KHR_materials_transmission ||
+				ext == fastgltf::extensions::KHR_materials_ior ||
+				ext == fastgltf::extensions::KHR_materials_volume ||
+				ext == fastgltf::extensions::KHR_materials_sheen ||
+				ext == fastgltf::extensions::KHR_materials_specular ||
+				ext == fastgltf::extensions::KHR_materials_emissive_strength) {
 				extInfo += " (material extension - partial support)";
-			} else if (ext == GltfExtensions::TEXTURE_BASISU) {
+			} else if (ext == fastgltf::extensions::KHR_texture_basisu) {
 				extInfo += " (requires KTX2/Basis Universal - NOT YET SUPPORTED)";
-			} else if (ext == GltfExtensions::DRACO) {
+			} else if (ext == fastgltf::extensions::KHR_draco_mesh_compression) {
 				extInfo += " (requires Draco - NOT SUPPORTED)";
-			} else if (ext == GltfExtensions::MESH_QUANTIZATION) {
+			} else if (ext == fastgltf::extensions::KHR_mesh_quantization) {
 				extInfo += " (mesh quantization - supported via fastgltf)";
 			} else {
 				extInfo += " (UNKNOWN)";
@@ -192,13 +185,13 @@ entt::resource<Texture> ModelLoader::loadGltfTexture(const LoadContext& ctx, siz
 				return std::visit(
 					fastgltf::visitor{[&](const auto& source) -> entt::resource<Texture> {
 						if constexpr (requires { source.bytes; }) {
-							const auto* data = reinterpret_cast<const unsigned char*>(source.bytes.data() +
-																					  bufferView.byteOffset);
-							size_t size = bufferView.byteLength;
+							auto data = std::span<const std::byte>(
+								source.bytes.data() + bufferView.byteOffset,
+								bufferView.byteLength);
 
 							entt::id_type id = makeTextureId(ctx.filepath, textureIndex, format);
-							LogSystem::get().trace("{}: [Embedded buffer] {} bytes", texName, size);
-							return ctx.resourceManager.loadTextureFromMemory(id, data, size, format);
+							LogSystem::get().trace("{}: [Embedded buffer] {} bytes", texName, data.size());
+							return ctx.resourceManager.loadTextureFromMemory(id, data, format);
 						} else {
 							LogSystem::get().warn("{}: Unsupported buffer data source", texName);
 							return {};
@@ -405,6 +398,13 @@ void ModelLoader::processGltfNode(LoadContext& ctx, size_t nodeIndex, Entity par
 				indices.resize(accessor.count);
 				fastgltf::copyFromAccessor<uint32_t>(ctx.gltfModel, accessor, indices.data());
 			}
+
+			// Diagnostic logging of mesh attributes
+			std::vector<std::string> attributeNames;
+			for (const auto& attr : primitive.attributes) {
+				attributeNames.push_back(std::string(attr.name));
+			}
+			LogSystem::get().trace("{}: Found attributes: {}", entityName, joinStrings(attributeNames));
 
 			// Build vertices from collected attributes
 			auto* positionIt = primitive.findAttribute("POSITION");

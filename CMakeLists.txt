@@ -123,8 +123,7 @@ FetchContent_MakeAvailable(fastgltf)
 FetchContent_Declare(
     stb
     GIT_REPOSITORY https://github.com/nothings/stb.git
-    GIT_TAG        master
-    GIT_SHALLOW    TRUE
+    GIT_TAG        2fb8c5a3deb2110c89669f8d6f36e5833b556b44 # master as of 2026-03-08
 )
 FetchContent_MakeAvailable(stb)
 

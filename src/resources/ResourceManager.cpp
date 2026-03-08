@@ -104,17 +104,17 @@ entt::resource<Texture> ResourceManager::loadTexture(entt::id_type id, const std
 	return _textureCache[id];
 }
 
-entt::resource<Texture> ResourceManager::loadTextureFromMemory(entt::id_type id, const unsigned char* data, size_t size,
-															   vk::Format format) {
+entt::resource<Texture> ResourceManager::loadTextureFromMemory(entt::id_type id, std::span<const std::byte> data,
+																vk::Format format) {
 	// Check if already cached
 	if (_textureCache.contains(id)) {
 		return _textureCache[id];
 	}
 
-	LogSystem::get().info("Loading embedded texture: id={} ({} bytes)", id, size);
+	LogSystem::get().info("Loading embedded texture: id={} ({} bytes)", id, data.size());
 
 	// Load using the TextureLoader (encoded data overload)
-	auto [it, inserted] = _textureCache.load(id, _device, data, size, format);
+	auto [it, inserted] = _textureCache.load(id, _device, data, format);
 
 	// Register to bindless array using .handle() to get shared_ptr
 	if (_bindlessTextureSet) {

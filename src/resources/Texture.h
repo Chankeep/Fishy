@@ -5,6 +5,7 @@
 #include "../core/VulkanImage.h"
 
 #include <memory>
+#include <span>
 
 #if (__linux__)
 #include <stb/stb_image.h>
@@ -24,7 +25,7 @@ public:
 	Texture(const VulkanDevice& device, const std::string& path, vk::Format format = vk::Format::eR8G8B8A8Srgb);
 
 	// Load from encoded image data in memory (PNG, JPG, etc. for embedded glTF textures)
-	Texture(const VulkanDevice& device, const unsigned char* data, size_t size,
+	Texture(const VulkanDevice& device, std::span<const std::byte> data,
 			vk::Format format = vk::Format::eR8G8B8A8Srgb);
 
 	// Create from raw RGBA pixel data (for programmatic textures like default white/normal)
@@ -45,7 +46,7 @@ private:
 	void transitionImageLayout(vk::ImageLayout oldLayout, vk::ImageLayout newLayout);
 	void copyBufferToImage(const VulkanBuffer& buffer, uint32_t width, uint32_t height);
 	void createTextureImage(const std::string& path);
-	void createTextureImageFromMemory(const unsigned char* data, size_t size);
+	void createTextureImageFromMemory(std::span<const std::byte> data);
 	void createTextureFromPixels(const unsigned char* pixels, int texWidth, int texHeight);
 	void createTextureImageView();
 	void createTextureSampler();
