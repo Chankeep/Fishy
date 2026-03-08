@@ -43,7 +43,7 @@ void LogSystem::init(const std::string& log_filename) {
 		// 设为默认，方便第三方库如果也用 spdlog
 		spdlog::set_default_logger(m_logger);
 
-		LogSystem::get().info("LogSystem initialized: Stdout, File({}), Ringbuffer", log_filename);
+		FISHY_LOG_INFO("LogSystem initialized: Stdout, File({}), Ringbuffer", log_filename);
 
 	} catch (const spdlog::spdlog_ex& ex) {
 		std::cerr << "Log init failed: " << ex.what() << std::endl;

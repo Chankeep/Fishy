@@ -39,13 +39,13 @@ void SwapChain::createSwapChain(int width, int height) {
 			.build();
 
 	if (!swap_ret) {
-		LogSystem::get().error("Failed to create swapchain: {}", swap_ret.error().message());
+		FISHY_LOG_ERROR("Failed to create swapchain: {}", swap_ret.error().message());
 		throw std::runtime_error("Failed to create swapchain: " + swap_ret.error().message());
 	}
 
 	vkb::Swapchain vkbSwapchain = swap_ret.value();
 
-	LogSystem::get().info("Swapchain created: {}x{} format:{} images:{}", vkbSwapchain.extent.width,
+	FISHY_LOG_INFO("Swapchain created: {}x{} format:{} images:{}", vkbSwapchain.extent.width,
 						  vkbSwapchain.extent.height, vk::to_string(static_cast<vk::Format>(vkbSwapchain.image_format)),
 						  vkbSwapchain.image_count);
 

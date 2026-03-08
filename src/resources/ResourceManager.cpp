@@ -32,7 +32,7 @@ ResourceManager::ResourceManager(VulkanDevice& device) : _device(device) {
 	// Search paths
 	// We need to keep these strings alive while sessionDesc is used (which is just for createSession)
 	std::string cwd = std::filesystem::current_path().string();
-	LogSystem::get().info("Slang Search Paths Base: {}", cwd);
+	FISHY_LOG_TRACE("Slang Search Paths Base: {}", cwd);
 
 	std::string shadersPath = (std::filesystem::current_path() / "shaders").string();
 	std::string srcPath = (std::filesystem::current_path() / "src").string();
@@ -48,7 +48,7 @@ ResourceManager::ResourceManager(VulkanDevice& device) : _device(device) {
 		throw std::runtime_error("Failed to create Slang Session");
 	}
 
-	LogSystem::get().info("Slang API initialized successfully");
+	FISHY_LOG_TRACE("Slang API initialized successfully");
 }
 
 ResourceManager::~ResourceManager() { clear(); }
@@ -56,7 +56,7 @@ ResourceManager::~ResourceManager() { clear(); }
 // Bindless Resource Management
 
 void ResourceManager::initBindlessResources(vk::DescriptorSet textureSet, vk::DescriptorSet ssboSet) {
-	LogSystem::get().info("[Bindless] Initializing ResourceManager with EnTT resource caches...");
+	FISHY_LOG_TRACE("[Bindless] Initializing ResourceManager with EnTT resource caches...");
 
 	_bindlessTextureSet = textureSet;
 	_bindlessStorageBufferSet = ssboSet;
@@ -78,7 +78,7 @@ void ResourceManager::initBindlessResources(vk::DescriptorSet textureSet, vk::De
 	// Create default textures and register them
 	createDefaultTextures();
 
-	LogSystem::get().info("[Bindless] ResourceManager ready (max {} resources)", MAX_BINDLESS_RESOURCES);
+	FISHY_LOG_TRACE("[Bindless] ResourceManager ready (max {} resources)", MAX_BINDLESS_RESOURCES);
 }
 
 // ========== Texture API ==========
@@ -89,7 +89,7 @@ entt::resource<Texture> ResourceManager::loadTexture(entt::id_type id, const std
 		return _textureCache[id];
 	}
 
-	LogSystem::get().info("Loading texture: {}", filepath);
+	FISHY_LOG_TRACE("Loading texture: {}", filepath);
 
 	// Load using the TextureLoader - load() returns pair<iterator, bool>
 	auto [it, inserted] = _textureCache.load(id, _device, filepath, format);
@@ -111,7 +111,7 @@ entt::resource<Texture> ResourceManager::loadTextureFromMemory(entt::id_type id,
 		return _textureCache[id];
 	}
 
-	LogSystem::get().info("Loading embedded texture: id={} ({} bytes)", id, size);
+	FISHY_LOG_TRACE("Loading embedded texture: id={} ({} bytes)", id, size);
 
 	// Load using the TextureLoader (encoded data overload)
 	auto [it, inserted] = _textureCache.load(id, _device, data, size, format);
@@ -167,7 +167,7 @@ TextureHandle ResourceManager::registerTextureBindless(const std::shared_ptr<Tex
 
 	// Check if bindless is initialized
 	if (!_bindlessTextureSet) {
-		LogSystem::get().warn("[Bindless] Cannot register texture - bindless not initialized");
+		FISHY_LOG_WARN("[Bindless] Cannot register texture - bindless not initialized");
 		return TextureHandle{};
 	}
 
@@ -176,14 +176,14 @@ TextureHandle ResourceManager::registerTextureBindless(const std::shared_ptr<Tex
 	if (!_freeTextureSlots.empty()) {
 		index = _freeTextureSlots.front();
 		_freeTextureSlots.pop();
-		LogSystem::get().trace("[Bindless] Reusing texture slot {}", index);
+		FISHY_LOG_TRACE("[Bindless] Reusing texture slot {}", index);
 	} else {
 		if (_nextTextureIndex >= MAX_BINDLESS_RESOURCES) {
-			LogSystem::get().error("[Bindless] Texture array full!");
+			FISHY_LOG_ERROR("[Bindless] Texture array full!");
 			return TextureHandle{};
 		}
 		index = _nextTextureIndex++;
-		LogSystem::get().trace("[Bindless] Allocated new texture slot {}", index);
+		FISHY_LOG_TRACE("[Bindless] Allocated new texture slot {}", index);
 	}
 
 	// Write descriptor (UPDATE_AFTER_BIND allows updating while set is bound!)
@@ -210,7 +210,7 @@ TextureHandle ResourceManager::registerTextureBindless(const std::shared_ptr<Tex
 // Default Textures
 
 void ResourceManager::createDefaultTextures() {
-	LogSystem::get().info("Creating default textures (white, normal)...");
+	FISHY_LOG_TRACE("Creating default textures (white, normal)...");
 
 	// Create 1x1 white texture (RGBA) - sRGB for color data
 	unsigned char whitePixel[] = {255, 255, 255, 255};
@@ -233,7 +233,7 @@ void ResourceManager::createDefaultTextures() {
 	// Create default cubemap for IBL placeholder (1x1 black cubemap)
 	_defaultCubemap = CubemapTexture::createDefault(_device);
 
-	LogSystem::get().info("Default textures created");
+	FISHY_LOG_TRACE("Default textures created");
 }
 
 entt::resource<Texture> ResourceManager::getDefaultWhiteTexture() {
@@ -266,7 +266,7 @@ entt::resource<Mesh> ResourceManager::createMesh(entt::id_type id, std::vector<V
 		return _meshCache[id];
 	}
 
-	LogSystem::get().trace("Creating mesh: id={}", id);
+	FISHY_LOG_TRACE("Creating mesh: id={}", id);
 	_meshCache.load(id, vertices, indices);
 	return _meshCache[id];
 }
@@ -286,7 +286,7 @@ entt::resource<Material> ResourceManager::createMaterial(entt::id_type id) {
 		return _materialCache[id];
 	}
 
-	LogSystem::get().trace("Creating material: id={}", id);
+	FISHY_LOG_TRACE("Creating material: id={}", id);
 	_materialCache.load(id);
 	return _materialCache[id];
 }
@@ -327,7 +327,7 @@ BufferHandle ResourceManager::registerBuffer(VulkanBuffer* buffer, vk::DeviceSiz
 	}
 
 	if (!_bindlessStorageBufferSet) {
-		LogSystem::get().warn("[Bindless] Cannot register buffer - bindless not initialized");
+		FISHY_LOG_WARN("[Bindless] Cannot register buffer - bindless not initialized");
 		return BufferHandle{};
 	}
 
@@ -338,7 +338,7 @@ BufferHandle ResourceManager::registerBuffer(VulkanBuffer* buffer, vk::DeviceSiz
 		_freeBufferSlots.pop();
 	} else {
 		if (_nextBufferIndex >= MAX_BINDLESS_RESOURCES) {
-			LogSystem::get().error("[Bindless] Buffer array full!");
+			FISHY_LOG_ERROR("[Bindless] Buffer array full!");
 			return BufferHandle{};
 		}
 		index = _nextBufferIndex++;
@@ -356,7 +356,7 @@ BufferHandle ResourceManager::registerBuffer(VulkanBuffer* buffer, vk::DeviceSiz
 
 	_device->updateDescriptorSets(write, {});
 
-	LogSystem::get().trace("[Bindless] Registered buffer at slot {}", index);
+	FISHY_LOG_TRACE("[Bindless] Registered buffer at slot {}", index);
 	return BufferHandle{index};
 }
 
@@ -366,7 +366,7 @@ void ResourceManager::unregisterBuffer(BufferHandle handle) {
 	}
 
 	_freeBufferSlots.push(handle.index);
-	LogSystem::get().trace("[Bindless] Freed buffer slot {}", handle.index);
+	FISHY_LOG_TRACE("[Bindless] Freed buffer slot {}", handle.index);
 }
 
 // ========== Model Loading Cache API ==========
@@ -386,7 +386,7 @@ const vk::raii::ShaderModule& ResourceManager::getShader(const std::string& file
 		return it->second;
 	}
 
-	LogSystem::get().info("Loading shader: {} ({})", filepath, entryPoint);
+	FISHY_LOG_TRACE("Loading shader: {} ({})", filepath, entryPoint);
 
 	std::vector<char> code;
 	if (filepath.ends_with(".slang")) {
@@ -415,9 +415,9 @@ std::vector<char> ResourceManager::compileSlangShader(const std::string& filepat
 
 	if (!module) {
 		if (diagnostics) {
-			LogSystem::get().error("Slang Load Error: {}", (const char*)diagnostics->getBufferPointer());
+			FISHY_LOG_ERROR("Slang Load Error: {}", (const char*)diagnostics->getBufferPointer());
 		}
-		LogSystem::get().warn("Failed to load module '{}'", moduleName);
+		FISHY_LOG_WARN("Failed to load module '{}'", moduleName);
 		throw std::runtime_error("Unknown shader module: " + moduleName);
 	}
 
@@ -445,7 +445,7 @@ std::vector<char> ResourceManager::compileSlangShader(const std::string& filepat
 		Slang::ComPtr<slang::IBlob> linkDiag;
 		program->link(linkedProgram.writeRef(), linkDiag.writeRef());
 		if (linkDiag) {
-			LogSystem::get().error("Shader Link Error: {}", (const char*)linkDiag->getBufferPointer());
+			FISHY_LOG_ERROR("Shader Link Error: {}", (const char*)linkDiag->getBufferPointer());
 		}
 		throw std::runtime_error("Failed to link shader: " + moduleName);
 	}
@@ -461,10 +461,10 @@ std::vector<char> ResourceManager::compileSlangShader(const std::string& filepat
 	// Copy to vector
 	const char* begin = (const char*)codeBlob->getBufferPointer();
 	size_t codeSize = codeBlob->getBufferSize();
-	LogSystem::get().info("Compiled SPIR-V for '{}:{}': {} bytes", filepath, entryPoint, codeSize);
+	FISHY_LOG_TRACE("Compiled SPIR-V for '{}:{}': {} bytes", filepath, entryPoint, codeSize);
 
 	if (codeSize == 0) {
-		LogSystem::get().error("SPIR-V code blob is empty!");
+		FISHY_LOG_ERROR("SPIR-V code blob is empty!");
 		throw std::runtime_error("Empty SPIR-V code blob for: " + filepath);
 	}
 
@@ -474,7 +474,7 @@ std::vector<char> ResourceManager::compileSlangShader(const std::string& filepat
 // Lifecycle
 
 void ResourceManager::clear() {
-	LogSystem::get().info("Clearing ResourceManager...");
+	FISHY_LOG_TRACE("Clearing ResourceManager...");
 
 	// Clear EnTT caches
 	_textureCache.clear();
@@ -506,7 +506,7 @@ void ResourceManager::clear() {
 	_slangSession = nullptr;
 	_slangGlobalSession = nullptr;
 
-	LogSystem::get().info("ResourceManager cleared");
+	FISHY_LOG_TRACE("ResourceManager cleared");
 }
 
 // Helper Functions

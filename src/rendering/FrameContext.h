@@ -75,7 +75,7 @@ struct FrameContext {
 		const size_t newOffset = alignedOffset + requiredSize;
 
 		if (newOffset > _linearMemory.size()) {
-			LogSystem::get().error(
+			FISHY_LOG_ERROR(
 				"FrameContext linear allocator out of memory: requested {} bytes, available {} bytes", requiredSize,
 				_linearMemory.size() - _allocatedOffset);
 			throw std::runtime_error("FrameContext linear allocator out of memory");
@@ -101,7 +101,7 @@ struct FrameContext {
 		}
 
 		if ((alignment & (alignment - 1)) != 0) {
-			LogSystem::get().error("FrameContext allocateBytes: alignment {} is not a power of 2", alignment);
+			FISHY_LOG_ERROR("FrameContext allocateBytes: alignment {} is not a power of 2", alignment);
 			throw std::runtime_error("Alignment must be power of 2");
 		}
 
@@ -109,7 +109,7 @@ struct FrameContext {
 		const size_t newOffset = alignedOffset + size;
 
 		if (newOffset > _linearMemory.size()) {
-			LogSystem::get().error(
+			FISHY_LOG_ERROR(
 				"FrameContext linear allocator out of memory: requested {} bytes, available {} bytes", size,
 				_linearMemory.size() - _allocatedOffset);
 			throw std::runtime_error("FrameContext linear allocator out of memory");

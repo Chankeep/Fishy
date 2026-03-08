@@ -8,12 +8,12 @@ int main() {
 	try {
 		// Initialize LogSystem
 		Fishy::LogSystem::get().init();
-		Fishy::LogSystem::get().info("Starting Fishy Engine...");
+		FISHY_LOG_INFO("Starting Fishy Engine...");
 		Fishy::Application app;
 		app.run();
-		Fishy::LogSystem::get().info("Fishy Engine shutting down normally");
+		FISHY_LOG_INFO("Fishy Engine shutting down normally");
 	} catch (const std::exception& e) {
-		Fishy::LogSystem::get().critical("Fatal Error: {}", e.what());
+		FISHY_LOG_CRITICAL("Fatal Error: {}", e.what());
 		std::cerr << "Fatal Error: " << e.what() << std::endl;
 		return -1;
 	}

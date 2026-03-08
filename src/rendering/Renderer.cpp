@@ -40,7 +40,7 @@ static constexpr uint64_t FENCE_TIMEOUT = std::numeric_limits<uint32_t>::max();
 
 Renderer::Renderer(VulkanDevice& device, Window& window, ResourceManager& resourceManager)
 	: _device(device), _window(window), _resourceManager(resourceManager) {
-	LogSystem::get().info("Initializing Renderer...");
+	FISHY_LOG_INFO("Initializing Renderer...");
 	_frames.resize(MAX_FRAMES_IN_FLIGHT);
 	recreateSwapChain();
 	createCommandBuffers();
@@ -77,11 +77,11 @@ Renderer::Renderer(VulkanDevice& device, Window& window, ResourceManager& resour
 	// because it requires its own beginRendering/endRendering
 	_uiPass = std::make_unique<UIPass>();
 
-	LogSystem::get().info("Renderer initialized successfully with {} render passes", _renderGraph.getPassCount());
+	FISHY_LOG_INFO("Renderer initialized successfully with {} render passes", _renderGraph.getPassCount());
 }
 
 Renderer::~Renderer() {
-	LogSystem::get().info("Shutting down Renderer...");
+	FISHY_LOG_INFO("Shutting down Renderer...");
 
 	// PipelineManager destructor will save cache automatically
 
@@ -184,7 +184,7 @@ void Renderer::recreateSwapChain() {
 		glfwWaitEvents();
 	}
 
-	LogSystem::get().info("Recreating swap chain: {}x{}", extent.width, extent.height);
+	FISHY_LOG_INFO("Recreating swap chain: {}x{}", extent.width, extent.height);
 
 	// wait for all in-flight frames to complete instead of full device idle
 	std::vector<vk::Fence> fencesToWait;
@@ -197,7 +197,7 @@ void Renderer::recreateSwapChain() {
 	if (!fencesToWait.empty()) {
 		auto result = _device->waitForFences(fencesToWait, vk::True, FENCE_TIMEOUT);
 		if (result != vk::Result::eSuccess) {
-			LogSystem::get().error("Failed to wait for in-flight fences during SwapChain recreation");
+			FISHY_LOG_ERROR("Failed to wait for in-flight fences during SwapChain recreation");
 		}
 	}
 
@@ -278,7 +278,7 @@ void Renderer::createSetLayout() {
 }
 
 void Renderer::createBindlessTextureSetLayout() {
-	LogSystem::get().info("[Bindless] Creating texture and SSBO set layouts (max {} entries)", MAX_BINDLESS_TEXTURES);
+	FISHY_LOG_INFO("[Bindless] Creating texture and SSBO set layouts (max {} entries)", MAX_BINDLESS_TEXTURES);
 
 	// Set 1: Bindless Texture Array
 	vk::DescriptorBindingFlags textureBindingFlags =
@@ -302,7 +302,7 @@ void Renderer::createBindlessTextureSetLayout() {
 
 	_bindlessTextureSetLayout =
 		vk::raii::DescriptorSetLayout(*_device, layoutChain.get<vk::DescriptorSetLayoutCreateInfo>());
-	LogSystem::get().info("[Bindless] Texture set layout created");
+	FISHY_LOG_INFO("[Bindless] Texture set layout created");
 }
 
 void Renderer::createBindlessDescriptorPool() {
@@ -320,7 +320,7 @@ void Renderer::createBindlessDescriptorPool() {
 		.pPoolSizes = poolSizes.data()};
 
 	_bindlessDescriptorPool = vk::raii::DescriptorPool(*_device, poolInfo);
-	LogSystem::get().info("[Bindless] Descriptor pool created with UPDATE_AFTER_BIND flag");
+	FISHY_LOG_INFO("[Bindless] Descriptor pool created with UPDATE_AFTER_BIND flag");
 }
 
 void Renderer::allocateDescriptorSets() {
@@ -338,7 +338,7 @@ void Renderer::allocateDescriptorSets() {
 
 	auto textureSets = vk::raii::DescriptorSets(*_device, allocChain.get<vk::DescriptorSetAllocateInfo>());
 	_bindlessTextureSet = std::move(textureSets[0]);
-	LogSystem::get().info("[Bindless] Texture descriptor set allocated");
+	FISHY_LOG_INFO("[Bindless] Texture descriptor set allocated");
 
 	// Allocate Global Descriptor Sets (Set 0: IBL textures)
 	std::vector<vk::DescriptorSetLayout> IBLLayouts(MAX_FRAMES_IN_FLIGHT, *_IBLSetLayout);
@@ -398,7 +398,7 @@ void Renderer::allocateDescriptorSets() {
 
 		_device->updateDescriptorSets(descriptorWrites, {});
 	}
-	LogSystem::get().info("All descriptor sets allocated and initialized");
+	FISHY_LOG_INFO("All descriptor sets allocated and initialized");
 }
 
 // NOTE: Object data is now managed via bindless SSBO array (Set 2)
@@ -420,11 +420,11 @@ void Renderer::createIndirectBuffer() {
 		VulkanUtils::setDebugName(_device, _frames[i].indirectBuffer->getBuffer(), debugName.c_str());
 #endif
 	}
-	LogSystem::get().trace("Created indirect draw buffers ({} bytes each)", bufferSize);
+	FISHY_LOG_TRACE("Created indirect draw buffers ({} bytes each)", bufferSize);
 }
 
 void Renderer::createPipelines() {
-	LogSystem::get().info("Creating graphics pipelines...");
+	FISHY_LOG_INFO("Creating graphics pipelines...");
 
 	// Common setup
 	auto bindingDescription = Vertex::getBindingDescription();
@@ -497,11 +497,11 @@ void Renderer::createPipelines() {
 		_skyboxPipeline = builder.build(*_pipelineManager);
 	}
 
-	LogSystem::get().info("All pipelines created successfully");
+	FISHY_LOG_TRACE("All pipelines created successfully");
 }
 
 void Renderer::registerSkyboxPass() {
-	LogSystem::get().info("Creating skybox mesh...");
+	FISHY_LOG_TRACE("Creating skybox mesh...");
 
 	auto cubeMesh = MeshGenerator::createCube();
 	const auto& vertices = cubeMesh->getVertices();
@@ -541,14 +541,14 @@ void Renderer::registerSkyboxPass() {
 		cmd.copyBuffer(stagingIndex.getBuffer(), indexBuffer->getBuffer(), vk::BufferCopy{.size = indexBufferSize});
 	});
 
-	LogSystem::get().info("Skybox mesh created: {} vertices, {} indices", vertices.size(), indices.size());
+	FISHY_LOG_TRACE("Skybox mesh created: {} vertices, {} indices", vertices.size(), indices.size());
 
 	// Register SkyboxPass with ownership of buffers
 	_renderGraph.addPass<SkyboxPass>(*_skyboxPipeline, std::move(vertexBuffer), std::move(indexBuffer), indexCount);
 }
 
 void Renderer::registerShadowMapPass() {
-	LogSystem::get().info("Creating shadowMap image...");
+	FISHY_LOG_TRACE("Creating shadowMap image...");
 	vk::ImageCreateInfo imageInfo{.imageType = vk::ImageType::e2D,
 								  .format = vk::Format::eD32Sfloat,
 								  .extent = {SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, 1},
@@ -583,7 +583,7 @@ void Renderer::registerShadowMapPass() {
 #ifndef NDEBUG
 	VulkanUtils::setDebugName(_device, image->getImage(), "ShadowMap ImageView");
 #endif
-	LogSystem::get().info("Creating shadowMap sampler...");
+	FISHY_LOG_TRACE("Creating shadowMap sampler...");
 
 	auto properties = _device.getPhysicalDevice().getProperties();
 	vk::SamplerCreateInfo samplerInfo{
@@ -608,7 +608,7 @@ void Renderer::registerShadowMapPass() {
 
 	_renderGraph.addPass<ShadowMapPass>(*_shadowPipeline, std::move(image), std::move(sampler));
 
-	LogSystem::get().info(" shadowMap image created: {}x{}", SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
+	FISHY_LOG_TRACE(" shadowMap image created: {}x{}", SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
 }
 
 void Renderer::createUniformBuffers() {
@@ -872,15 +872,15 @@ vk::Format Renderer::findDepthFormat() {
 		vk::FormatProperties props = _device.getPhysicalDevice().getFormatProperties(format);
 
 		if (tiling == vk::ImageTiling::eLinear && (props.linearTilingFeatures & features) == features) {
-			LogSystem::get().trace("Found depth format (linear): {}", vk::to_string(format));
+			FISHY_LOG_TRACE("Found depth format (linear): {}", vk::to_string(format));
 			return format;
 		} else if (tiling == vk::ImageTiling::eOptimal && (props.optimalTilingFeatures & features) == features) {
-			LogSystem::get().trace("Found depth format (optimal): {}", vk::to_string(format));
+			FISHY_LOG_TRACE("Found depth format (optimal): {}", vk::to_string(format));
 			return format;
 		}
 	}
 
-	LogSystem::get().error("Failed to find supported depth format!");
+	FISHY_LOG_ERROR("Failed to find supported depth format!");
 	throw std::runtime_error("failed to find supported depth format!");
 }
 
@@ -892,7 +892,7 @@ void Renderer::createDepthResources() {
 	_depthFormat = findDepthFormat();
 	vk::Extent2D extent = getSwapChainExtent();
 
-	LogSystem::get().info("Creating depth resources: {}x{} format:{}", extent.width, extent.height,
+	FISHY_LOG_TRACE("Creating depth resources: {}x{} format:{}", extent.width, extent.height,
 						  vk::to_string(_depthFormat));
 
 	// Create Image using VMA (keep vk:: style, convert to Vk for VMA)
@@ -935,11 +935,11 @@ void Renderer::createDepthResources() {
 	VulkanUtils::setDebugName(_device, *_depthImage->getView(), vk::ObjectType::eImageView,
 							  (debugName + "_View").c_str());
 #endif
-	LogSystem::get().trace("Created depth image view");
+	FISHY_LOG_TRACE("Created depth image view");
 
 	// Perform explicit layout transition Undefined -> DepthStencilAttachmentOptimal
 	{
-		LogSystem::get().trace("Performing layout transition for depth image");
+		FISHY_LOG_TRACE("Performing layout transition for depth image");
 		auto aspectMask = viewInfo.subresourceRange.aspectMask;
 
 		VulkanUtils::executeImmediate(_device, [&](auto& cmd) {
@@ -952,7 +952,7 @@ void Renderer::createDepthResources() {
 				aspectMask);
 		});
 
-		LogSystem::get().trace("Layout transition for depth image completed");
+		FISHY_LOG_TRACE("Layout transition for depth image completed");
 	}
 }
 
@@ -978,7 +978,7 @@ void Renderer::setIBLEnvironment(IBLEnvironment* ibl) {
 	_iblEnvironment = ibl;
 	if (ibl) {
 		writeTextureDescriptors();
-		LogSystem::get().info("IBL environment set with {} mip levels", ibl->prefilteredMipLevels);
+		FISHY_LOG_TRACE("IBL environment set with {} mip levels", ibl->prefilteredMipLevels);
 	}
 }
 
@@ -1035,7 +1035,7 @@ void Renderer::writeTextureDescriptors() {
 		_device->updateDescriptorSets(descriptorWrites, {});
 	}
 
-	LogSystem::get().trace("IBL descriptors written to global descriptor sets");
+	FISHY_LOG_TRACE("IBL descriptors written to global descriptor sets");
 }
 
 void Renderer::updateInstanceDataBuffer() {
@@ -1058,7 +1058,7 @@ void Renderer::updateInstanceDataBuffer() {
 		frame.instanceDataBuffer->map();
 
 		// BDA: No descriptor update needed - address is passed via push constants
-		LogSystem::get().trace("[Bindless] Frame {} allocated instance SSBO ({} bytes)", _currentFrameIndex, allocSize);
+		FISHY_LOG_TRACE("[Bindless] Frame {} allocated instance SSBO ({} bytes)", _currentFrameIndex, allocSize);
 
 #ifndef NDEBUG
 		std::string debugName = "InstanceSSBO_Frame" + std::to_string(_currentFrameIndex);
@@ -1138,7 +1138,7 @@ void Renderer::buildUnifiedBuffersFromScene(Scene& scene) {
 	});
 
 	_unifiedBuffersDirty = false;
-	LogSystem::get().info("Built unified buffers from scene: {} vertices, {} indices", allVertices.size(),
+	FISHY_LOG_TRACE("Built unified buffers from scene: {} vertices, {} indices", allVertices.size(),
 						  allIndices.size());
 }
 

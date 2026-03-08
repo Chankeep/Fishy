@@ -57,7 +57,7 @@ void CubemapTexture::loadFromKTX2(const std::string& path) {
 		default:
 			break;
 		}
-		LogSystem::get().error("Failed to load KTX texture: {} (error: {} - {})", path, static_cast<int>(result),
+		FISHY_LOG_ERROR("Failed to load KTX texture: {} (error: {} - {})", path, static_cast<int>(result),
 							   errorStr);
 		throw std::runtime_error("Failed to load KTX texture: " + path);
 	}
@@ -70,7 +70,7 @@ void CubemapTexture::loadFromKTX2(const std::string& path) {
 
 	// Check if texture needs transcoding (Basis Universal compression) - only for KTX2
 	if (ktxTex->classId == ktxTexture2_c && ktxTexture2_NeedsTranscoding((ktxTexture2*)ktxTex)) {
-		LogSystem::get().info("Transcoding Basis Universal texture: {}", path);
+		FISHY_LOG_TRACE("Transcoding Basis Universal texture: {}", path);
 
 		// Get GPU supported format - prefer BC7 for quality, fallback to ASTC or ETC2
 		ktx_transcode_fmt_e targetFormat = KTX_TTF_BC7_RGBA;
@@ -78,7 +78,7 @@ void CubemapTexture::loadFromKTX2(const std::string& path) {
 		result = ktxTexture2_TranscodeBasis((ktxTexture2*)ktxTex, targetFormat, 0);
 		if (result != KTX_SUCCESS) {
 			ktxTexture_Destroy(ktxTex);
-			LogSystem::get().error("Failed to transcode KTX2 texture: {} (error: {})", path, static_cast<int>(result));
+			FISHY_LOG_ERROR("Failed to transcode KTX2 texture: {} (error: {})", path, static_cast<int>(result));
 			throw std::runtime_error("Failed to transcode KTX2 texture: " + path);
 		}
 	}
@@ -95,7 +95,7 @@ void CubemapTexture::loadFromKTX2(const std::string& path) {
 		_format = static_cast<vk::Format>(ktxTexture1_GetVkFormat((ktxTexture1*)ktxTex));
 	}
 
-	LogSystem::get().info("Loading cubemap: {} ({}x{}, {} mips, format: {})", path, _width, _height, _mipLevels,
+	FISHY_LOG_TRACE("Loading cubemap: {} ({}x{}, {} mips, format: {})", path, _width, _height, _mipLevels,
 						  vk::to_string(_format));
 
 	// Calculate total image size including all faces and mip levels
@@ -182,7 +182,7 @@ void CubemapTexture::loadFromKTX2(const std::string& path) {
 
 	ktxTexture_Destroy(ktxTex);
 
-	LogSystem::get().info("Cubemap loaded successfully: {}", path);
+	FISHY_LOG_TRACE("Cubemap loaded successfully: {}", path);
 }
 
 void CubemapTexture::createImageView() {
@@ -239,7 +239,7 @@ std::shared_ptr<CubemapTexture> CubemapTexture::createDefault(const VulkanDevice
 	cubemap->createImageView();
 	cubemap->createSampler();
 
-	LogSystem::get().trace("Created default 1x1 black cubemap");
+	FISHY_LOG_TRACE("Created default 1x1 black cubemap");
 	return cubemap;
 }
 

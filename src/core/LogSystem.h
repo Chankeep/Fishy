@@ -13,6 +13,17 @@
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 
+#ifdef NDEBUG
+	#define FISHY_LOG_TRACE(...) do {} while(0)
+#else
+	#define FISHY_LOG_TRACE(...) ::Fishy::LogSystem::get().trace(__VA_ARGS__)
+#endif
+
+#define FISHY_LOG_INFO(...)     ::Fishy::LogSystem::get().info(__VA_ARGS__)
+#define FISHY_LOG_WARN(...)     ::Fishy::LogSystem::get().warn(__VA_ARGS__)
+#define FISHY_LOG_ERROR(...)    ::Fishy::LogSystem::get().error(__VA_ARGS__)
+#define FISHY_LOG_CRITICAL(...) ::Fishy::LogSystem::get().critical(__VA_ARGS__)
+
 namespace Fishy {
 
 // 辅助结构体，用来“偷运”source_location

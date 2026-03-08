@@ -47,14 +47,14 @@ static std::string joinStrings(const std::vector<std::string>& strings, const st
 // Log glTF model extensions for debugging
 static void logGltfExtensions(const tinygltf::Model& gltfModel) {
 	if (!gltfModel.extensionsUsed.empty()) {
-		LogSystem::get().info("glTF extensions used:");
+		FISHY_LOG_INFO("glTF extensions used:");
 		for (const auto& ext : gltfModel.extensionsUsed) {
-			LogSystem::get().info("  - {}", ext);
+			FISHY_LOG_INFO("  - {}", ext);
 		}
 	}
 
 	if (!gltfModel.extensionsRequired.empty()) {
-		LogSystem::get().info("glTF extensions required:");
+		FISHY_LOG_INFO("glTF extensions required:");
 		for (const auto& ext : gltfModel.extensionsRequired) {
 			std::string extInfo = "  - " + ext;
 			if (ext == GltfExtensions::CLEARCOAT || ext == GltfExtensions::TRANSMISSION || ext == GltfExtensions::IOR ||
@@ -70,7 +70,7 @@ static void logGltfExtensions(const tinygltf::Model& gltfModel) {
 			} else {
 				extInfo += " (UNKNOWN)";
 			}
-			LogSystem::get().info("{}", extInfo);
+			FISHY_LOG_INFO("{}", extInfo);
 		}
 	}
 }
@@ -123,7 +123,7 @@ static void computeTangents(std::vector<Vertex>& vertices, const std::vector<uin
 		vertices[i].tangent = glm::vec4(tangent, w);
 	}
 
-	LogSystem::get().trace("Computed {} vertex tangents", vertices.size());
+	FISHY_LOG_TRACE("Computed {} vertex tangents", vertices.size());
 }
 
 // Context struct to hold shared state between helper functions
@@ -174,7 +174,7 @@ entt::resource<Texture> ModelLoader::loadGltfTexture(const LoadContext& ctx, int
 	if (!img.uri.empty()) {
 		// External file - resolve relative to model directory
 		std::string texPath = ctx.baseDir.empty() ? img.uri : ctx.baseDir + "/" + img.uri;
-		LogSystem::get().trace("{}: [External file] {}", texName, texPath);
+		FISHY_LOG_TRACE("{}: [External file] {}", texName, texPath);
 		entt::id_type id = entt::hashed_string{texPath.c_str()};
 		return ctx.resourceManager.loadTexture(id, texPath, format);
 	} else if (img.bufferView >= 0) {
@@ -185,12 +185,12 @@ entt::resource<Texture> ModelLoader::loadGltfTexture(const LoadContext& ctx, int
 		size_t size = bufferView.byteLength;
 
 		entt::id_type id = makeTextureId(ctx.filepath, textureIndex, format);
-		LogSystem::get().trace("{}: [Embedded buffer] {} bytes", texName, size);
+		FISHY_LOG_TRACE("{}: [Embedded buffer] {} bytes", texName, size);
 		return ctx.resourceManager.loadTextureFromMemory(id, data, size, format);
 	} else if (!img.image.empty()) {
 		// Image data loaded by tinygltf (decoded in memory)
 		entt::id_type id = makeTextureId(ctx.filepath, textureIndex, format);
-		LogSystem::get().trace("{}: [Decoded image] {} bytes", texName, img.image.size());
+		FISHY_LOG_TRACE("{}: [Decoded image] {} bytes", texName, img.image.size());
 		return ctx.resourceManager.loadTextureFromMemory(id, img.image.data(), img.image.size(), format);
 	}
 
@@ -373,9 +373,9 @@ entt::resource<Material> ModelLoader::loadGltfMaterial(const LoadContext& ctx, i
 
 	// Log loaded textures
 	if (!loadedTextureNames.empty()) {
-		LogSystem::get().info("Material textures loaded: [{}]", joinStrings(loadedTextureNames));
+		FISHY_LOG_INFO("Material textures loaded: [{}]", joinStrings(loadedTextureNames));
 	} else {
-		LogSystem::get().info("Material textures: none");
+		FISHY_LOG_TRACE("Material textures: none");
 	}
 
 	// Pre-compute bindless texture indices for this material
@@ -468,7 +468,7 @@ void ModelLoader::processGltfNode(LoadContext& ctx, int nodeIndex, Entity parent
 			// Log all found attributes
 			{
 				bool hasTangent = attributeBuffers.contains("TANGENT");
-				LogSystem::get().info("Mesh attributes: [{}]{}", joinStrings(attributeNames),
+				FISHY_LOG_TRACE("Mesh attributes: [{}]{}", joinStrings(attributeNames),
 									  hasTangent ? "" : " (TANGENT will be computed)");
 			}
 
@@ -552,7 +552,7 @@ Result<std::vector<Entity>> ModelLoader::loadModelIntoScene(const std::string& f
 															ResourceManager& resourceManager) {
 	// Log if model was already loaded (entities will be created again, but resources are cached)
 	if (resourceManager.isModelLoaded(filepath)) {
-		LogSystem::get().info("Creating additional instance of model: {}", filepath);
+		FISHY_LOG_INFO("Creating additional instance of model: {}", filepath);
 	}
 
 	tinygltf::Model gltfModel;
@@ -568,11 +568,11 @@ Result<std::vector<Entity>> ModelLoader::loadModelIntoScene(const std::string& f
 	}
 
 	if (!warn.empty()) {
-		LogSystem::get().info("TinyGLTF Warning: {}", warn);
+		FISHY_LOG_INFO("TinyGLTF Warning: {}", warn);
 	}
 
 	if (!err.empty()) {
-		LogSystem::get().error("TinyGLTF Error: {}", err);
+		FISHY_LOG_ERROR("TinyGLTF Error: {}", err);
 	}
 
 	if (!ret) {
@@ -598,7 +598,7 @@ Result<std::vector<Entity>> ModelLoader::loadModelIntoScene(const std::string& f
 	// Mark model as loaded to avoid redundant parsing
 	resourceManager.markModelLoaded(filepath);
 
-	LogSystem::get().info("Loaded model into scene from: {}", filepath);
+	FISHY_LOG_INFO("Loaded model into scene from: {}", filepath);
 	return ctx.createdEntities;
 }
 
