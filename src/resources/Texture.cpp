@@ -14,13 +14,13 @@ Texture::Texture(const VulkanDevice& device, const std::string& path, vk::Format
 	createTextureSampler();
 }
 
-Texture::Texture(const VulkanDevice& device, const unsigned char* data, size_t size, vk::Format format)
+Texture::Texture(const VulkanDevice& device, std::span<const std::byte> data, vk::Format format)
 	: _device(device), _format(format) {
 #ifndef NDEBUG
 	static int embeddedId = 0;
 	_debugName = "Texture_Embedded_" + std::to_string(embeddedId++);
 #endif
-	createTextureImageFromMemory(data, size);
+	createTextureImageFromMemory(data);
 	createTextureImageView();
 	createTextureSampler();
 }
@@ -53,18 +53,19 @@ void Texture::createTextureImage(const std::string& path) {
 	stbi_image_free(pixels);
 }
 
-void Texture::createTextureImageFromMemory(const unsigned char* data, size_t size) {
+void Texture::createTextureImageFromMemory(std::span<const std::byte> data) {
 	int texWidth, texHeight, texChannels;
 	stbi_uc* pixels =
-		stbi_load_from_memory(data, static_cast<int>(size), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+		stbi_load_from_memory(reinterpret_cast<const stbi_uc*>(data.data()),
+							 static_cast<int>(data.size()), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
 
 	if (!pixels) {
-		FISHY_LOG_ERROR("Failed to load texture from memory ({} bytes)", size);
+		FISHY_LOG_ERROR("Failed to load texture from memory ({} bytes)", data.size());
 		throw std::runtime_error("failed to load texture from memory");
 	}
 
 	FISHY_LOG_TRACE("Loaded texture from memory: {}x{} {} channels ({} bytes)", texWidth, texHeight, texChannels,
-						   size);
+						   data.size());
 	createTextureFromPixels(pixels, texWidth, texHeight);
 	stbi_image_free(pixels);
 }

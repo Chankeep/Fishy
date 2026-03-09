@@ -6,6 +6,7 @@
 #include "Texture.h"
 #include <entt/entt.hpp>
 #include <memory>
+#include <span>
 
 namespace Fishy {
 
@@ -27,8 +28,8 @@ struct TextureLoader final {
 	}
 
 	// Load from raw encoded data (PNG/JPG bytes, for embedded glTF textures)
-	result_type operator()(const VulkanDevice& device, const unsigned char* data, size_t size, vk::Format format) const {
-		return std::make_shared<Texture>(device, data, size, format);
+	result_type operator()(const VulkanDevice& device, std::span<const std::byte> data, vk::Format format) const {
+		return std::make_shared<Texture>(device, data, format);
 	}
 
 	// Create from raw RGBA pixels (for programmatic default textures)

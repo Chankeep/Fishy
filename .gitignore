@@ -53,3 +53,5 @@ Thumbs.db
 # ------------------
 *.rdc
 *.cap
+
+docs/.dev

@@ -12,6 +12,7 @@ import vulkan_hpp;
 #include <entt/entt.hpp>
 #include <memory>
 #include <queue>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -76,8 +77,8 @@ public:
 	 * @param format Vulkan format.
 	 * @return entt::resource handle to the texture.
 	 */
-	[[nodiscard]] entt::resource<Texture> loadTextureFromMemory(entt::id_type id, const unsigned char* data,
-																size_t size, vk::Format format);
+	[[nodiscard]] entt::resource<Texture> loadTextureFromMemory(entt::id_type id, std::span<const std::byte> data,
+																vk::Format format);
 
 	/**
 	 * @brief Get a previously loaded texture by its ID.
