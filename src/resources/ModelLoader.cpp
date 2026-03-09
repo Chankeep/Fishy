@@ -19,10 +19,11 @@
 #include <glm/gtx/matrix_decompose.hpp>
 
 #include <fastgltf/core.hpp>
+#include <fastgltf/glm_element_traits.hpp>
 #include <fastgltf/tools.hpp>
 #include <fastgltf/types.hpp>
 #include <fastgltf/util.hpp>
-#include <fastgltf/glm_element_traits.hpp>
+
 
 namespace Fishy {
 
@@ -186,14 +187,13 @@ entt::resource<Texture> ModelLoader::loadGltfTexture(const LoadContext& ctx, siz
 					fastgltf::visitor{[&](const auto& source) -> entt::resource<Texture> {
 						if constexpr (requires { source.bytes; }) {
 							auto data = std::span<const std::byte>(
-								source.bytes.data() + bufferView.byteOffset,
-								bufferView.byteLength);
+								source.bytes.data() + bufferView.byteOffset, bufferView.byteLength);
 
 							entt::id_type id = makeTextureId(ctx.filepath, textureIndex, format);
-							LogSystem::get().trace("{}: [Embedded buffer] {} bytes", texName, data.size());
+							FISHY_LOG_TRACE("{}: [Embedded buffer] {} bytes", texName, data.size());
 							return ctx.resourceManager.loadTextureFromMemory(id, data, format);
 						} else {
-							LogSystem::get().warn("{}: Unsupported buffer data source", texName);
+							FISHY_LOG_WARN("{}: Unsupported buffer data source", texName);
 							return {};
 						}
 					}},
@@ -204,12 +204,12 @@ entt::resource<Texture> ModelLoader::loadGltfTexture(const LoadContext& ctx, siz
 				auto path = uriSource.uri.path();
 				std::string texPath =
 					ctx.baseDir.empty() ? std::string(path) : ctx.baseDir + "/" + std::string(path);
-				LogSystem::get().trace("{}: [External file] {}", texName, texPath);
+				FISHY_LOG_TRACE("{}: [External file] {}", texName, texPath);
 				entt::id_type id = entt::hashed_string{texPath.c_str()};
 				return ctx.resourceManager.loadTexture(id, texPath, format);
 			},
 			[&](const auto&) -> entt::resource<Texture> {
-				LogSystem::get().warn("{}: Unsupported image data source", texName);
+				FISHY_LOG_WARN("{}: Unsupported image data source", texName);
 				return {};
 			}},
 		img.data);
@@ -370,8 +370,8 @@ void ModelLoader::processGltfNode(LoadContext& ctx, size_t nodeIndex, Entity par
 		for (size_t primitiveIdx = 0; primitiveIdx < gltfMesh.primitives.size(); ++primitiveIdx) {
 			// Build entity name (conditional for Debug/Release)
 #ifndef NDEBUG
-			std::string entityName =
-				node.name.empty() ? std::format("Node_{}_{}", nodeIndex, primitiveIdx) : std::string(node.name);
+			std::string entityName = node.name.empty() ? std::format("Node_{}_{}", nodeIndex, primitiveIdx)
+													   : std::string(node.name);
 #else
 			std::string entityName; // Empty string, SSO avoids heap allocation
 #endif
@@ -404,7 +404,7 @@ void ModelLoader::processGltfNode(LoadContext& ctx, size_t nodeIndex, Entity par
 			for (const auto& attr : primitive.attributes) {
 				attributeNames.push_back(std::string(attr.name));
 			}
-			LogSystem::get().trace("{}: Found attributes: {}", entityName, joinStrings(attributeNames));
+			FISHY_LOG_TRACE("{}: Found attributes: {}", entityName, joinStrings(attributeNames));
 
 			// Build vertices from collected attributes
 			auto* positionIt = primitive.findAttribute("POSITION");
@@ -432,11 +432,6 @@ void ModelLoader::processGltfNode(LoadContext& ctx, size_t nodeIndex, Entity par
 				fastgltf::iterateAccessorWithIndex<glm::vec2>(
 					ctx.gltfModel, ctx.gltfModel.accessors[it->accessorIndex],
 					[&](glm::vec2 uv, size_t idx) { vertices[idx].texCoord = uv; });
-			// Log all found attributes
-			{
-				bool hasTangent = attributeBuffers.contains("TANGENT");
-				FISHY_LOG_TRACE("Mesh attributes: [{}]{}", joinStrings(attributeNames),
-									  hasTangent ? "" : " (TANGENT will be computed)");
 			}
 
 			// TANGENT
@@ -482,7 +477,8 @@ void ModelLoader::processGltfNode(LoadContext& ctx, size_t nodeIndex, Entity par
 	} else if (!node.children.empty()) {
 		// Node has no mesh but has children - create a pure transform entity
 #ifndef NDEBUG
-		std::string entityName = node.name.empty() ? std::format("TransformNode_{}", nodeIndex) : std::string(node.name);
+		std::string entityName =
+			node.name.empty() ? std::format("TransformNode_{}", nodeIndex) : std::string(node.name);
 #else
 		std::string entityName;
 #endif

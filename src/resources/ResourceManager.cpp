@@ -111,7 +111,7 @@ entt::resource<Texture> ResourceManager::loadTextureFromMemory(entt::id_type id,
 		return _textureCache[id];
 	}
 
-	FISHY_LOG_TRACE("Loading embedded texture: id={} ({} bytes)", id, size);
+	FISHY_LOG_TRACE("Loading embedded texture: id={} ({} bytes)", id, data.size());
 
 	// Load using the TextureLoader (encoded data overload)
 	auto [it, inserted] = _textureCache.load(id, _device, data, format);
