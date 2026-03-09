@@ -12,7 +12,7 @@ VulkanImage::VulkanImage(VmaAllocator allocator, const vk::ImageCreateInfo& imag
 	VkResult result = vmaCreateImage(_allocator, &rawInfo, &allocInfo, &_image, &_allocation, nullptr);
 
 	if (result != VK_SUCCESS) {
-		LogSystem::get().error("Failed to create VMA depth image: {}x{}", imageInfo.extent.width,
+		FISHY_LOG_ERROR("Failed to create VMA depth image: {}x{}", imageInfo.extent.width,
 							   imageInfo.extent.height);
 		throw std::runtime_error("Failed to create VMA Image!");
 	}

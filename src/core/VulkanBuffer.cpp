@@ -76,7 +76,7 @@ VulkanBuffer::VulkanBuffer(const VulkanDevice& device, vk::DeviceSize size, vk::
 		vmaCreateBuffer(_device.getVmaAllocator(), &bufferInfo, &allocInfo, &_buffer, &_vmaAllocation, &allocInfoOut);
 
 	if (result != VK_SUCCESS) {
-		LogSystem::get().error("Failed to create VMA buffer: {} bytes", size);
+		FISHY_LOG_ERROR("Failed to create VMA buffer: {} bytes", size);
 		throw std::runtime_error("Failed to create VMA buffer!");
 	}
 
@@ -84,7 +84,7 @@ VulkanBuffer::VulkanBuffer(const VulkanDevice& device, vk::DeviceSize size, vk::
 	_mappedData = allocInfoOut.pMappedData;
 
 	std::string usageDesc = getBufferUsageDescription(usage);
-	LogSystem::get().trace("Created {} buffer: {} bytes ({:.2f} MB)", usageDesc, size, size / (1024.0 * 1024.0));
+	FISHY_LOG_TRACE("Created {} buffer: {} bytes ({:.2f} MB)", usageDesc, size, size / (1024.0 * 1024.0));
 
 #ifndef NDEBUG
 	if (!_debugName.empty()) {
@@ -128,7 +128,7 @@ void VulkanBuffer::upload(std::span<const std::byte> data) {
 		unmap();
 		return;
 	}
-	LogSystem::get().error("Failed to upload {} bytes to buffer", data.size());
+	FISHY_LOG_ERROR("Failed to upload {} bytes to buffer", data.size());
 	throw std::runtime_error("Failed to upload data to buffer!");
 }
 

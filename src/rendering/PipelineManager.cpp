@@ -12,19 +12,19 @@ PipelineManager::~PipelineManager() {
 	try {
 		saveCache();
 	} catch (const std::exception& e) {
-		LogSystem::get().error("Failed to save pipeline cache: {}", e.what());
+		FISHY_LOG_ERROR("Failed to save pipeline cache: {}", e.what());
 	}
 }
 
 GraphicsPipeline* PipelineManager::getOrCreate(const PipelineKey& key, PipelineBuilder& builder) {
 	// 1. Check CPU-side cache
 	if (auto it = _pipelines.find(key); it != _pipelines.end()) {
-		LogSystem::get().trace("Pipeline cache hit for shaderId: {}", key.shaderId);
+		FISHY_LOG_TRACE("Pipeline cache hit for shaderId: {}", key.shaderId);
 		return it->second.get();
 	}
 
 	// 2. Cache miss - create new pipeline using PipelineBuilder
-	LogSystem::get().info("Pipeline cache miss for shaderId: {}, creating new pipeline", key.shaderId);
+	FISHY_LOG_TRACE("Pipeline cache miss for shaderId: {}, creating new pipeline", key.shaderId);
 
 	// Build pipeline with our Vulkan cache for driver-level binary caching
 	// Throws on failure (exception propagates to caller)
@@ -37,7 +37,7 @@ GraphicsPipeline* PipelineManager::getOrCreate(const PipelineKey& key, PipelineB
 void PipelineManager::loadCache() {
 	std::ifstream file(CACHE_FILENAME, std::ios::binary | std::ios::ate);
 	if (!file.is_open()) {
-		LogSystem::get().info("No pipeline cache file found, creating new cache");
+		FISHY_LOG_INFO("No pipeline cache file found, creating new cache");
 		_vulkanCache = vk::raii::PipelineCache(*_device, vk::PipelineCacheCreateInfo{});
 		return;
 	}
@@ -53,9 +53,9 @@ void PipelineManager::loadCache() {
 
 	try {
 		_vulkanCache = vk::raii::PipelineCache(*_device, createInfo);
-		LogSystem::get().info("Loaded pipeline cache from disk ({} bytes)", fileSize);
+		FISHY_LOG_INFO("Loaded pipeline cache from disk ({} bytes)", fileSize);
 	} catch (const std::exception& e) {
-		LogSystem::get().warn("Failed to load pipeline cache, creating new: {}", e.what());
+		FISHY_LOG_WARN("Failed to load pipeline cache, creating new: {}", e.what());
 		_vulkanCache = vk::raii::PipelineCache(*_device, vk::PipelineCacheCreateInfo{});
 	}
 }
@@ -67,25 +67,25 @@ void PipelineManager::saveCache() {
 
 	auto cacheData = _vulkanCache.getData();
 	if (cacheData.empty()) {
-		LogSystem::get().trace("Pipeline cache is empty, nothing to save");
+		FISHY_LOG_TRACE("Pipeline cache is empty, nothing to save");
 		return;
 	}
 
 	std::ofstream file(CACHE_FILENAME, std::ios::binary);
 	if (!file.is_open()) {
-		LogSystem::get().error("Failed to open pipeline cache file for writing");
+		FISHY_LOG_ERROR("Failed to open pipeline cache file for writing");
 		return;
 	}
 
 	file.write(reinterpret_cast<const char*>(cacheData.data()), cacheData.size());
 	file.close();
 
-	LogSystem::get().info("Saved pipeline cache to disk ({} bytes)", cacheData.size());
+	FISHY_LOG_INFO("Saved pipeline cache to disk ({} bytes)", cacheData.size());
 }
 
 void PipelineManager::clear() {
 	_pipelines.clear();
-	LogSystem::get().info("Cleared all cached pipelines");
+	FISHY_LOG_TRACE("Cleared all cached pipelines");
 }
 
 } // namespace Fishy

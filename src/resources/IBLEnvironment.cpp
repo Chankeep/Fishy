@@ -12,13 +12,13 @@ std::unique_ptr<IBLEnvironment> IBLEnvironment::load(const VulkanDevice& device,
 	std::string prefilteredPath = directory + "/specular.ktx2";
 	std::string brdfCachePath = directory + "/brdf_lut.bin";
 
-	LogSystem::get().info("Loading IBL environment from: {}", directory);
+	FISHY_LOG_TRACE("Loading IBL environment from: {}", directory);
 
 	// Load irradiance map
 	if (std::filesystem::exists(irradiancePath)) {
 		env->irradianceMap = std::make_unique<CubemapTexture>(device, irradiancePath);
 	} else {
-		LogSystem::get().error("Irradiance map not found: {}", irradiancePath);
+		FISHY_LOG_ERROR("Irradiance map not found: {}", irradiancePath);
 		throw std::runtime_error("Missing irradiance map: " + irradiancePath);
 	}
 
@@ -27,14 +27,14 @@ std::unique_ptr<IBLEnvironment> IBLEnvironment::load(const VulkanDevice& device,
 		env->prefilteredMap = std::make_unique<CubemapTexture>(device, prefilteredPath);
 		env->prefilteredMipLevels = env->prefilteredMap->getMipLevels();
 	} else {
-		LogSystem::get().error("Pre-filtered map not found: {}", prefilteredPath);
+		FISHY_LOG_ERROR("Pre-filtered map not found: {}", prefilteredPath);
 		throw std::runtime_error("Missing pre-filtered map: " + prefilteredPath);
 	}
 
 	// Load or generate BRDF LUT
 	env->brdfLUT = loadOrGenerateBRDFLUT(device, brdfCachePath);
 
-	LogSystem::get().info("IBL environment loaded successfully ({} specular mip levels)", env->prefilteredMipLevels);
+	FISHY_LOG_INFO("IBL environment loaded successfully ({} specular mip levels)", env->prefilteredMipLevels);
 
 	return env;
 }
@@ -47,7 +47,7 @@ std::unique_ptr<Texture> IBLEnvironment::loadOrGenerateBRDFLUT(const VulkanDevic
 
 	if (hasCachedBRDFLUT(cachePath)) {
 		// Load from cache
-		LogSystem::get().info("Loading cached BRDF LUT from: {}", cachePath);
+		FISHY_LOG_TRACE("Loading cached BRDF LUT from: {}", cachePath);
 
 		std::ifstream file(cachePath, std::ios::binary | std::ios::ate);
 		if (!file.is_open()) {
@@ -64,16 +64,16 @@ std::unique_ptr<Texture> IBLEnvironment::loadOrGenerateBRDFLUT(const VulkanDevic
 
 		// Validate that the file represents a valid square texture
 		if (lutSize * lutSize * BYTES_PER_PIXEL != fileSize || lutSize <= 0) {
-			LogSystem::get().warn("BRDF LUT cache has invalid size ({} bytes). Regenerating...", fileSize);
+			FISHY_LOG_WARN("BRDF LUT cache has invalid size ({} bytes). Regenerating...", fileSize);
 		} else {
-			LogSystem::get().trace("BRDF LUT cache: {} bytes -> {}x{} texture", fileSize, lutSize, lutSize);
+			FISHY_LOG_TRACE("BRDF LUT cache: {} bytes -> {}x{} texture", fileSize, lutSize, lutSize);
 
 			std::vector<uint8_t> data(fileSize);
 			file.seekg(0);
 			file.read(reinterpret_cast<char*>(data.data()), fileSize);
 
 			if (!file) {
-				LogSystem::get().warn("Failed to read all bytes from BRDF LUT cache. Regenerating...");
+				FISHY_LOG_WARN("Failed to read all bytes from BRDF LUT cache. Regenerating...");
 			} else {
 				// Create texture from raw data (RG16F format = 4 bytes per pixel)
 				return std::make_unique<Texture>(device, data.data(), lutSize, lutSize, vk::Format::eR16G16Sfloat);
@@ -83,7 +83,7 @@ std::unique_ptr<Texture> IBLEnvironment::loadOrGenerateBRDFLUT(const VulkanDevic
 
 	// Generate BRDF LUT (CPU fallback - compute shader would be faster)
 	constexpr int LUT_SIZE = 512;
-	LogSystem::get().info("Generating BRDF LUT ({}x{})...", LUT_SIZE, LUT_SIZE);
+	FISHY_LOG_INFO("Generating BRDF LUT ({}x{})...", LUT_SIZE, LUT_SIZE);
 
 	std::vector<uint16_t> lutData(LUT_SIZE * LUT_SIZE * 2); // RG16
 
@@ -179,7 +179,7 @@ std::unique_ptr<Texture> IBLEnvironment::loadOrGenerateBRDFLUT(const VulkanDevic
 	std::ofstream file(cachePath, std::ios::binary);
 	if (file.is_open()) {
 		file.write(reinterpret_cast<const char*>(lutData.data()), lutData.size() * sizeof(uint16_t));
-		LogSystem::get().info("Saved BRDF LUT cache to: {}", cachePath);
+		FISHY_LOG_TRACE("Saved BRDF LUT cache to: {}", cachePath);
 	}
 
 	// Create texture from generated data

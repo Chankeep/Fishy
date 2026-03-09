@@ -28,24 +28,24 @@ VulkanDevice::~VulkanDevice() {
 }
 
 vkb::PhysicalDevice VulkanDevice::selectPhysicalDevice() {
-	LogSystem::get().info("Selecting physical device...");
+	FISHY_LOG_TRACE("Selecting physical device...");
 
 	vkb::Instance vkb_inst;
 	vkb_inst.instance = *_instance;
 	vkb::PhysicalDeviceSelector selector{vkb_inst};
-	auto phys_ret = selector.set_surface(*_surface).set_minimum_version(1, 3).select();
+	auto phys_ret = selector.set_surface(*_surface).set_minimum_version(1, 3).add_required_extension(VK_KHR_SWAPCHAIN_MUTABLE_FORMAT_EXTENSION_NAME).select();
 
 	if (!phys_ret) {
-		LogSystem::get().error("Failed to select physical device: {}", phys_ret.error().message());
+		FISHY_LOG_ERROR("Failed to select physical device: {}", phys_ret.error().message());
 		throw std::runtime_error("Failed to select physical device: " + phys_ret.error().message());
 	}
 
 	vkb::PhysicalDevice vkb_phys = phys_ret.value();
 
 	// Log selected device info
-	LogSystem::get().info("Selected physical device: {}", vkb_phys.properties.deviceName);
-	LogSystem::get().info("  Driver Version: {}", vkb_phys.properties.driverVersion);
-	LogSystem::get().info("  API Version: {}.{}.{}", VK_VERSION_MAJOR(vkb_phys.properties.apiVersion),
+	FISHY_LOG_INFO("Selected physical device: {}", vkb_phys.properties.deviceName);
+	FISHY_LOG_TRACE("  Driver Version: {}", vkb_phys.properties.driverVersion);
+	FISHY_LOG_TRACE("  API Version: {}.{}.{}", VK_VERSION_MAJOR(vkb_phys.properties.apiVersion),
 						  VK_VERSION_MINOR(vkb_phys.properties.apiVersion),
 						  VK_VERSION_PATCH(vkb_phys.properties.apiVersion));
 
@@ -86,11 +86,11 @@ void VulkanDevice::createLogicalDevice(const vkb::PhysicalDevice& physicalDevice
 	vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT featuresExt;
 	featuresExt.extendedDynamicState = true;
 
-	LogSystem::get().info("[Bindless] Runtime streaming features enabled:");
-	LogSystem::get().info("  - Sampled image array + update after bind");
-	LogSystem::get().info("  - Storage buffer array + update after bind");
-	LogSystem::get().info("  - Runtime descriptor array, partially bound, variable count");
-	LogSystem::get().info("  - Buffer device address");
+	FISHY_LOG_INFO("[Bindless] Runtime streaming features enabled:");
+	FISHY_LOG_INFO("  - Sampled image array + update after bind");
+	FISHY_LOG_INFO("  - Storage buffer array + update after bind");
+	FISHY_LOG_INFO("  - Runtime descriptor array, partially bound, variable count");
+	FISHY_LOG_INFO("  - Buffer device address");
 
 	// Build logical device
 	vkb::DeviceBuilder device_builder{physicalDevice};
@@ -102,12 +102,12 @@ void VulkanDevice::createLogicalDevice(const vkb::PhysicalDevice& physicalDevice
 
 	auto dev_ret = device_builder.build();
 	if (!dev_ret) {
-		LogSystem::get().error("Failed to build device: {}", dev_ret.error().message());
+		FISHY_LOG_ERROR("Failed to build device: {}", dev_ret.error().message());
 		throw std::runtime_error("Failed to build device: " + dev_ret.error().message());
 	}
 
 	_vkbDevice = dev_ret.value();
-	LogSystem::get().info("Logical device created successfully");
+	FISHY_LOG_INFO("Logical device created successfully");
 
 	// Initialize volk for this device
 	volkLoadDevice(_vkbDevice.device);
@@ -124,7 +124,7 @@ void VulkanDevice::initQueues() {
 	auto present_queue_idx_ret = _vkbDevice.get_queue_index(vkb::QueueType::present);
 
 	if (!graphics_queue_idx_ret || !present_queue_idx_ret) {
-		LogSystem::get().error("Failed to get queues after device creation");
+		FISHY_LOG_ERROR("Failed to get queues after device creation");
 		throw std::runtime_error("Failed to get queues after device creation");
 	}
 
@@ -133,8 +133,8 @@ void VulkanDevice::initQueues() {
 	_graphicsQueue = vk::raii::Queue(_device, _graphicsQueueFamily, 0);
 	_presentQueue = vk::raii::Queue(_device, present_queue_idx_ret.value(), 0);
 
-	LogSystem::get().info("Graphics queue family: {}", _graphicsQueueFamily);
-	LogSystem::get().info("Present queue family: {}", present_queue_idx_ret.value());
+	FISHY_LOG_TRACE("Graphics queue family: {}", _graphicsQueueFamily);
+	FISHY_LOG_TRACE("Present queue family: {}", present_queue_idx_ret.value());
 }
 
 void VulkanDevice::initVmaAllocator() {
@@ -154,10 +154,10 @@ void VulkanDevice::initVmaAllocator() {
 	auto vma_res = vmaCreateAllocator(&allocatorInfo, &_vmaAllocator);
 
 	if (vma_res != VK_SUCCESS) {
-		LogSystem::get().error("Failed to create VMA allocator!");
+		FISHY_LOG_ERROR("Failed to create VMA allocator!");
 		throw std::runtime_error("Failed to create VMA allocator");
 	}
-	LogSystem::get().info("VMA allocator created successfully");
+	FISHY_LOG_TRACE("VMA allocator created successfully");
 }
 
 uint32_t VulkanDevice::findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties) const {

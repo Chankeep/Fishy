@@ -44,11 +44,11 @@ void Texture::createTextureImage(const std::string& path) {
 	stbi_uc* pixels = stbi_load(path.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
 
 	if (!pixels) {
-		LogSystem::get().error("Failed to load texture image: {}", path);
+		FISHY_LOG_ERROR("Failed to load texture image: {}", path);
 		throw std::runtime_error("failed to load texture image: " + path);
 	}
 
-	LogSystem::get().trace("Loaded texture from file: {} ({}x{} {} channels)", path, texWidth, texHeight, texChannels);
+	FISHY_LOG_TRACE("Loaded texture from file: {} ({}x{} {} channels)", path, texWidth, texHeight, texChannels);
 	createTextureFromPixels(pixels, texWidth, texHeight);
 	stbi_image_free(pixels);
 }
@@ -60,11 +60,11 @@ void Texture::createTextureImageFromMemory(std::span<const std::byte> data) {
 							 static_cast<int>(data.size()), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
 
 	if (!pixels) {
-		LogSystem::get().error("Failed to load texture from memory ({} bytes)", data.size());
+		FISHY_LOG_ERROR("Failed to load texture from memory ({} bytes)", data.size());
 		throw std::runtime_error("failed to load texture from memory");
 	}
 
-	LogSystem::get().trace("Loaded texture from memory: {}x{} {} channels ({} bytes)", texWidth, texHeight, texChannels,
+	FISHY_LOG_TRACE("Loaded texture from memory: {}x{} {} channels ({} bytes)", texWidth, texHeight, texChannels,
 						   data.size());
 	createTextureFromPixels(pixels, texWidth, texHeight);
 	stbi_image_free(pixels);
@@ -81,7 +81,7 @@ static size_t getBytesPerPixel(vk::Format format) {
 	case vk::Format::eR16G16B16A16Sfloat:
 		return 8; // 2 bytes × 4 channels
 	default:
-		LogSystem::get().warn("Unknown format in getBytesPerPixel, assuming 4 bytes per pixel");
+		FISHY_LOG_WARN("Unknown format in getBytesPerPixel, assuming 4 bytes per pixel");
 		return 4;
 	}
 }
@@ -111,7 +111,7 @@ void Texture::createTextureFromPixels(const unsigned char* pixels, int texWidth,
 
 	_image = std::make_unique<VulkanImage>(_device.getVmaAllocator(), imageInfo, allocInfo);
 
-	LogSystem::get().trace("VMA created texture image handle: {}",
+	FISHY_LOG_TRACE("VMA created texture image handle: {}",
 						   reinterpret_cast<uintptr_t>(static_cast<VkImage>(_image->getImage())));
 
 #ifndef NDEBUG

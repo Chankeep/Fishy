@@ -25,24 +25,24 @@ Application::Application()
 	  _device(_context.getInstance(), _window.getSurface()), _resourceManager(_device),
 	  _renderer(_device, _window, _resourceManager) {
 
-	LogSystem::get().info("Initializing Application...");
-	LogSystem::get().info("Window created: {}x{}", _window.getWidth(), _window.getHeight());
+	FISHY_LOG_TRACE("Initializing Application...");
+	FISHY_LOG_TRACE("Window created: {}x{}", _window.getWidth(), _window.getHeight());
 
 	// Initialize ImGui Layer
 	_imguiLayer = std::make_unique<ImGuiLayer>(_context, _device, _window, _renderer.getSwapChainFormat());
-	LogSystem::get().info("ImGui Layer initialized");
+	FISHY_LOG_TRACE("ImGui Layer initialized");
 
 	// Initialize Scene
 	_scene = std::make_unique<Scene>();
-	LogSystem::get().info("ECS Scene initialized");
+	FISHY_LOG_TRACE("ECS Scene initialized");
 
 	// Try to load a default model into the scene
 	auto modelPath = "assets/models/DamagedHelmet.glb";
 	auto planePath = "assets/models/ABeautifulGame.glb";
-	LogSystem::get().info("Loading default model: {}", modelPath);
+	FISHY_LOG_INFO("Loading default model: {}", modelPath);
 	auto result = ModelLoader::loadModelIntoScene(planePath, *_scene, _resourceManager);
 	if (!result) {
-		LogSystem::get().warn("Failed to load model: {}. Using fallback geometry.", result.error().message());
+		FISHY_LOG_WARN("Failed to load model: {}. Using fallback geometry.", result.error().message());
 		createDefaultScene();
 	} else {
 		// Create a single root entity for the entire model
@@ -98,7 +98,7 @@ Application::Application()
 	camTransform.position = glm::vec3(0.0f, 0.0f, 5.0f);
 	camTransform.dirty = true;
 
-	LogSystem::get().info("Camera entity created");
+	FISHY_LOG_TRACE("Camera entity created");
 
 	// Create a directional light entity
 	Entity lightEntity = _scene->createEntity("DirectionalLight");
@@ -110,31 +110,31 @@ Application::Application()
 	// Set light direction via transform rotation
 	auto& lightTransform = lightEntity.getComponent<TransformComponent>();
 	lightTransform.setRotationEuler(glm::vec3(glm::radians(-45.0f), glm::radians(45.0f), 0.0f));
-	LogSystem::get().info("Light entity created");
+	FISHY_LOG_TRACE("Light entity created");
 
 	// Load IBL environment
 	try {
 		_iblEnvironment = IBLEnvironment::load(_device, "assets/environments/ennis");
 		_renderer.setIBLEnvironment(_iblEnvironment.get());
 	} catch (const std::exception& e) {
-		LogSystem::get().warn("Failed to load IBL environment: {}", e.what());
+		FISHY_LOG_WARN("Failed to load IBL environment: {}", e.what());
 	}
 
-	LogSystem::get().info("Application initialization complete");
+	FISHY_LOG_INFO("Application initialization complete");
 }
 
 Application::~Application() {
-	LogSystem::get().info("Shutting down Application...");
+	FISHY_LOG_TRACE("Shutting down Application...");
 	// Wait for GPU before destroying resources
 	_device->waitIdle();
 	_imguiLayer.reset();
 	_scene.reset();
-	LogSystem::get().info("Application shutdown complete");
+	FISHY_LOG_TRACE("Application shutdown complete");
 }
 
 // Main application loop
 void Application::run() {
-	LogSystem::get().info("Starting main render loop");
+	FISHY_LOG_INFO("Starting main render loop");
 	DebugPanel debugPanel;
 
 	// Frame timing
@@ -195,7 +195,7 @@ void Application::run() {
 							 [this](VkCommandBuffer cmd) { _imguiLayer->render(cmd); });
 	}
 
-	LogSystem::get().info("Main render loop ended");
+	FISHY_LOG_TRACE("Main render loop ended");
 	_device->waitIdle();
 }
 

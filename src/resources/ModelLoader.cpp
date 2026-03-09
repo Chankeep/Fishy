@@ -55,14 +55,14 @@ static std::string joinStrings(const std::vector<std::string>& strings, const st
 // Log glTF model extensions for debugging
 static void logGltfExtensions(const fastgltf::Asset& gltfModel) {
 	if (!gltfModel.extensionsUsed.empty()) {
-		LogSystem::get().info("glTF extensions used:");
+		FISHY_LOG_INFO("glTF extensions used:");
 		for (const auto& ext : gltfModel.extensionsUsed) {
-			LogSystem::get().info("  - {}", ext);
+			FISHY_LOG_INFO("  - {}", ext);
 		}
 	}
 
 	if (!gltfModel.extensionsRequired.empty()) {
-		LogSystem::get().info("glTF extensions required:");
+		FISHY_LOG_INFO("glTF extensions required:");
 		for (const auto& ext : gltfModel.extensionsRequired) {
 			std::string extInfo = "  - " + std::string(ext);
 			if (ext == fastgltf::extensions::KHR_materials_clearcoat ||
@@ -82,7 +82,7 @@ static void logGltfExtensions(const fastgltf::Asset& gltfModel) {
 			} else {
 				extInfo += " (UNKNOWN)";
 			}
-			LogSystem::get().info("{}", extInfo);
+			FISHY_LOG_INFO("{}", extInfo);
 		}
 	}
 }
@@ -135,7 +135,7 @@ static void computeTangents(std::vector<Vertex>& vertices, const std::vector<uin
 		vertices[i].tangent = glm::vec4(tangent, w);
 	}
 
-	LogSystem::get().trace("Computed {} vertex tangents", vertices.size());
+	FISHY_LOG_TRACE("Computed {} vertex tangents", vertices.size());
 }
 
 // Generate unique cache ID for textures
@@ -346,9 +346,9 @@ entt::resource<Material> ModelLoader::loadGltfMaterial(const LoadContext& ctx, s
 
 	// Log loaded textures
 	if (!loadedTextureNames.empty()) {
-		LogSystem::get().info("Material textures loaded: [{}]", joinStrings(loadedTextureNames));
+		FISHY_LOG_INFO("Material textures loaded: [{}]", joinStrings(loadedTextureNames));
 	} else {
-		LogSystem::get().info("Material textures: none");
+		FISHY_LOG_TRACE("Material textures: none");
 	}
 
 	// Pre-compute bindless texture indices for this material
@@ -432,6 +432,11 @@ void ModelLoader::processGltfNode(LoadContext& ctx, size_t nodeIndex, Entity par
 				fastgltf::iterateAccessorWithIndex<glm::vec2>(
 					ctx.gltfModel, ctx.gltfModel.accessors[it->accessorIndex],
 					[&](glm::vec2 uv, size_t idx) { vertices[idx].texCoord = uv; });
+			// Log all found attributes
+			{
+				bool hasTangent = attributeBuffers.contains("TANGENT");
+				FISHY_LOG_TRACE("Mesh attributes: [{}]{}", joinStrings(attributeNames),
+									  hasTangent ? "" : " (TANGENT will be computed)");
 			}
 
 			// TANGENT
@@ -504,7 +509,7 @@ Result<std::vector<Entity>> ModelLoader::loadModelIntoScene(const std::string& f
 															ResourceManager& resourceManager) {
 	// Log if model was already loaded (entities will be created again, but resources are cached)
 	if (resourceManager.isModelLoaded(filepath)) {
-		LogSystem::get().info("Creating additional instance of model: {}", filepath);
+		FISHY_LOG_INFO("Creating additional instance of model: {}", filepath);
 	}
 
 	fastgltf::Parser parser(
@@ -543,7 +548,8 @@ Result<std::vector<Entity>> ModelLoader::loadModelIntoScene(const std::string& f
 
 	// Mark model as loaded to avoid redundant parsing
 	resourceManager.markModelLoaded(filepath);
-	LogSystem::get().info("Loaded model into scene from: {}", filepath);
+
+	FISHY_LOG_INFO("Loaded model into scene from: {}", filepath);
 	return ctx.createdEntities;
 }
 
