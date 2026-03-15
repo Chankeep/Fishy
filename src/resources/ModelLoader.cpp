@@ -1,16 +1,17 @@
 #include "ModelLoader.h"
-#include "../ecs/Entity.h"
-#include "../ecs/components/MeshComponent.h"
-#include "../ecs/components/MeshRendererComponent.h"
-#include "../scene/Scene.h"
 #include "ResourceManager.h"
 #include "core/Result.h"
+#include "ecs/Entity.h"
+#include "ecs/components/HierarchyComponent.h"
+#include "ecs/components/MeshComponent.h"
+#include "ecs/components/MeshRendererComponent.h"
 #include "ecs/components/TagComponent.h"
 #include "ecs/components/TransformComponent.h"
 #include "entt/core/fwd.hpp"
 #include "entt/resource/resource.hpp"
 #include "fastgltf/math.hpp"
 #include "fastgltf/util.hpp"
+#include "scene/Scene.h"
 
 #include <expected>
 #include <filesystem>
@@ -23,7 +24,6 @@
 #include <fastgltf/tools.hpp>
 #include <fastgltf/types.hpp>
 #include <fastgltf/util.hpp>
-
 
 namespace Fishy {
 
@@ -381,11 +381,12 @@ void ModelLoader::processGltfNode(LoadContext& ctx, size_t nodeIndex, Entity par
 			ctx.createdEntities.push_back(entity);
 
 			auto& transform = entity.getComponent<TransformComponent>();
+			auto& hierarchy = entity.addComponent<HierarchyComponent>();
 			applyNodeTransform(node, transform);
 
 			// Set parent reference for hierarchy
 			if (parentEntity.isValid()) {
-				transform.parent = parentEntity.getHandle();
+				hierarchy.parent = parentEntity.getHandle();
 			}
 
 			const auto& primitive = gltfMesh.primitives[primitiveIdx];
@@ -486,10 +487,11 @@ void ModelLoader::processGltfNode(LoadContext& ctx, size_t nodeIndex, Entity par
 		ctx.createdEntities.push_back(entity);
 
 		auto& transform = entity.getComponent<TransformComponent>();
+		auto& hierarchy = entity.addComponent<HierarchyComponent>();
 		applyNodeTransform(node, transform);
 
 		if (parentEntity.isValid()) {
-			transform.parent = parentEntity.getHandle();
+			hierarchy.parent = parentEntity.getHandle();
 		}
 
 		currentNodeEntity = entity;

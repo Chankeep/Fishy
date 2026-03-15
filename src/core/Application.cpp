@@ -6,6 +6,8 @@
 #include "../ecs/components/MeshComponent.h"
 #include "../ecs/components/MeshRendererComponent.h"
 #include "../ecs/components/TransformComponent.h"
+#include "../ecs/components/HierarchyComponent.h"
+#include "../ecs/utils/TransformUtils.h"
 #include "../ui/DebugPanel.h"
 #include <imgui.h>
 
@@ -52,11 +54,14 @@ Application::Application()
 
 		// Reparent all loaded ROOT entities to the model root
 		for (auto& entity : result.value()) {
-			auto& transform = entity.getComponent<TransformComponent>();
-			if (transform.isRoot()) {
+			bool isRoot = true;
+			if (entity.hasComponent<HierarchyComponent>()) {
+				isRoot = (entity.getComponent<HierarchyComponent>().parent == entt::null);
+			}
+
+			if (isRoot) {
 				// Set parent without adjusting local transform (we want them relative to new root)
-				transform.parent = modelRoot.getHandle();
-				transform.dirty = true;
+				TransformUtils::setParent(_scene->getRegistry(), entity.getHandle(), modelRoot.getHandle(), false);
 			}
 		}
 	}
@@ -74,10 +79,13 @@ Application::Application()
 
 		// Reparent all loaded ROOT entities to the helmet root
 		for (auto& entity : result2.value()) {
-			auto& transform = entity.getComponent<TransformComponent>();
-			if (transform.isRoot()) {
-				transform.parent = helmetRoot.getHandle();
-				transform.dirty = true;
+			bool isRoot = true;
+			if (entity.hasComponent<HierarchyComponent>()) {
+				isRoot = (entity.getComponent<HierarchyComponent>().parent == entt::null);
+			}
+
+			if (isRoot) {
+				TransformUtils::setParent(_scene->getRegistry(), entity.getHandle(), helmetRoot.getHandle(), false);
 			}
 		}
 
