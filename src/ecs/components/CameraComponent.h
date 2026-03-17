@@ -5,6 +5,11 @@
 
 namespace Fishy {
 
+enum class RenderTargetType {
+	Screen,
+	Texture
+};
+
 /**
  * @brief Component for camera properties including orbit control.
  *
@@ -24,27 +29,49 @@ struct CameraComponent {
 
 	// Is this the primary/active camera?
 	bool primary = true;
-
-	// Orbit camera state
-	glm::vec3 target{0.0f}; // Orbit center point
-	float distance = 3.0f;	// Distance from target
-	float yaw = 0.0f;		// Horizontal rotation angle (degrees)
-	float pitch = 0.0f;		// Vertical rotation angle (degrees)
-
-	// Orbit control settings
-	float rotateSpeed = 0.5f;
-	float zoomSpeed = 0.1f;
-	float panSpeed = 0.003f;
-	float minDistance = 0.5f;
-	float maxDistance = 50.0f;
-	float minPitch = -89.0f;
-	float maxPitch = 89.0f;
+	RenderTargetType renderTarget = RenderTargetType::Screen;
 
 	// Cached matrices (updated by CameraSystem)
 	glm::mat4 projectionMatrix{1.0f};
 	glm::mat4 viewMatrix{1.0f};
+	glm::mat4 cachedTransformMatrix{0.0f};
+
+	bool isProjectionDirty = true;
+	bool isViewDirty = true;
 
 	CameraComponent() = default;
+
+	void setFov(float newFov) {
+		fov = newFov;
+		isProjectionDirty = true;
+	}
+
+	void setNearClip(float newNear) {
+		nearClip = newNear;
+		isProjectionDirty = true;
+	}
+
+	void setFarClip(float newFar) {
+		farClip = newFar;
+		isProjectionDirty = true;
+	}
+
+	void setAspectRatio(float newRatio) {
+		if (std::abs(aspectRatio - newRatio) > 1e-5f) {
+			aspectRatio = newRatio;
+			isProjectionDirty = true;
+		}
+	}
+
+	void setOrthographic(bool isOrtho, float size = 10.0f) {
+		orthographic = isOrtho;
+		orthoSize = size;
+		isProjectionDirty = true;
+	}
+
+	void markViewDirty() {
+		isViewDirty = true;
+	}
 
 	/**
 	 * @brief Compute the projection matrix based on current settings.
@@ -55,21 +82,6 @@ struct CameraComponent {
 			return glm::ortho(-halfWidth, halfWidth, -orthoSize, orthoSize, nearClip, farClip);
 		}
 		return glm::perspective(glm::radians(fov), aspectRatio, nearClip, farClip);
-	}
-
-	/**
-	 * @brief Compute camera position from orbit parameters.
-	 */
-	[[nodiscard]] glm::vec3 getOrbitPosition() const {
-		float yawRad = glm::radians(yaw);
-		float pitchRad = glm::radians(pitch);
-
-		glm::vec3 offset;
-		offset.x = distance * cos(pitchRad) * sin(yawRad);
-		offset.y = distance * sin(pitchRad);
-		offset.z = distance * cos(pitchRad) * cos(yawRad);
-
-		return target + offset;
 	}
 };
 

@@ -4,6 +4,7 @@
 #include "../ecs/systems/LightingSystem.h"
 #include "../ecs/systems/RenderSystem.h"
 #include "../ecs/systems/TransformSystem.h"
+#include "../ecs/systems/OrbitControllerSystem.h"
 #include "../rendering/Renderer.h"
 #include "../resources/IBLEnvironment.h"
 #include "../resources/ModelLoader.h"
@@ -55,6 +56,7 @@ private:
 	// ECS
 	std::unique_ptr<Scene> _scene;
 	TransformSystem _transformSystem;
+	OrbitControllerSystem _orbitControllerSystem;
 	CameraSystem _cameraSystem;
 	LightingSystem _lightingSystem;
 	RenderSystem _renderSystem;

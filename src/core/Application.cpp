@@ -4,6 +4,7 @@
 #include "../ecs/components/CameraComponent.h"
 #include "../ecs/components/LightComponent.h"
 #include "../ecs/components/MeshComponent.h"
+#include "../ecs/components/OrbitControllerComponent.h"
 #include "../ecs/components/MeshRendererComponent.h"
 #include "../ecs/components/TransformComponent.h"
 #include "../ecs/components/HierarchyComponent.h"
@@ -101,6 +102,10 @@ Application::Application()
 	cam.nearClip = 0.1f;
 	cam.farClip = 30.0f;
 
+	auto& orbit = cameraEntity.addComponent<OrbitControllerComponent>();
+	orbit.target = glm::vec3(0.0f);
+	orbit.distance = 5.0f;
+
 	// Position camera back so we can see the scene
 	auto& camTransform = cameraEntity.getComponent<TransformComponent>();
 	camTransform.position = glm::vec3(0.0f, 0.0f, 5.0f);
@@ -160,7 +165,7 @@ void Application::run() {
 		ImGuiIO& io = ImGui::GetIO();
 		if (!io.WantCaptureMouse) {
 			const auto& mouseState = _window.getMouseState();
-			_cameraSystem.processInput(
+			_orbitControllerSystem.processInput(
 				*_scene, static_cast<float>(mouseState.deltaX), static_cast<float>(mouseState.deltaY),
 				static_cast<float>(mouseState.scrollDelta), mouseState.rightButton, mouseState.middleButton);
 		}
@@ -169,15 +174,23 @@ void Application::run() {
 		_window.resetMouseDelta();
 
 		// Update ECS Systems
+		_orbitControllerSystem.update(*_scene);
 		_transformSystem.update(*_scene);
 		_cameraSystem.update(*_scene, _renderer.getAspectRatio());
 		_lightingSystem.update(*_scene);
 
 		// Build RenderParams from system data
 		RenderParams renderParams;
-		renderParams.viewMatrix = _cameraSystem.getPrimaryViewMatrix();
-		renderParams.projectionMatrix = _cameraSystem.getPrimaryProjectionMatrix();
-		renderParams.cameraPosition = _cameraSystem.getPrimaryCameraPosition();
+		if (auto camData = _cameraSystem.getPrimaryCameraData(*_scene)) {
+			const auto& [viewMat, projMat, camPos] = *camData;
+			renderParams.viewMatrix = viewMat;
+			renderParams.projectionMatrix = projMat;
+			renderParams.cameraPosition = camPos;
+		} else {
+			renderParams.viewMatrix = glm::mat4(1.0f);
+			renderParams.projectionMatrix = glm::mat4(1.0f);
+			renderParams.cameraPosition = glm::vec3(0.0f);
+		}
 
 		// Use first light from LightingSystem if available
 		const auto& lights = _lightingSystem.getLightData();
