@@ -1,14 +1,13 @@
 #pragma once
 
+#include <array>
+
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
 namespace Fishy {
 
-enum class RenderTargetType {
-	Screen,
-	Texture
-};
+enum class RenderTargetType { Screen, Texture };
 
 /**
  * @brief Component for camera properties including orbit control.
@@ -38,6 +37,9 @@ struct CameraComponent {
 
 	bool isProjectionDirty = true;
 	bool isViewDirty = true;
+
+	std::array<glm::vec4, 6> frustumPlanes;
+	bool isFrustumDirty = true;
 
 	CameraComponent() = default;
 
@@ -69,9 +71,7 @@ struct CameraComponent {
 		isProjectionDirty = true;
 	}
 
-	void markViewDirty() {
-		isViewDirty = true;
-	}
+	void markViewDirty() { isViewDirty = true; }
 
 	/**
 	 * @brief Compute the projection matrix based on current settings.

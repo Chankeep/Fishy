@@ -1,4 +1,5 @@
 #include "CameraSystem.h"
+#include "math/Frustum.h"
 
 #include "../../scene/Scene.h"
 #include "../components/CameraComponent.h"
@@ -21,6 +22,7 @@ void CameraSystem::update(Scene& scene, float aspectRatio) {
 			camera.projectionMatrix = camera.getProjectionMatrix();
 			camera.projectionMatrix[1][1] *= -1; // Vulkan Y-axis is inverted
 			camera.isProjectionDirty = false;
+			camera.isFrustumDirty = true;
 		}
 
 		// 2. Check & Update View Matrix
@@ -35,11 +37,19 @@ void CameraSystem::update(Scene& scene, float aspectRatio) {
 			// It respects hierarchy rotations, translations.
 			camera.viewMatrix = glm::inverse(currentWorldMat);
 			camera.isViewDirty = false;
+			camera.isFrustumDirty = true;
+		}
+
+		if (camera.isFrustumDirty) {
+			glm::mat4 vp = camera.getProjectionMatrix() * camera.viewMatrix;
+			Math::extractFrustumPlanes(vp, camera.frustumPlanes, true, true);
+			camera.isFrustumDirty = false;
 		}
 	}
 }
 
-std::optional<std::tuple<glm::mat4, glm::mat4, glm::vec3>> CameraSystem::getPrimaryCameraData(Scene& scene) const {
+std::optional<std::tuple<glm::mat4, glm::mat4, glm::vec3>>
+CameraSystem::getPrimaryCameraData(Scene& scene) const {
 	auto view = scene.view<CameraComponent, TransformComponent>();
 
 	for (auto entity : view) {
