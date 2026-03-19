@@ -1077,7 +1077,7 @@ void Renderer::buildUnifiedBuffersFromScene(Scene& scene) {
 
 	auto view = scene.view<MeshComponent, MeshRendererComponent, TransformComponent>();
 	for (auto entity : view) {
-		const auto& mesh = view.get<MeshComponent>(entity);
+		auto& mesh = view.get<MeshComponent>(entity);
 		const auto& meshRenderer = view.get<MeshRendererComponent>(entity);
 
 		if (!mesh.mesh || !meshRenderer.visible) {
@@ -1093,6 +1093,7 @@ void Renderer::buildUnifiedBuffersFromScene(Scene& scene) {
 			.indexCount = static_cast<uint32_t>(indices.size()),
 			.vertexOffset = static_cast<int32_t>(allVertices.size()),
 		};
+		mesh.meshRegionIndex = static_cast<uint32_t>(_meshRegions.size());		
 		_meshRegions.push_back(region);
 
 		allVertices.insert(allVertices.end(), vertices.begin(), vertices.end());
@@ -1145,15 +1146,14 @@ void Renderer::buildUnifiedBuffersFromScene(Scene& scene) {
 void Renderer::buildInstanceData(Scene& scene) {
 	_instanceData.clear();
 
-	auto view = scene.view<MeshComponent, MeshRendererComponent, TransformComponent>();
-	for (auto entity : view) {
-		const auto& mesh = view.get<MeshComponent>(entity);
-		const auto& meshRenderer = view.get<MeshRendererComponent>(entity);
-		auto& transform = view.get<TransformComponent>(entity);
+	if (!_currentRenderParams || !_currentRenderParams->visibleEntities) {
+		return;
+	}
 
-		if (!mesh.mesh || !meshRenderer.visible) {
-			continue;
-		}
+	auto& registry = scene.getRegistry();
+	for (auto entity : *_currentRenderParams->visibleEntities) {
+		const auto& meshRenderer = registry.get<MeshRendererComponent>(entity);
+		const auto& transform = registry.get<TransformComponent>(entity);
 
 		// Build instance data from transform
 		InstanceData inst{};
@@ -1217,7 +1217,7 @@ void Renderer::buildDrawBatches(Scene& scene) {
 	_drawBatches.clear();
 	_indirectCommands.clear();
 
-	if (_meshRegions.empty()) {
+	if (_meshRegions.empty() || !_currentRenderParams || !_currentRenderParams->visibleEntities) {
 		return;
 	}
 
@@ -1226,18 +1226,15 @@ void Renderer::buildDrawBatches(Scene& scene) {
 		.commandCount = 0,
 	});
 
-	uint32_t i = 0;
-	auto view = scene.view<MeshComponent, MeshRendererComponent, TransformComponent>();
-	for (auto entity : view) {
-		const auto& mesh = view.get<MeshComponent>(entity);
-		const auto& meshRenderer = view.get<MeshRendererComponent>(entity);
+	auto& registry = scene.getRegistry();
+	for (auto entity : *_currentRenderParams->visibleEntities) {
+		const auto& meshComp = registry.get<MeshComponent>(entity);
 
-		if (!mesh.mesh || !meshRenderer.visible || _meshRegions[i].indexCount == 0) {
-			++i;
+		if (meshComp.meshRegionIndex == UINT32_MAX || _meshRegions[meshComp.meshRegionIndex].indexCount == 0) {
 			continue;
 		}
 
-		const auto& region = _meshRegions[i];
+		const auto& region = _meshRegions[meshComp.meshRegionIndex];
 
 		vk::DrawIndexedIndirectCommand cmd{
 			.indexCount = region.indexCount,
@@ -1248,7 +1245,6 @@ void Renderer::buildDrawBatches(Scene& scene) {
 		};
 		_indirectCommands.push_back(cmd);
 		_drawBatches.back().commandCount++;
-		++i;
 	}
 
 	if (!_indirectCommands.empty()) {

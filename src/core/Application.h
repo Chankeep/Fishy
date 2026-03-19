@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../ecs/systems/CameraSystem.h"
+#include "../ecs/systems/CullingSystem.h"
 #include "../ecs/systems/LightingSystem.h"
 #include "../ecs/systems/RenderSystem.h"
 #include "../ecs/systems/TransformSystem.h"
@@ -58,6 +59,7 @@ private:
 	TransformSystem _transformSystem;
 	OrbitControllerSystem _orbitControllerSystem;
 	CameraSystem _cameraSystem;
+	CullingSystem _cullingSystem;
 	LightingSystem _lightingSystem;
 	RenderSystem _renderSystem;
 };

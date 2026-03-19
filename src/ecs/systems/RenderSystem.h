@@ -1,7 +1,9 @@
 #pragma once
 
+#include <entt/entt.hpp>
 #include <functional>
 #include <glm/glm.hpp>
+#include <vector>
 #include <vulkan/vulkan.hpp>
 
 namespace Fishy {
@@ -23,6 +25,9 @@ struct RenderParams {
 	// Light data (from LightingSystem - first directional light)
 	glm::vec3 lightDirection{1.0f, 1.0f, 1.0f};
 	glm::vec3 lightColor{5.0f, 5.0f, 5.0f};
+
+	// Visible entities after frustum culling (from CullingSystem)
+	const std::vector<entt::entity>* visibleEntities = nullptr;
 };
 
 /**

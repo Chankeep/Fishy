@@ -1,6 +1,8 @@
 #pragma once
 
 #include "../../resources/Mesh.h"
+#include "math/AABB.h"
+#include <cstdint>
 #include <entt/entt.hpp>
 
 namespace Fishy {
@@ -13,6 +15,10 @@ namespace Fishy {
  */
 struct MeshComponent {
 	entt::resource<Mesh> mesh;
+
+	Math::AABB worldAABB;
+	glm::mat4 cachedWorldMatrix{0.0f};
+	uint32_t meshRegionIndex = UINT32_MAX;
 
 	MeshComponent() = default;
 	explicit MeshComponent(entt::resource<Mesh> m) : mesh(std::move(m)) {}

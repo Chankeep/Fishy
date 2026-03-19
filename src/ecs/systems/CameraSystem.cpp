@@ -48,8 +48,7 @@ void CameraSystem::update(Scene& scene, float aspectRatio) {
 	}
 }
 
-std::optional<std::tuple<glm::mat4, glm::mat4, glm::vec3>>
-CameraSystem::getPrimaryCameraData(Scene& scene) const {
+std::optional<std::tuple<glm::mat4, glm::mat4, glm::vec3>> CameraSystem::getPrimaryCameraData(Scene& scene) const {
 	auto view = scene.view<CameraComponent, TransformComponent>();
 
 	for (auto entity : view) {

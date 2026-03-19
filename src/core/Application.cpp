@@ -179,8 +179,13 @@ void Application::run() {
 		_cameraSystem.update(*_scene, _renderer.getAspectRatio());
 		_lightingSystem.update(*_scene);
 
+		// Frustum culling (after transform + camera updates)
+		const auto& visibleEntities = _cullingSystem.cull(*_scene);
+
 		// Build RenderParams from system data
 		RenderParams renderParams;
+		renderParams.visibleEntities = &visibleEntities;
+
 		if (auto camData = _cameraSystem.getPrimaryCameraData(*_scene)) {
 			const auto& [viewMat, projMat, camPos] = *camData;
 			renderParams.viewMatrix = viewMat;
