@@ -12,11 +12,11 @@ struct OrbitControllerComponent {
 	float pitch = 0.0f;		// Vertical rotation angle (degrees)
 
 	// Orbit control settings
-	float rotateSpeed = 0.5f;
-	float zoomSpeed = 0.1f;
-	float panSpeed = 0.003f;
+	float rotateSpeed = 0.2f;
+	float zoomSpeed = 0.02f;
+	float panSpeed = 0.0005f;
 	float minDistance = 0.5f;
-	float maxDistance = 50.0f;
+	float maxDistance = 1000.0f;
 	float minPitch = -89.0f;
 	float maxPitch = 89.0f;
 

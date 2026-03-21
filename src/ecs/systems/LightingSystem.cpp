@@ -29,10 +29,11 @@ void LightingSystem::update(Scene& scene) {
 		// Color and intensity
 		data.colorAndIntensity = glm::vec4(light.color, light.intensity);
 
-		// Spot angles (cosine of angles for GPU efficiency)
+		// Spot angles + shadow info
+		// z = shadowIndex placeholder (0 = eligible, Renderer patches actual index; -1 = no shadow)
 		data.spotAngles =
 			glm::vec4(std::cos(glm::radians(light.innerConeAngle)), std::cos(glm::radians(light.outerConeAngle)),
-					  light.castShadows ? 1.0f : 0.0f, 0.0f);
+					  light.castShadows ? 0.0f : -1.0f, 0.0f);
 
 		_lightData.push_back(data);
 	}

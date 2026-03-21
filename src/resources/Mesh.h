@@ -28,21 +28,20 @@ struct Vertex {
 	}
 };
 
-// Global uniform buffer (camera, lighting, debug, IBL)
-// Using vec4 for vec3 data to ensure BDA layout compatibility with Slang
+// Global uniform buffer (camera, debug, IBL)
+// Light and shadow data are in separate SSBOs, accessed via BDA
 struct UniformBufferObject {
 	glm::mat4 view;
 	glm::mat4 proj;
-	glm::mat4 lightSpaceMatrix;
 	glm::vec4 camPos;
-	glm::vec4 lightDir;
-	glm::vec4 lightColor;
+	uint32_t lightCount;
 	// Debug visualization controls
 	float debugViewInputs = 0.0f;	// 0=off, 1=baseColor, 2=normal, 3=AO, 4=emissive, 5=metallic, 6=roughness
 	float debugViewEquation = 0.0f; // 0=off, 1=diffuse, 2=F, 3=G, 4=D, 5=specular
 	// IBL parameters
 	float prefilteredMipLevels = 1.0f;
 	float iblIntensity = 1.0f;
+	float _pad[3];
 };
 
 // Mesh class - pure data container for geometry

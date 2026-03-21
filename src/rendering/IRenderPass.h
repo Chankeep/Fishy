@@ -37,6 +37,9 @@ struct RenderGraphContext {
 	// Buffer Device Addresses for push constants
 	uint64_t instanceDataAddress = 0;
 	uint64_t globalDataAddress = 0;
+	uint64_t lightDataAddress = 0;
+	uint64_t shadowDataAddress = 0;
+	uint32_t shadowCasterCount = 0;
 
 	// === Scene Geometry (borrowed, non-owning, per-frame) ===
 	std::span<const DrawBatch> drawBatches;

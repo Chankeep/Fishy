@@ -46,12 +46,16 @@ void SkyboxPass::execute(RenderGraphContext& ctx, [[maybe_unused]] entt::registr
 	ctx.cmd.bindVertexBuffers(0, _vertexBuffer->getBuffer(), {0});
 	ctx.cmd.bindIndexBuffer(_indexBuffer->getBuffer(), 0, vk::IndexType::eUint32);
 
-	// Push constants for skybox (only globalDataAddress needed)
-	PushConstants pc{.instanceDataAddress = 0, .globalDataAddress = ctx.globalDataAddress};
+	// Push constants (BDA pointers — skybox only uses globalDataAddress)
+	PushConstants pc{.instanceDataAddress = 0,
+					 .globalDataAddress = ctx.globalDataAddress,
+					 .lightDataAddress = 0,
+					 .shadowDataAddress = 0};
 
 	ctx.cmd.pushConstants<PushConstants>(*_pipeline.getLayout(),
 										 vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, pc);
 
+										 
 	// Draw skybox
 	ctx.cmd.drawIndexed(_indexCount, 1, 0, 0, 0);
 
