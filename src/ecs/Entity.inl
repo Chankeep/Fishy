@@ -12,6 +12,13 @@ template <typename T> T& Entity::getComponent() { return _scene->getRegistry().g
 
 template <typename T> const T& Entity::getComponent() const { return _scene->getRegistry().get<T>(_handle); }
 
+template <typename T, typename... Args> T& Entity::getOrAddComponent(Args&&... args)  {
+	if(hasComponent<T>()){
+		return getComponent<T>();
+	}
+	return addComponent<T>(std::forward<Args>(args)...);
+}
+
 template <typename T> bool Entity::hasComponent() const { return _scene->getRegistry().all_of<T>(_handle); }
 
 template <typename T> void Entity::removeComponent() { _scene->getRegistry().remove<T>(_handle); }

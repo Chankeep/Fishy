@@ -4,8 +4,11 @@
 #include "../ecs/components/CameraComponent.h"
 #include "../ecs/components/LightComponent.h"
 #include "../ecs/components/MeshComponent.h"
+#include "../ecs/components/OrbitControllerComponent.h"
 #include "../ecs/components/MeshRendererComponent.h"
 #include "../ecs/components/TransformComponent.h"
+#include "../ecs/components/HierarchyComponent.h"
+#include "../ecs/utils/TransformUtils.h"
 #include "../ui/DebugPanel.h"
 #include <imgui.h>
 
@@ -52,11 +55,14 @@ Application::Application()
 
 		// Reparent all loaded ROOT entities to the model root
 		for (auto& entity : result.value()) {
-			auto& transform = entity.getComponent<TransformComponent>();
-			if (transform.isRoot()) {
+			bool isRoot = true;
+			if (entity.hasComponent<HierarchyComponent>()) {
+				isRoot = (entity.getComponent<HierarchyComponent>().parent == entt::null);
+			}
+
+			if (isRoot) {
 				// Set parent without adjusting local transform (we want them relative to new root)
-				transform.parent = modelRoot.getHandle();
-				transform.dirty = true;
+				TransformUtils::setParent(_scene->getRegistry(), entity.getHandle(), modelRoot.getHandle(), false);
 			}
 		}
 	}
@@ -74,10 +80,13 @@ Application::Application()
 
 		// Reparent all loaded ROOT entities to the helmet root
 		for (auto& entity : result2.value()) {
-			auto& transform = entity.getComponent<TransformComponent>();
-			if (transform.isRoot()) {
-				transform.parent = helmetRoot.getHandle();
-				transform.dirty = true;
+			bool isRoot = true;
+			if (entity.hasComponent<HierarchyComponent>()) {
+				isRoot = (entity.getComponent<HierarchyComponent>().parent == entt::null);
+			}
+
+			if (isRoot) {
+				TransformUtils::setParent(_scene->getRegistry(), entity.getHandle(), helmetRoot.getHandle(), false);
 			}
 		}
 
@@ -92,6 +101,10 @@ Application::Application()
 	cam.fov = 45.0f;
 	cam.nearClip = 0.1f;
 	cam.farClip = 30.0f;
+
+	auto& orbit = cameraEntity.addComponent<OrbitControllerComponent>();
+	orbit.target = glm::vec3(0.0f);
+	orbit.distance = 5.0f;
 
 	// Position camera back so we can see the scene
 	auto& camTransform = cameraEntity.getComponent<TransformComponent>();
@@ -152,7 +165,7 @@ void Application::run() {
 		ImGuiIO& io = ImGui::GetIO();
 		if (!io.WantCaptureMouse) {
 			const auto& mouseState = _window.getMouseState();
-			_cameraSystem.processInput(
+			_orbitControllerSystem.processInput(
 				*_scene, static_cast<float>(mouseState.deltaX), static_cast<float>(mouseState.deltaY),
 				static_cast<float>(mouseState.scrollDelta), mouseState.rightButton, mouseState.middleButton);
 		}
@@ -161,15 +174,28 @@ void Application::run() {
 		_window.resetMouseDelta();
 
 		// Update ECS Systems
+		_orbitControllerSystem.update(*_scene);
 		_transformSystem.update(*_scene);
 		_cameraSystem.update(*_scene, _renderer.getAspectRatio());
 		_lightingSystem.update(*_scene);
 
+		// Frustum culling (after transform + camera updates)
+		const auto& visibleEntities = _cullingSystem.cull(*_scene);
+
 		// Build RenderParams from system data
 		RenderParams renderParams;
-		renderParams.viewMatrix = _cameraSystem.getPrimaryViewMatrix();
-		renderParams.projectionMatrix = _cameraSystem.getPrimaryProjectionMatrix();
-		renderParams.cameraPosition = _cameraSystem.getPrimaryCameraPosition();
+		renderParams.visibleEntities = &visibleEntities;
+
+		if (auto camData = _cameraSystem.getPrimaryCameraData(*_scene)) {
+			const auto& [viewMat, projMat, camPos] = *camData;
+			renderParams.viewMatrix = viewMat;
+			renderParams.projectionMatrix = projMat;
+			renderParams.cameraPosition = camPos;
+		} else {
+			renderParams.viewMatrix = glm::mat4(1.0f);
+			renderParams.projectionMatrix = glm::mat4(1.0f);
+			renderParams.cameraPosition = glm::vec3(0.0f);
+		}
 
 		// Use first light from LightingSystem if available
 		const auto& lights = _lightingSystem.getLightData();

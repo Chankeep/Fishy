@@ -38,6 +38,14 @@ public:
 	template <typename T> [[nodiscard]] const T& getComponent() const;
 
 	/**
+	 * @brief Try to get a component from this entity. If this entity doesn't have a component, create and return a new
+	 * component.
+	 * @tparam T Component type.
+	 * @return Reference to the component.
+	 */
+	template <typename T, typename... Args> [[nodiscard]] T& getOrAddComponent(Args&&... args);
+
+	/**
 	 * @brief Check if this entity has a component.
 	 * @tparam T Component type.
 	 * @return True if the entity has the component.

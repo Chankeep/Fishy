@@ -1,4 +1,5 @@
 #include "CameraSystem.h"
+#include "math/Frustum.h"
 
 #include "../../scene/Scene.h"
 #include "../components/CameraComponent.h"
@@ -14,79 +15,52 @@ void CameraSystem::update(Scene& scene, float aspectRatio) {
 		auto& camera = view.get<CameraComponent>(entity);
 		auto& transform = view.get<TransformComponent>(entity);
 
-		// Update aspect ratio
-		camera.aspectRatio = aspectRatio;
+		// 1. Check & Update Projection Matrix
+		camera.setAspectRatio(aspectRatio);
 
-		// Update position from orbit parameters
-		transform.position = camera.getOrbitPosition();
+		if (camera.isProjectionDirty) {
+			camera.projectionMatrix = camera.getProjectionMatrix();
+			camera.projectionMatrix[1][1] *= -1; // Vulkan Y-axis is inverted
+			camera.isProjectionDirty = false;
+			camera.isFrustumDirty = true;
+		}
 
-		// Compute rotation to look at target
-		glm::vec3 forward = glm::normalize(camera.target - transform.position);
-		glm::vec3 worldUp{0.0f, 1.0f, 0.0f};
-		glm::vec3 right = glm::normalize(glm::cross(forward, worldUp));
-		glm::vec3 up = glm::cross(right, forward);
+		// 2. Check & Update View Matrix
+		const auto& currentWorldMat = transform.getMatrix();
+		if (camera.cachedTransformMatrix != currentWorldMat) {
+			camera.cachedTransformMatrix = currentWorldMat;
+			camera.markViewDirty();
+		}
 
-		// Compute projection matrix (with Vulkan Y-flip)
-		camera.projectionMatrix = camera.getProjectionMatrix();
-		camera.projectionMatrix[1][1] *= -1; // Vulkan Y-axis is inverted
+		if (camera.isViewDirty) {
+			// Using inverse of world matrix for view matrix is efficient and general.
+			// It respects hierarchy rotations, translations.
+			camera.viewMatrix = glm::inverse(currentWorldMat);
+			camera.isViewDirty = false;
+			camera.isFrustumDirty = true;
+		}
 
-		// Compute view matrix (lookAt)
-		camera.viewMatrix = glm::lookAt(transform.position, camera.target, up);
-
-		// If this is the primary camera, cache its matrices
-		if (camera.primary) {
-			_primaryViewMatrix = camera.viewMatrix;
-			_primaryProjectionMatrix = camera.projectionMatrix;
-			_primaryCameraPosition = transform.position;
+		if (camera.isFrustumDirty) {
+			glm::mat4 vp = camera.getProjectionMatrix() * camera.viewMatrix;
+			Math::extractFrustumPlanes(vp, camera.frustumPlanes, true, true);
+			camera.isFrustumDirty = false;
 		}
 	}
 }
 
-void CameraSystem::processInput(Scene& scene, float mouseDeltaX, float mouseDeltaY, float scrollDelta, bool rightButton,
-								bool middleButton) {
+std::optional<std::tuple<glm::mat4, glm::mat4, glm::vec3>> CameraSystem::getPrimaryCameraData(Scene& scene) const {
 	auto view = scene.view<CameraComponent, TransformComponent>();
 
 	for (auto entity : view) {
-		auto& camera = view.get<CameraComponent>(entity);
-		auto& transform = view.get<TransformComponent>(entity);
+		const auto& camera = view.get<CameraComponent>(entity);
+		const auto& transform = view.get<TransformComponent>(entity);
 
-		// Only process primary camera
-		if (!camera.primary) {
-			continue;
+		if (camera.primary) {
+			return std::make_tuple(camera.viewMatrix, camera.projectionMatrix, transform.position);
 		}
-
-		// Rotate (right mouse button)
-		if (rightButton) {
-			camera.yaw -= mouseDeltaX * camera.rotateSpeed;
-			camera.pitch += mouseDeltaY * camera.rotateSpeed;
-
-			// Clamp pitch to avoid gimbal lock
-			camera.pitch = glm::clamp(camera.pitch, camera.minPitch, camera.maxPitch);
-		}
-
-		// Pan (middle mouse button)
-		if (middleButton) {
-			// Compute camera right and up vectors for panning
-			glm::vec3 forward = glm::normalize(camera.target - transform.position);
-			glm::vec3 worldUp{0.0f, 1.0f, 0.0f};
-			glm::vec3 right = glm::normalize(glm::cross(forward, worldUp));
-			glm::vec3 up = glm::cross(right, forward);
-
-			// Pan the target (camera follows due to orbit)
-			float panX = -mouseDeltaX * camera.panSpeed * camera.distance;
-			float panY = mouseDeltaY * camera.panSpeed * camera.distance;
-			camera.target += right * panX;
-			camera.target += up * panY;
-		}
-
-		// Zoom (scroll wheel)
-		if (scrollDelta != 0.0f) {
-			camera.distance -= scrollDelta * camera.zoomSpeed * camera.distance;
-			camera.distance = glm::clamp(camera.distance, camera.minDistance, camera.maxDistance);
-		}
-
-		break; // Only process first primary camera
 	}
+
+	return std::nullopt;
 }
 
 } // namespace Fishy

@@ -5,6 +5,8 @@
 #include <vector>
 #include <vulkan/vulkan.hpp>
 
+#include "math/AABB.h"
+
 namespace Fishy {
 
 // Vertex structure matching glTF attributes
@@ -53,10 +55,12 @@ public:
 	[[nodiscard]] const std::vector<uint32_t>& getIndices() const { return _indices; }
 	[[nodiscard]] size_t getVertexCount() const { return _vertices.size(); }
 	[[nodiscard]] size_t getIndexCount() const { return _indices.size(); }
+	[[nodiscard]] const Math::AABB& getLocalAABB() const { return _localAABB; }
 
 private:
 	std::vector<Vertex> _vertices;
 	std::vector<uint32_t> _indices;
+	Math::AABB _localAABB;
 };
 
 } // namespace Fishy
