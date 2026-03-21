@@ -384,9 +384,24 @@ void ModelLoader::processGltfNode(LoadContext& ctx, size_t nodeIndex, Entity par
 			auto& hierarchy = entity.addComponent<HierarchyComponent>();
 			applyNodeTransform(node, transform);
 
-			// Set parent reference for hierarchy
+			// Set parent reference and link into parent's child list
 			if (parentEntity.isValid()) {
 				hierarchy.parent = parentEntity.getHandle();
+
+				// Insert into parent's child linked list
+				auto& parentHierarchy = parentEntity.getOrAddComponent<HierarchyComponent>();
+				if (parentHierarchy.firstChild == entt::null) {
+					parentHierarchy.firstChild = entity.getHandle();
+				} else {
+					// Find last sibling and append
+					auto& reg = ctx.targetScene->getRegistry();
+					entt::entity sibling = parentHierarchy.firstChild;
+					while (reg.get<HierarchyComponent>(sibling).nextSibling != entt::null) {
+						sibling = reg.get<HierarchyComponent>(sibling).nextSibling;
+					}
+					reg.get<HierarchyComponent>(sibling).nextSibling = entity.getHandle();
+					hierarchy.prevSibling = sibling;
+				}
 			}
 
 			const auto& primitive = gltfMesh.primitives[primitiveIdx];
@@ -492,6 +507,21 @@ void ModelLoader::processGltfNode(LoadContext& ctx, size_t nodeIndex, Entity par
 
 		if (parentEntity.isValid()) {
 			hierarchy.parent = parentEntity.getHandle();
+
+			// Insert into parent's child linked list
+			auto& parentHierarchy = parentEntity.getOrAddComponent<HierarchyComponent>();
+			if (parentHierarchy.firstChild == entt::null) {
+				parentHierarchy.firstChild = entity.getHandle();
+			} else {
+				// Find last sibling and append
+				auto& reg = ctx.targetScene->getRegistry();
+				entt::entity sibling = parentHierarchy.firstChild;
+				while (reg.get<HierarchyComponent>(sibling).nextSibling != entt::null) {
+					sibling = reg.get<HierarchyComponent>(sibling).nextSibling;
+				}
+				reg.get<HierarchyComponent>(sibling).nextSibling = entity.getHandle();
+				hierarchy.prevSibling = sibling;
+			}
 		}
 
 		currentNodeEntity = entity;
