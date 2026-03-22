@@ -14,7 +14,7 @@ void ShadowMapPass::execute(RenderGraphContext& ctx, [[maybe_unused]] entt::regi
 	}
 
 	// Transition atlas to depth attachment
-	VulkanUtils::transitionImage(ctx.cmd, _shadowMapImage->getImage(), vk::ImageLayout::eUndefined,
+	VulkanUtils::transitionImage(ctx.cmd, _shadowMap->getImage(), vk::ImageLayout::eUndefined,
 								 vk::ImageLayout::eDepthAttachmentOptimal, vk::AccessFlagBits2::eNone,
 								 vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
 								 vk::PipelineStageFlagBits2::eTopOfPipe,
@@ -23,7 +23,7 @@ void ShadowMapPass::execute(RenderGraphContext& ctx, [[maybe_unused]] entt::regi
 	// Begin rendering — clear entire atlas once
 	vk::ClearValue clearDepth{.depthStencil = {1.0f, 0}};
 
-	vk::RenderingAttachmentInfo depthAttachment{.imageView = *_shadowMapImage->getView(),
+	vk::RenderingAttachmentInfo depthAttachment{.imageView = _shadowMap->getImageView(),
 												.imageLayout = vk::ImageLayout::eDepthAttachmentOptimal,
 												.loadOp = vk::AttachmentLoadOp::eClear,
 												.storeOp = vk::AttachmentStoreOp::eStore,
@@ -75,7 +75,7 @@ void ShadowMapPass::execute(RenderGraphContext& ctx, [[maybe_unused]] entt::regi
 
 	// Transition atlas for shader sampling
 	VulkanUtils::transitionImage(
-		ctx.cmd, _shadowMapImage->getImage(), vk::ImageLayout::eDepthAttachmentOptimal,
+		ctx.cmd, _shadowMap->getImage(), vk::ImageLayout::eDepthAttachmentOptimal,
 		vk::ImageLayout::eShaderReadOnlyOptimal, vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
 		vk::AccessFlagBits2::eShaderSampledRead, vk::PipelineStageFlagBits2::eLateFragmentTests,
 		vk::PipelineStageFlagBits2::eFragmentShader, vk::ImageAspectFlagBits::eDepth);

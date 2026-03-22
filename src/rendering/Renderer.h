@@ -12,7 +12,7 @@
 #include "RenderGraph.h"
 #include "core/SwapChain.h"
 #include "core/VulkanBuffer.h"
-#include "core/VulkanImage.h"
+#include "RenderTexture.h"
 #include "passes/UIPass.h"
 
 #include <functional>
@@ -144,7 +144,7 @@ private:
 	std::unique_ptr<SwapChain> _swapChain;
 
 	// Depth resources
-	std::unique_ptr<VulkanImage> _depthImage;
+	std::unique_ptr<RenderTexture> _depthImage;
 	vk::Format _depthFormat = vk::Format::eUndefined;
 
 	// SwapChain image views

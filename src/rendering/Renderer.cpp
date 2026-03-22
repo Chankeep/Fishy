@@ -10,6 +10,7 @@
 #include "core/VulkanDevice.h"
 #include "core/VulkanImage.h"
 #include "core/VulkanUtils.h"
+#include "RenderTexture.h"
 #include "core/Window.h"
 #include "ecs/components/LightComponent.h"
 #include "ecs/components/MeshComponent.h"
@@ -175,7 +176,7 @@ RenderGraphContext Renderer::createRenderContext(const RenderParams& params) {
 		.indexBuffer = _unifiedIndexBuffer.get(),
 		.iblEnvironment = _iblEnvironment,
 		.colorAttachmentView = *_swapChainImageViews[_currentImageIndex],
-		.depthAttachmentView = *_depthImage->getView(),
+		.depthAttachmentView = _depthImage->getImageView(),
 	};
 }
 
@@ -560,40 +561,11 @@ void Renderer::registerSkyboxPass() {
 
 void Renderer::registerShadowMapPass() {
 	FISHY_LOG_TRACE("Creating shadowMap image...");
-	vk::ImageCreateInfo imageInfo{.imageType = vk::ImageType::e2D,
-								  .format = vk::Format::eD32Sfloat,
-								  .extent = {SHADOW_ATLAS_SIZE, SHADOW_ATLAS_SIZE, 1},
-								  .mipLevels = 1,
-								  .arrayLayers = 1,
-								  .samples = vk::SampleCountFlagBits::e1,
-								  .tiling = vk::ImageTiling::eOptimal,
-								  .usage = vk::ImageUsageFlagBits::eDepthStencilAttachment |
-										   vk::ImageUsageFlagBits::eSampled,
-								  .sharingMode = vk::SharingMode::eExclusive,
-								  .initialLayout = vk::ImageLayout::eUndefined};
 
-	VmaAllocationCreateInfo allocInfo = {.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT,
-										 .usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
+	auto shadowMap = std::make_unique<RenderTexture>(
+		_device, SHADOW_ATLAS_SIZE, SHADOW_ATLAS_SIZE, vk::Format::eD32Sfloat,
+		vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled);
 
-	auto image = std::make_unique<VulkanImage>(_device.getVmaAllocator(), imageInfo, allocInfo);
-
-#ifndef NDEBUG
-	VulkanUtils::setDebugName(_device, image->getImage(), "ShadowMap Image");
-#endif
-
-	vk::ImageViewCreateInfo viewInfo{.viewType = vk::ImageViewType::e2D,
-									 .format = imageInfo.format,
-									 .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eDepth,
-														  .baseMipLevel = 0,
-														  .levelCount = 1,
-														  .baseArrayLayer = 0,
-														  .layerCount = 1}};
-
-	image->createView(*_device, viewInfo);
-
-#ifndef NDEBUG
-	VulkanUtils::setDebugName(_device, image->getImage(), "ShadowMap ImageView");
-#endif
 	FISHY_LOG_TRACE("Creating shadowMap sampler...");
 
 	auto properties = _device.getPhysicalDevice().getProperties();
@@ -617,7 +589,7 @@ void Renderer::registerShadowMapPass() {
 
 	auto sampler = vk::raii::Sampler(*_device, samplerInfo);
 
-	_renderGraph.addPass<ShadowMapPass>(*_shadowPipeline, std::move(image), std::move(sampler));
+	_renderGraph.addPass<ShadowMapPass>(*_shadowPipeline, std::move(shadowMap), std::move(sampler));
 
 	FISHY_LOG_TRACE(" shadowMap image created: {}x{}", SHADOW_ATLAS_SIZE, SHADOW_ATLAS_SIZE);
 }
@@ -951,75 +923,17 @@ vk::Format Renderer::findDepthFormat() {
 }
 
 void Renderer::createDepthResources() {
-	// Destroy old depth resources if they exist (critical for recreateSwapChain)
-	// This prevents VMA "Unfreed dedicated allocations" error on program exit
-	_depthImage.reset();
-
 	_depthFormat = findDepthFormat();
 	vk::Extent2D extent = getSwapChainExtent();
 
 	FISHY_LOG_TRACE("Creating depth resources: {}x{} format:{}", extent.width, extent.height,
 					vk::to_string(_depthFormat));
 
-	// Create Image using VMA (keep vk:: style, convert to Vk for VMA)
-	vk::ImageCreateInfo imageInfo{.imageType = vk::ImageType::e2D,
-								  .format = _depthFormat,
-								  .extent = {extent.width, extent.height, 1},
-								  .mipLevels = 1,
-								  .arrayLayers = 1,
-								  .samples = vk::SampleCountFlagBits::e1,
-								  .tiling = vk::ImageTiling::eOptimal,
-								  .usage = vk::ImageUsageFlagBits::eDepthStencilAttachment,
-								  .sharingMode = vk::SharingMode::eExclusive,
-								  .initialLayout = vk::ImageLayout::eUndefined};
+	_depthImage = std::make_unique<RenderTexture>(
+		_device, extent.width, extent.height, _depthFormat,
+		vk::ImageUsageFlagBits::eDepthStencilAttachment);
 
-	VmaAllocationCreateInfo allocInfo = {};
-	allocInfo.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
-	allocInfo.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
-
-	_depthImage = std::make_unique<VulkanImage>(_device.getVmaAllocator(), imageInfo, allocInfo);
-
-#ifndef NDEBUG
-	std::string debugName = "DepthImage_" + std::to_string(extent.width) + "x" + std::to_string(extent.height);
-	VulkanUtils::setDebugName(_device, _depthImage->getImage(), debugName.c_str());
-#endif
-
-	vk::ImageViewCreateInfo viewInfo{.viewType = vk::ImageViewType::e2D,
-									 .format = _depthFormat,
-									 .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eDepth,
-														  .baseMipLevel = 0,
-														  .levelCount = 1,
-														  .baseArrayLayer = 0,
-														  .layerCount = 1}};
-	// Stencil aspect?
-	if (_depthFormat == vk::Format::eD32SfloatS8Uint || _depthFormat == vk::Format::eD24UnormS8Uint) {
-		viewInfo.subresourceRange.aspectMask |= vk::ImageAspectFlagBits::eStencil;
-	}
-
-	_depthImage->createView(*_device, viewInfo);
-#ifndef NDEBUG
-	VulkanUtils::setDebugName(_device, *_depthImage->getView(), vk::ObjectType::eImageView,
-							  (debugName + "_View").c_str());
-#endif
-	FISHY_LOG_TRACE("Created depth image view");
-
-	// Perform explicit layout transition Undefined -> DepthStencilAttachmentOptimal
-	{
-		FISHY_LOG_TRACE("Performing layout transition for depth image");
-		auto aspectMask = viewInfo.subresourceRange.aspectMask;
-
-		VulkanUtils::executeImmediate(_device, [&](auto& cmd) {
-			VulkanUtils::transitionImage(
-				*cmd, *_depthImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal,
-				vk::AccessFlagBits2::eNone,
-				vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
-				vk::PipelineStageFlagBits2::eTopOfPipe,
-				vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
-				aspectMask);
-		});
-
-		FISHY_LOG_TRACE("Layout transition for depth image completed");
-	}
+	FISHY_LOG_TRACE("Depth resources created via RenderTexture");
 }
 
 void Renderer::createSwapChainImageViews() {
