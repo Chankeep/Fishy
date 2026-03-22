@@ -12,6 +12,7 @@
 #include "../resources/ResourceManager.h"
 #include "../scene/Scene.h"
 #include "../ui/ImGuiLayer.h"
+#include "../ui/EditorLayer.h"
 #include "VulkanContext.h"
 #include "VulkanDevice.h"
 #include "Window.h"
@@ -52,6 +53,7 @@ private:
 	Fishy::ResourceManager _resourceManager;
 	Fishy::Renderer _renderer;
 	std::unique_ptr<ImGuiLayer> _imguiLayer;
+	EditorLayer _editorLayer;
 	std::unique_ptr<IBLEnvironment> _iblEnvironment;
 
 	// ECS
@@ -62,6 +64,7 @@ private:
 	CullingSystem _cullingSystem;
 	LightingSystem _lightingSystem;
 	RenderSystem _renderSystem;
+
 };
 
 } // namespace Fishy

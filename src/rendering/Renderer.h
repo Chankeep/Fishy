@@ -30,6 +30,7 @@ class ResourceManager;
 class CommandPool;
 class Scene;
 class UIPass;
+class SceneFramebuffer;
 struct RenderParams;
 
 /**
@@ -45,17 +46,19 @@ public:
 	Renderer(const Renderer&) = delete;
 	Renderer& operator=(const Renderer&) = delete;
 
+
+
 	/**
-	 * @brief Render a scene with optional UI callback.
-	 *
-	 * ECS-based rendering interface. Iterates entities with MeshComponent and MeshRendererComponent.
-	 *
-	 * @param scene The scene containing entities to render.
-	 * @param params Camera and light data for this frame.
-	 * @param uiRenderCallback Optional callback for UI rendering.
+	 * @brief Render scene to offscreen SceneFramebuffer (shadows + main + skybox).
+	 * Call beginFrame() is handled internally. Does NOT present — call renderUI() after.
 	 */
-	void renderScene(Scene& scene, const RenderParams& params,
-					 std::function<void(VkCommandBuffer)> uiRenderCallback = nullptr);
+	void renderToTexture(Scene& scene, const RenderParams& params, SceneFramebuffer& target);
+
+	/**
+	 * @brief Render UI (ImGui) to swapchain and present.
+	 * Must be called after renderToTexture() within the same frame.
+	 */
+	void renderUI(std::function<void(VkCommandBuffer)> uiCallback);
 
 	// Debug settings
 	void setDebugSettings(float debugViewInputs, float debugViewEquation) {
@@ -86,6 +89,8 @@ private:
 	// Rendering helpers
 	void prepareSwapchainForRendering(const vk::raii::CommandBuffer& cmd);
 	void prepareSwapchainForPresent(const vk::raii::CommandBuffer& cmd);
+	void prepareOffscreenForRendering(const vk::raii::CommandBuffer& cmd, SceneFramebuffer& target);
+	void prepareOffscreenForSampling(const vk::raii::CommandBuffer& cmd, SceneFramebuffer& target);
 	void updateUniformBuffer(uint32_t frameIndex);
 	void updateLightBuffer();
 	void updateShadowData();
@@ -93,8 +98,6 @@ private:
 														   const std::array<glm::vec3, 8>& frustumCorners) const;
 	void buildSceneData(Scene& scene);
 	[[nodiscard]] RenderGraphContext createRenderContext(const RenderParams& params);
-	void executeUIPass(RenderGraphContext& ctx, entt::registry& registry,
-					   std::function<void(VkCommandBuffer)>& uiRenderCallback);
 
 	// Initialization
 	void createCommandBuffers();

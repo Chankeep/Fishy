@@ -14,8 +14,9 @@ void UIPass::execute(RenderGraphContext& ctx, [[maybe_unused]] entt::registry& r
 
 	vk::RenderingAttachmentInfo uiColorAttachment{.imageView = _currentImageView,
 												  .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-												  .loadOp = vk::AttachmentLoadOp::eLoad,
-												  .storeOp = vk::AttachmentStoreOp::eStore};
+												  .loadOp = vk::AttachmentLoadOp::eClear,
+												  .storeOp = vk::AttachmentStoreOp::eStore,
+												  .clearValue = {std::array{0.1f, 0.1f, 0.1f, 1.0f}}};
 
 	vk::RenderingInfo uiRenderingInfo{.renderArea = vk::Rect2D{{0, 0}, ctx.viewportExtent},
 									  .layerCount = 1,

@@ -10,6 +10,7 @@
 #include "../ecs/components/HierarchyComponent.h"
 #include "../ecs/utils/TransformUtils.h"
 #include "../ui/DebugPanel.h"
+#include "scene/Scene.h"
 #include <imgui.h>
 
 namespace Fishy {
@@ -33,6 +34,7 @@ Application::Application()
 
 	// Initialize ImGui Layer
 	_imguiLayer = std::make_unique<ImGuiLayer>(_context, _device, _window, _renderer.getSwapChainFormat());
+	_editorLayer.init(_device, _renderer.getSwapChainFormat());
 	FISHY_LOG_TRACE("ImGui Layer initialized");
 
 	// Initialize Scene
@@ -150,6 +152,7 @@ Application::~Application() {
 	FISHY_LOG_TRACE("Shutting down Application...");
 	// Wait for GPU before destroying resources
 	_device->waitIdle();
+	_editorLayer.shutdown();
 	_imguiLayer.reset();
 	_scene.reset();
 	FISHY_LOG_TRACE("Application shutdown complete");
@@ -171,9 +174,8 @@ void Application::run() {
 
 		_window.update();
 
-		// Process camera input (only if ImGui is not capturing mouse)
-		ImGuiIO& io = ImGui::GetIO();
-		if (!io.WantCaptureMouse) {
+		// Process camera input (only when hovering the Viewport panel)
+		if (_editorLayer.isViewportHovered()) {
 			const auto& mouseState = _window.getMouseState();
 			_orbitControllerSystem.processInput(
 				*_scene, static_cast<float>(mouseState.deltaX), static_cast<float>(mouseState.deltaY),
@@ -186,7 +188,12 @@ void Application::run() {
 		// Update ECS Systems
 		_orbitControllerSystem.update(*_scene);
 		_transformSystem.update(*_scene);
-		_cameraSystem.update(*_scene, _renderer.getAspectRatio());
+
+		// Camera aspect ratio from viewport size (not swapchain)
+		auto vpSize = _editorLayer.getViewportSize();
+		float aspect = (vpSize.y > 0) ? vpSize.x / vpSize.y : 16.0f / 9.0f;
+		_cameraSystem.update(*_scene, aspect);
+
 		_lightingSystem.update(*_scene);
 
 		// Frustum culling (after transform + camera updates)
@@ -209,10 +216,15 @@ void Application::run() {
 
 		renderParams.lights = &_lightingSystem.getLightData();
 
-		// Start ImGui frame
-		_imguiLayer->newFrame();
+		// === Pre-render: resize offscreen target if viewport changed ===
+		_editorLayer.beginFrame();
 
-		// Build UI
+		// === Render scene to offscreen target ===
+		_renderSystem.render(*_scene, _renderer, renderParams, _editorLayer.getSceneFramebuffer());
+
+		// === ImGui frame ===
+		_imguiLayer->newFrame();
+		_editorLayer.onImGui(*_scene);
 		debugPanel.draw();
 
 		// Update debug settings in renderer
@@ -220,9 +232,8 @@ void Application::run() {
 		_renderer.setDebugSettings(static_cast<float>(settings.debugViewInputs),
 								   static_cast<float>(settings.debugViewEquation));
 
-		// Render scene via RenderSystem with params
-		_renderSystem.render(*_scene, _renderer, renderParams,
-							 [this](VkCommandBuffer cmd) { _imguiLayer->render(cmd); });
+		// === Render UI to swapchain and present ===
+		_renderer.renderUI([this](VkCommandBuffer cmd) { _imguiLayer->render(cmd); });
 	}
 
 	FISHY_LOG_TRACE("Main render loop ended");

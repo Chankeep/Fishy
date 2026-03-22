@@ -10,6 +10,7 @@ namespace Fishy {
 
 class Scene;
 class Renderer;
+class SceneFramebuffer;
 struct LightData;
 
 /**
@@ -43,15 +44,14 @@ public:
 	~RenderSystem() = default;
 
 	/**
-	 * @brief Render the scene.
+	 * @brief Render the scene to an offscreen texture.
 	 *
 	 * @param scene The scene containing entities to render.
 	 * @param renderer The Vulkan renderer backend.
 	 * @param params Camera and light data for this frame.
-	 * @param uiCallback Optional callback for UI rendering.
+	 * @param target The offscreen framebuffer.
 	 */
-	void render(Scene& scene, Renderer& renderer, const RenderParams& params,
-				std::function<void(VkCommandBuffer)> uiCallback = nullptr);
+	void render(Scene& scene, Renderer& renderer, const RenderParams& params, SceneFramebuffer& target);
 };
 
 } // namespace Fishy
