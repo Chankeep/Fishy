@@ -1,30 +1,15 @@
-// glTF PBR Shader with Extensions
-// Based on Khronos glTF 2.0 PBR specification and WebGL PBR implementation
-// See https://github.com/KhronosGroup/glTF-WebGL-PBR
+// glTF PBR Shader with Multi-Light Support
+// Based on Khronos glTF 2.0 PBR specification
 // Supports: KHR_materials_clearcoat, KHR_materials_ior, KHR_materials_emissive_strength
 
-struct VSInput {
-    [[vk::location(0)]] float3 inPosition;
-    [[vk::location(1)]] float3 inNormal;
-    [[vk::location(2)]] float2 inTexCoord;
-    [[vk::location(3)]] float4 inTangent; // xyz = tangent, w = handedness
-};
+import Common;
+import BRDF;
+import Shadow;
+import NormalMapping;
 
-// Set 0: Global Data
-struct GlobalUBO {
-    float4x4 view;
-    float4x4 proj;
-    float4x4 lightSpaceMatrix;
-    float4 camPos;      // xyz = camera position, w = unused
-    float4 lightDir;    // xyz = light direction, w = unused
-    float4 lightColor;  // xyz = light color, w = unused
-    // Debug visualization controls
-    float debugViewInputs;   // 0=off, 1=baseColor, 2=normal, 3=AO, 4=emissive, 5=metallic, 6=roughness
-    float debugViewEquation; // 0=off, 1=diffuse, 2=F, 3=G, 4=D, 5=specular
-    // IBL parameters
-    float prefilteredMipLevels;
-    float iblIntensity;
-};
+// ============================================================================
+// Descriptor Set Bindings
+// ============================================================================
 
 // IBL textures (Set 0)
 [[vk::binding(0, 0)]] SamplerCube irradianceMap;
@@ -35,58 +20,9 @@ struct GlobalUBO {
 // Set 1: Bindless Texture Array
 [[vk::binding(0, 1)]] Sampler2D g_Textures[];
 
-// Set 2: Bindless Instance Data (SSBO Array)
-// Each instance contains transforms, texture indices, and material properties
-static const uint INVALID_TEXTURE_INDEX = 0xFFFFFFFF;
-
-
-struct InstanceData {
-    // Transform data
-    float4x4 model;
-
-    // --- Material Factors (Packed into vec4s for alignment) ---
-    // Data 0: Base Color (RGBA)
-    float4 baseColorFactor;
-
-    // Data 1: Emissive (RGB) + Strength (A)
-    float4 emissiveFactor;
-
-    // Data 2: PBR Standard
-    // x: metallic, y: roughness, z: normalScale, w: occlusionStrength
-    float4 pbrFactors;
-
-    // Data 3: Advanced / Alpha
-    // x: alphaCutoff, y: transmission, z: ior, w: clearcoatFactor
-    float4 extraFactors1;
-
-    // Data 4: Clearcoat details
-    // x: clearcoatRoughness, y: unused, z: unused, w: unused
-    float4 extraFactors2;
-
-    // --- Bindless Indices (Integers) ---
-    uint baseColorIndex;
-    uint metallicRoughnessIndex;
-    uint normalIndex;
-    uint occlusionIndex;
-
-    uint emissiveIndex;
-    uint clearcoatIndex;
-    uint clearcoatRoughnessIndex;
-    uint clearcoatNormalIndex;
-
-    uint transmissionIndex;
-    uint flags;     // Bitfield for alphaMode, doubleSided
-    uint objectID;  // Useful for mouse picking / debug
-    uint _pad0;     // Align to 16 bytes end
-};
-
-
-// Slang uses C-style pointers for Buffer Device Address
-// Push constants are passed as uniform parameters to entry points
-struct PushConstants {
-    InstanceData* instanceDataPtr;
-    GlobalUBO* globalDataPtr;
-};
+// ============================================================================
+// Vertex Shader Output (PBR-specific)
+// ============================================================================
 
 struct VSOutput {
     float4 pos : SV_Position;
@@ -95,229 +31,8 @@ struct VSOutput {
     float3 worldNormal;
     float3 worldTangent;
     float tangentW;
-    nointerpolation uint instanceID; // Pass to fragment shader for bindless lookup
+    nointerpolation uint instanceID;
 };
-
-// Helper: Sample bindless texture or return default
-float4 sampleBindless(uint texIndex, float2 uv, float4 defaultValue) {
-    if (texIndex == INVALID_TEXTURE_INDEX) {
-        return defaultValue;
-    }
-    return g_Textures[NonUniformResourceIndex(texIndex)].Sample(uv);
-}
-
-// Constants
-static const float M_PI = 3.141592653589793;
-static const float MIN_ROUGHNESS = 0.04;
-
-// Encapsulate the various inputs used by the various functions in the shading equation
-// We store values in this struct to simplify the integration of alternative implementations
-struct PBRInfo {
-    float NdotL;                  // cos angle between normal and light direction
-    float NdotV;                  // cos angle between normal and view direction
-    float NdotH;                  // cos angle between normal and half vector
-    float LdotH;                  // cos angle between light direction and half vector
-    float VdotH;                  // cos angle between view direction and half vector
-    float perceptualRoughness;    // roughness value, as authored by the model creator
-    float metalness;              // metallic value at the surface
-    float3 reflectance0;          // full reflectance color (normal incidence angle)
-    float3 reflectance90;         // reflectance color at grazing angle
-    float alphaRoughness;         // roughness mapped to a more linear change in the roughness
-    float3 diffuseColor;          // color contribution from diffuse lighting
-    float3 specularColor;         // color contribution from specular lighting
-};
-
-// ============================================================================
-// Color Space Conversion
-// ============================================================================
-
-float4 sRGBToLinear(float4 srgb) {
-    return float4(pow(srgb.rgb, float3(2.2)), srgb.a);
-}
-
-float3 linearToSRGB(float3 linear) {
-    return pow(linear, float3(1.0 / 2.2));
-}
-
-// ============================================================================
-// Normal Mapping
-// ============================================================================
-
-// Calculate the TBN matrix using either vertex tangents or screen-space derivatives
-// Reference: http://www.thetenthplanet.de/archives/1180
-float3x3 getTBN(VSOutput vertIn) {
-    float3 N = normalize(vertIn.worldNormal);
-    float3 T, B;
-    
-    // Check if we have valid tangent data (tangentW != 0 indicates valid tangent)
-    if (abs(vertIn.tangentW) > 0.001) {
-        // Use provided tangent
-        T = normalize(vertIn.worldTangent);
-        T = normalize(T - dot(T, N) * N); // Gram-Schmidt re-orthogonalization
-        B = cross(N, T) * vertIn.tangentW;
-    } else {
-        // Perturb normal using screen-space derivatives (no tangent provided)
-        // This method computes the cotangent frame from screen-space derivatives
-        float3 q1 = ddx(vertIn.worldPos);
-        float3 q2 = ddy(vertIn.worldPos);
-        float2 st1 = ddx(vertIn.texCoord);
-        float2 st2 = ddy(vertIn.texCoord);
-        
-        // Compute tangent following the reference GLSL implementation
-        // T = normalize(q1 * st2.t - q2 * st1.t) where .t is .y in GLSL
-        float3 t = normalize((q1 * st2.y - q2 * st1.y) / (st1.x * st2.y - st1.y * st2.x));
-
-
-        T = normalize(t - N * dot(N, t));
-        B = cross(N, T);
-    }
-    
-    // In Slang/HLSL, float3x3(row0, row1, row2) creates a matrix with these as rows.
-    // We want: result = TBN * tangentNormal (column vector, GLSL style)
-    // Using mul(tangentNormal, TBN) with tangentNormal as row vector gives:
-    // [tx, ty, tz] * | T.x T.y T.z |   = tx*T + ty*B + tz*N
-    //                | B.x B.y B.z |
-    //                | N.x N.y N.z |
-    // This is correct transformation from tangent space to world space.
-    return float3x3(T, B, N);
-}
-
-float calculateShadow(float4 fragPosLightSpace, float3 N, float3 L)
-{
-    // Perspective divide
-    float3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
-    
-    // Transform to [0, 1] range (Y-flip is handled in lightProj on CPU)
-    projCoords.xy = projCoords.xy * 0.5 + 0.5;
-    
-    // Outside shadow map bounds
-    if (projCoords.z > 1.0 || projCoords.x < 0.0 || projCoords.x > 1.0 || 
-        projCoords.y < 0.0 || projCoords.y > 1.0) {
-        return 0.0;
-    }
-    
-    // Calculate bias based on surface angle to light
-    float bias = max(0.005 * (1.0 - dot(N, L)), 0.001);
-    
-    // PCF 3x3
-    float shadow = 0.0;
-    float2 texelSize = 1.0 / float2(2048.0, 2048.0);
-    for (int x = -1; x <= 1; x++) {
-        for (int y = -1; y <= 1; y++) {
-            float2 offset = float2(x, y) * texelSize;
-            float closestDepth = shadowMap.Sample(projCoords.xy + offset).r;
-            shadow += (projCoords.z - bias) > closestDepth ? 1.0 : 0.0;
-        }
-    }
-    return shadow / 9.0;
-}
-
-// Get normal from bindless normal map
-float3 getNormalBindless(VSOutput vertIn, InstanceData inst) {
-    float4 normalSample = sampleBindless(inst.normalIndex, vertIn.texCoord, float4(0.5, 0.5, 1.0, 1.0));
-    float3 tangentNormal = normalSample.rgb * 2.0 - 1.0;
-    tangentNormal.xy *= inst.pbrFactors.z; // normalScale
-    tangentNormal = normalize(tangentNormal);
-    
-    return normalize(mul(tangentNormal, getTBN(vertIn)));
-}
-
-// Get clearcoat normal (separate from base normal)
-float3 getClearcoatNormalBindless(VSOutput vertIn, InstanceData inst, float3 geometricNormal) {
-    // Check if clearcoat normal texture is present
-    if (inst.clearcoatNormalIndex == INVALID_TEXTURE_INDEX) {
-        return geometricNormal;
-    }
-    
-    float4 normalSample = sampleBindless(inst.clearcoatNormalIndex, vertIn.texCoord, float4(0.5, 0.5, 1.0, 1.0));
-    float3 tangentNormal = normalSample.rgb * 2.0 - 1.0;
-    
-    return normalize(mul(tangentNormal, getTBN(vertIn)));
-}
-
-// ============================================================================
-// BRDF Functions
-// ============================================================================
-
-// Basic Lambertian diffuse
-// Implementation from Lambert's Photometria https://archive.org/details/lambertsphotome00lambgoog
-// See also [1], Equation 1
-float3 diffuse(PBRInfo pbrInputs) {
-    return pbrInputs.diffuseColor / M_PI;
-}
-
-// The following equation models the Fresnel reflectance term of the spec equation (aka F())
-// Implementation of fresnel from [4], Equation 15
-float3 specularReflection(PBRInfo pbrInputs) {
-    return pbrInputs.reflectance0 + (pbrInputs.reflectance90 - pbrInputs.reflectance0) * 
-           pow(clamp(1.0 - pbrInputs.VdotH, 0.0, 1.0), 5.0);
-}
-
-// This calculates the specular geometric attenuation (aka G()),
-// where rougher material will reflect less light back to the viewer.
-// This implementation is based on [1] Equation 4, and we adopt their modifications to
-// alphaRoughness as input as originally proposed in [2].
-float geometricOcclusion(PBRInfo pbrInputs) {
-    float NdotL = pbrInputs.NdotL;
-    float NdotV = pbrInputs.NdotV;
-    float r = pbrInputs.alphaRoughness;
-
-    float attenuationL = 2.0 * NdotL / (NdotL + sqrt(r * r + (1.0 - r * r) * (NdotL * NdotL)));
-    float attenuationV = 2.0 * NdotV / (NdotV + sqrt(r * r + (1.0 - r * r) * (NdotV * NdotV)));
-    return attenuationL * attenuationV;
-}
-
-// The following equation(s) model the distribution of microfacet normals across the area being drawn (aka D())
-// Implementation from "Average Irregularity Representation of a Roughened Surface for Ray Reflection" 
-// by T. S. Trowbridge, and K. P. Reitz
-// Follows the distribution function recommended in the SIGGRAPH 2013 course notes from EPIC Games [1], Equation 3.
-float microfacetDistribution(PBRInfo pbrInputs) {
-    float roughnessSq = pbrInputs.alphaRoughness * pbrInputs.alphaRoughness;
-    float f = (pbrInputs.NdotH * roughnessSq - pbrInputs.NdotH) * pbrInputs.NdotH + 1.0;
-    return roughnessSq / (M_PI * f * f);
-}
-
-// Calculate F0 from IOR
-float3 F0FromIOR(float ior) {
-    float f = (ior - 1.0) / (ior + 1.0);
-    return float3(f * f);
-}
-
-// ============================================================================
-// Clearcoat BRDF
-// ============================================================================
-
-// Clearcoat uses a simplified BRDF with F0 = 0.04 (dielectric)
-float3 evaluateClearcoatBRDF(float3 N, float3 V, float3 L, float clearcoatRoughness) {
-    float3 H = normalize(V + L);
-    
-    float NdotL = max(dot(N, L), 0.001);
-    float NdotV = max(dot(N, V), 0.001);
-    float NdotH = clamp(dot(N, H), 0.0, 1.0);
-    float VdotH = clamp(dot(V, H), 0.0, 1.0);
-    
-    if (NdotL <= 0.0) return float3(0.0);
-    
-    float alphaRoughness = clearcoatRoughness * clearcoatRoughness;
-    
-    // F0 = 0.04 for dielectric clearcoat
-    float3 F0 = float3(0.04);
-    float3 F = F0 + (float3(1.0) - F0) * pow(clamp(1.0 - VdotH, 0.0, 1.0), 5.0);
-    
-    // D - GGX Distribution
-    float roughnessSq = alphaRoughness * alphaRoughness;
-    float f = (NdotH * roughnessSq - NdotH) * NdotH + 1.0;
-    float D = roughnessSq / (M_PI * f * f);
-    
-    // G - Geometric attenuation
-    float attenuationL = 2.0 * NdotL / (NdotL + sqrt(roughnessSq + (1.0 - roughnessSq) * (NdotL * NdotL)));
-    float attenuationV = 2.0 * NdotV / (NdotV + sqrt(roughnessSq + (1.0 - roughnessSq) * (NdotV * NdotV)));
-    float G = attenuationL * attenuationV;
-    
-    float3 specular = (D * G * F) / (4.0 * NdotL * NdotV);
-    
-    return specular * NdotL;
-}
 
 // ============================================================================
 // Vertex Shader
@@ -325,9 +40,7 @@ float3 evaluateClearcoatBRDF(float3 N, float3 V, float3 L, float clearcoatRoughn
 
 [shader("vertex")]
 VSOutput vertMain(VSInput input, uniform PushConstants pc, uint instanceID : SV_StartInstanceLocation) {
-    // Get per-instance data via BDA pointer
     InstanceData inst = pc.instanceDataPtr[instanceID];
-    
 
     VSOutput output;
     float4 worldPos = mul(inst.model, float4(input.inPosition, 1.0));
@@ -335,140 +48,123 @@ VSOutput vertMain(VSInput input, uniform PushConstants pc, uint instanceID : SV_
     output.pos = mul(pc.globalDataPtr.proj, mul(pc.globalDataPtr.view, worldPos));
     output.texCoord = input.inTexCoord;
     
-    // Compute normal matrix from model matrix (transpose of inverse of upper-left 3x3)
-    // For uniform scaling, this is just the upper-left 3x3 of model matrix
     float3x3 normalMat = (float3x3)inst.model;
     output.worldNormal = normalize(mul(normalMat, input.inNormal));
     output.worldTangent = normalize(mul(normalMat, input.inTangent.xyz));
     output.tangentW = input.inTangent.w;
-    
-    // Pass instance ID to fragment shader for material lookup
     output.instanceID = instanceID;
 
     return output;
 }
 
+// ============================================================================
 // Fragment Shader
+// ============================================================================
+
 [shader("fragment")]
 float4 fragMain(VSOutput vertIn, uniform PushConstants pc) : SV_Target
 {
     float2 uv = vertIn.texCoord;
-    
-    // Get instance data via BDA pointer
     InstanceData inst = pc.instanceDataPtr[vertIn.instanceID];
     
-    // Sample textures using bindless array
-    float4 baseColorSample = sampleBindless(inst.baseColorIndex, uv, float4(1.0));
+    // ========================================================================
+    // Material Sampling
+    // ========================================================================
+    
+    float4 baseColorSample = sampleBindless(g_Textures, inst.baseColorIndex, uv, float4(1.0));
     float4 baseColor = sRGBToLinear(baseColorSample) * inst.baseColorFactor;
     
     // Alpha handling
     uint alphaMode = (inst.flags >> 1) & 0x3;
     if (alphaMode == 1) { // MASK mode
-        if (baseColor.a < inst.extraFactors1.x) { // alphaCutoff
-            discard;
-        }
+        if (baseColor.a < inst.extraFactors1.x) { discard; }
         baseColor.a = 1.0;
     }
     
-    // glTF: metallic in B channel, roughness in G channel
-    // pbrFactors: x=metallic, y=roughness, z=normalScale, w=occlusionStrength
-    float4 mrSample = sampleBindless(inst.metallicRoughnessIndex, uv, float4(1.0, 1.0, 1.0, 1.0));
-    float perceptualRoughness = clamp(mrSample.g * inst.pbrFactors.y, MIN_ROUGHNESS, 1.0); // roughnessFactor
-    float metallic = clamp(mrSample.b * inst.pbrFactors.x, 0.0, 1.0); // metallicFactor
-    
-    // Roughness is authored as perceptual roughness; convert by squaring
+    // Metallic-Roughness
+    float4 mrSample = sampleBindless(g_Textures, inst.metallicRoughnessIndex, uv, float4(1.0, 1.0, 1.0, 1.0));
+    float perceptualRoughness = clamp(mrSample.g * inst.pbrFactors.y, MIN_ROUGHNESS, 1.0);
+    float metallic = clamp(mrSample.b * inst.pbrFactors.x, 0.0, 1.0);
     float alphaRoughness = perceptualRoughness * perceptualRoughness;
     
-    // Calculate reflectance - use default IOR of 1.5
-    float3 f0 = float3(0.04); // F0FromIOR(1.5)
-    
+    // Reflectance
+    float3 f0 = float3(0.04);
     float3 diffuseColor = baseColor.rgb * (float3(1.0) - f0) * (1.0 - metallic);
     float3 specularColor = lerp(f0, baseColor.rgb, metallic);
     
-    // Compute reflectance
     float reflectance = max(max(specularColor.r, specularColor.g), specularColor.b);
     float reflectance90 = clamp(reflectance * 25.0, 0.0, 1.0);
     float3 specularEnvironmentR0 = specularColor;
-    float3 specularEnvironmentR90 = float3(reflectance90);
     
-    // Get normal - check if normal map is present (bit 5 = HasNormalMap)
+    // Normal
     bool hasNormalMap = (inst.flags & (1 << 5)) != 0 && inst.normalIndex != INVALID_TEXTURE_INDEX;
-    float3 n = hasNormalMap ? getNormalBindless(vertIn, inst) : normalize(vertIn.worldNormal);
+    float3 n = hasNormalMap 
+        ? getNormalBindless(g_Textures, vertIn.worldPos, uv, vertIn.worldNormal, vertIn.worldTangent, vertIn.tangentW, inst) 
+        : normalize(vertIn.worldNormal);
     float3 v = normalize(pc.globalDataPtr.camPos.xyz - vertIn.worldPos);
-    float3 l = normalize(pc.globalDataPtr.lightDir.xyz);
-    float3 h = normalize(l + v);
     float3 reflection = normalize(reflect(-v, n));
-
-    float NdotL = clamp(dot(n, l), 0.001, 1.0);
     float NdotV = clamp(abs(dot(n, v)), 0.001, 1.0);
-    float NdotH = clamp(dot(n, h), 0.0, 1.0);
-    float LdotH = clamp(dot(l, h), 0.0, 1.0);
-    float VdotH = clamp(dot(v, h), 0.0, 1.0);
 
     // ========================================================================
-    // Build PBRInfo struct
+    // Multi-Light Loop: accumulate direct lighting with per-light shadows
     // ========================================================================
     
-    PBRInfo pbrInputs;
-    pbrInputs.NdotL = NdotL;
-    pbrInputs.NdotV = NdotV;
-    pbrInputs.NdotH = NdotH;
-    pbrInputs.LdotH = LdotH;
-    pbrInputs.VdotH = VdotH;
-    pbrInputs.perceptualRoughness = perceptualRoughness;
-    pbrInputs.metalness = metallic;
-    pbrInputs.reflectance0 = specularEnvironmentR0;
-    pbrInputs.reflectance90 = specularEnvironmentR90;
-    pbrInputs.alphaRoughness = alphaRoughness;
-    pbrInputs.diffuseColor = diffuseColor;
-    pbrInputs.specularColor = specularColor;
+    uint lightCount = pc.globalDataPtr.lightCount;
+    float3 color = float3(0.0);
+    for (uint si = 0; si < lightCount; si++) {
+        LightData sLight = pc.lightDataPtr[si];
+        float3 contrib = evaluateLight(sLight, vertIn.worldPos, n, v,
+                                       diffuseColor, specularColor,
+                                       specularEnvironmentR0, reflectance90,
+                                       alphaRoughness, NdotV);
 
-    // ========================================================================
-    // Calculate the shading terms for the microfacet specular shading model
-    // ========================================================================
-    
-    float3 F = specularReflection(pbrInputs);
-    float G = geometricOcclusion(pbrInputs);
-    float D = microfacetDistribution(pbrInputs);
+        int shadowIdx = int(sLight.spotAngles.z);
+        if (shadowIdx >= 0) {
+            ShadowData sd = pc.shadowDataPtr[shadowIdx];
+            float3 L = getLightDirection(sLight, vertIn.worldPos);
+            float sf = calculateShadowAtlas(shadowMap, sd, vertIn.worldPos, n, L);
+            contrib *= (1.0 - sf * 0.9);
+        }
 
-    // Calculation of analytical lighting contribution
-    float3 diffuseContrib = (float3(1.0) - F) * diffuse(pbrInputs);
-    float3 specContrib = F * G * D / (4.0 * NdotL * NdotV);
-    
-    // Obtain final intensity as reflectance (BRDF) scaled by the energy of the light (cosine law)
-    float3 directLight = NdotL * pc.globalDataPtr.lightColor.xyz * (diffuseContrib + specContrib);
-    
-    // Apply shadow
-    float4 fragPosLightSpace = mul(pc.globalDataPtr.lightSpaceMatrix, float4(vertIn.worldPos, 1.0));
-    float shadow = calculateShadow(fragPosLightSpace, n, l);
-    float3 color = directLight * (1.0 - shadow * 0.9);  // Shadow darkens direct light (90% reduction)
-    
-    // Clearcoat layer
-    // extraFactors1: x=alphaCutoff, y=transmission, z=ior, w=clearcoatFactor
-    // extraFactors2: x=clearcoatRoughness, yzw=unused
-    float clearcoatFactor = inst.extraFactors1.w;
-    if (clearcoatFactor > 0.0) {
-        float4 ccSample = sampleBindless(inst.clearcoatIndex, uv, float4(1.0));
-        float clearcoatStrength = ccSample.r * clearcoatFactor;
-        float4 ccrSample = sampleBindless(inst.clearcoatRoughnessIndex, uv, float4(1.0));
-        float clearcoatRoughness = clamp(ccrSample.g * inst.extraFactors2.x, MIN_ROUGHNESS, 1.0);
-        
-        float3 clearcoatN = getClearcoatNormalBindless(vertIn, inst, normalize(vertIn.worldNormal));
-        float3 clearcoatBRDF = evaluateClearcoatBRDF(clearcoatN, v, l, clearcoatRoughness) * pc.globalDataPtr.lightColor.xyz;
-        
-        // Fresnel for clearcoat energy conservation
-        float clearcoatNdotV = max(dot(clearcoatN, v), 0.0);
-        float clearcoatFresnel = 0.04 + (1.0 - 0.04) * pow(1.0 - clearcoatNdotV, 5.0);
-        
-        // Blend: clearcoat on top, attenuating base layer
-        color = color * (1.0 - clearcoatStrength * clearcoatFresnel) + clearcoatBRDF * clearcoatStrength;
+        color += contrib;
     }
     
-    // Apply ambient occlusion
+    // ========================================================================
+    // Clearcoat Layer
+    // ========================================================================
+    
+    float clearcoatFactor = inst.extraFactors1.w;
+    if (clearcoatFactor > 0.0) {
+        float4 ccSample = sampleBindless(g_Textures, inst.clearcoatIndex, uv, float4(1.0));
+        float clearcoatStrength = ccSample.r * clearcoatFactor;
+        float4 ccrSample = sampleBindless(g_Textures, inst.clearcoatRoughnessIndex, uv, float4(1.0));
+        float clearcoatRoughness = clamp(ccrSample.g * inst.extraFactors2.x, MIN_ROUGHNESS, 1.0);
+        
+        float3 clearcoatN = getClearcoatNormalBindless(g_Textures, vertIn.worldPos, uv,
+            vertIn.worldNormal, vertIn.worldTangent, vertIn.tangentW, inst, normalize(vertIn.worldNormal));
+        
+        float3 clearcoatTotal = float3(0.0);
+        for (uint i = 0; i < lightCount; i++) {
+            LightData light = pc.lightDataPtr[i];
+            float3 lightColor = light.colorAndIntensity.xyz * light.colorAndIntensity.w;
+            float3 ccL = getLightDirection(light, vertIn.worldPos);
+            float ccAtten = getLightAttenuation(light, vertIn.worldPos);
+            clearcoatTotal += evaluateClearcoatBRDF(clearcoatN, v, ccL, clearcoatRoughness) * lightColor * ccAtten;
+        }
+        
+        float clearcoatNdotV = max(dot(clearcoatN, v), 0.0);
+        float clearcoatFresnel = 0.04 + (1.0 - 0.04) * pow(1.0 - clearcoatNdotV, 5.0);
+        color = color * (1.0 - clearcoatStrength * clearcoatFresnel) + clearcoatTotal * clearcoatStrength;
+    }
+    
+    // ========================================================================
+    // Ambient Occlusion
+    // ========================================================================
+    
     bool hasOcclusion = (inst.flags & (1 << 6)) != 0 && inst.occlusionIndex != INVALID_TEXTURE_INDEX;
     if (hasOcclusion) {
-        float ao = sampleBindless(inst.occlusionIndex, uv, float4(1.0)).r;
-        color = lerp(color, color * ao, inst.pbrFactors.w); // occlusionStrength
+        float ao = sampleBindless(g_Textures, inst.occlusionIndex, uv, float4(1.0)).r;
+        color = lerp(color, color * ao, inst.pbrFactors.w);
     }
     
     // ========================================================================
@@ -477,127 +173,134 @@ float4 fragMain(VSOutput vertIn, uniform PushConstants pc) : SV_Target
     
     float3 ambient = float3(0.0);
     if (pc.globalDataPtr.iblIntensity > 0.0) {
-        // Diffuse IBL - sample irradiance map with normal
         float3 irradiance = irradianceMap.Sample(n).rgb;
         float3 diffuseIBL = diffuseColor * irradiance;
         
-        // Specular IBL - sample pre-filtered environment with reflection and roughness-based LOD
         float lod = perceptualRoughness * pc.globalDataPtr.prefilteredMipLevels;
         float3 prefilteredColor = prefilteredEnvMap.SampleLevel(reflection, lod).rgb;
         
-        // BRDF LUT lookup for split-sum approximation
         float2 brdf = brdfLUT.Sample(float2(NdotV, perceptualRoughness)).rg;
         float3 specularIBL = prefilteredColor * (specularColor * brdf.x + brdf.y);
         
-        // Combine diffuse and specular IBL
         ambient = (diffuseIBL + specularIBL) * pc.globalDataPtr.iblIntensity;
     } else {
-        // Fallback to simple ambient when IBL not available
-        ambient = float3(0.03) * baseColor.rgb;
+        ambient = float3(0.02) * baseColor.rgb;
     }
-    // Apply shadow to ambient as well (reduced effect to simulate indirect shadow)
-    color += ambient * (1.0 - shadow * 0.5);  // Ambient also darkened in shadow (50% reduction)
     
+    // Apply combined shadow to ambient (max across all shadow casters)
+    float combinedShadow = 0.0;
+    for (uint ai = 0; ai < lightCount; ai++) {
+        int aIdx = int(pc.lightDataPtr[ai].spotAngles.z);
+        if (aIdx >= 0) {
+            ShadowData asd = pc.shadowDataPtr[aIdx];
+            float3 aL = getLightDirection(pc.lightDataPtr[ai], vertIn.worldPos);
+            float sv = calculateShadowAtlas(shadowMap, asd, vertIn.worldPos, n, aL);
+            combinedShadow = max(combinedShadow, sv);
+        }
+    }
+    color += ambient * (1.0 - combinedShadow * 0.9);
+    
+    // ========================================================================
     // Emissive
+    // ========================================================================
+    
     float emissiveStrength = inst.emissiveFactor.w;
     float3 emissive = inst.emissiveFactor.rgb * emissiveStrength;
     if (inst.emissiveIndex != INVALID_TEXTURE_INDEX) {
-        emissive *= sRGBToLinear(sampleBindless(inst.emissiveIndex, uv, float4(0.0))).rgb;
+        emissive *= sRGBToLinear(sampleBindless(g_Textures, inst.emissiveIndex, uv, float4(0.0))).rgb;
     }
     color += emissive;
     
+    // ========================================================================
     // Debug Visualization
+    // ========================================================================
+    
     if (pc.globalDataPtr.debugViewInputs > 0.0) {
         int index = int(pc.globalDataPtr.debugViewInputs);
         switch (index) {
-            case 1: // Base Color
-                color = baseColor.rgb;
-                break;
-            case 2: // Shading Normal
-                color = n * 0.5 + 0.5;
-                break;
-            case 3: // AO
-                color = hasOcclusion ? sampleBindless(inst.occlusionIndex, uv, float4(1.0)).rrr : float3(1.0);
-                break;
-            case 4: // Emissive
-                color = emissive;
-                break;
-            case 5: // Metallic
-                color = sampleBindless(inst.metallicRoughnessIndex, uv, float4(1.0)).bbb;
-                break;
-            case 6: // Roughness
-                color = sampleBindless(inst.metallicRoughnessIndex, uv, float4(1.0)).ggg;
-                break;
-            case 7: // UV
-                color = float3(uv, 0.0);
-                break;
-            case 8: // Geometric Normal
-                color = normalize(vertIn.worldNormal);
-                break;
-            case 9: // Tangent
+            case 1: color = baseColor.rgb; break;
+            case 2: color = n * 0.5 + 0.5; break;
+            case 3: color = hasOcclusion ? sampleBindless(g_Textures, inst.occlusionIndex, uv, float4(1.0)).rrr : float3(1.0); break;
+            case 4: color = emissive; break;
+            case 5: color = sampleBindless(g_Textures, inst.metallicRoughnessIndex, uv, float4(1.0)).bbb; break;
+            case 6: color = sampleBindless(g_Textures, inst.metallicRoughnessIndex, uv, float4(1.0)).ggg; break;
+            case 7: color = float3(uv, 0.0); break;
+            case 8: color = normalize(vertIn.worldNormal); break;
+            case 9:
                 {
-                    float3x3 TBN = getTBN(vertIn);
+                    float3x3 TBN = getTBN(vertIn.worldPos, uv, vertIn.worldNormal, vertIn.worldTangent, vertIn.tangentW);
                     color = TBN[0]*0.5+0.5;
                 }
                 break;
-            case 10: // Bitangent
+            case 10:
                 {
-                    float3x3 TBN = getTBN(vertIn);
+                    float3x3 TBN = getTBN(vertIn.worldPos, uv, vertIn.worldNormal, vertIn.worldTangent, vertIn.tangentW);
                     color = TBN[1]*0.5+0.5;
                 }
                 break;
-            case 11: // Shadow
+            case 11: // Shadow debug: R=shadow0, G=shadow1, B=shadow2
                 {
-                    float4 fragPosLightSpace = mul(pc.globalDataPtr.lightSpaceMatrix, float4(vertIn.worldPos, 1.0));
-                    float shadowVal = calculateShadow(fragPosLightSpace, n, l);
-                    color = float3(1.0 - shadowVal); // White = lit, Black = shadowed
+                    float3 shadowVals = float3(0.0);
+                    for (uint di = 0; di < lightCount; di++) {
+                        int sIdx = int(pc.lightDataPtr[di].spotAngles.z);
+                        if (sIdx >= 0 && sIdx < 3) {
+                            ShadowData sd = pc.shadowDataPtr[sIdx];
+                            float3 dL = getLightDirection(pc.lightDataPtr[di], vertIn.worldPos);
+                            float sv = calculateShadowAtlas(shadowMap, sd, vertIn.worldPos, n, dL);
+                            if (sIdx == 0) shadowVals.r = sv;
+                            else if (sIdx == 1) shadowVals.g = sv;
+                            else shadowVals.b = sv;
+                        }
+                    }
+                    color = float3(1.0) - shadowVals;
                 }
                 break;
         }
-        
         return float4(color, baseColor.a);
     }
     
-    // PBR equation debug visualization
-    if (pc.globalDataPtr.debugViewEquation > 0.0) {
-        int index = int(pc.globalDataPtr.debugViewEquation);
-        switch (index) {
-            case 1: // Diffuse contribution
-                color = diffuseContrib;
-                break;
-            case 2: // Fresnel (F)
-                color = F;
-                break;
-            case 3: // Geometric occlusion (G)
-                color = float3(G);
-                break;
-            case 4: // Microfacet distribution (D)
-                color = float3(D);
-                break;
-            case 5: // Specular contribution
-                color = specContrib;
-                break;
+    // PBR equation debug
+    if (pc.globalDataPtr.debugViewEquation > 0.0 && lightCount > 0) {
+        LightData dbgLight = pc.lightDataPtr[0];
+        float3 dbgL = getLightDirection(dbgLight, vertIn.worldPos);
+        float3 dbgH = normalize(dbgL + v);
+        
+        PBRInfo dbgPbr;
+        dbgPbr.NdotL = clamp(dot(n, dbgL), 0.001, 1.0);
+        dbgPbr.NdotV = NdotV;
+        dbgPbr.NdotH = clamp(dot(n, dbgH), 0.0, 1.0);
+        dbgPbr.LdotH = clamp(dot(dbgL, dbgH), 0.0, 1.0);
+        dbgPbr.VdotH = clamp(dot(v, dbgH), 0.0, 1.0);
+        dbgPbr.reflectance0 = specularEnvironmentR0;
+        dbgPbr.reflectance90 = float3(reflectance90);
+        dbgPbr.alphaRoughness = alphaRoughness;
+        dbgPbr.diffuseColor = diffuseColor;
+        dbgPbr.specularColor = specularColor;
+        
+        float3 dbgF = specularReflection(dbgPbr);
+        float dbgG = geometricOcclusion(dbgPbr);
+        float dbgD = microfacetDistribution(dbgPbr);
+        float3 dbgDiffuseContrib = (float3(1.0) - dbgF) * diffuseBRDF(diffuseColor);
+        float3 dbgSpecContrib = dbgF * dbgG * dbgD / (4.0 * dbgPbr.NdotL * dbgPbr.NdotV);
+        
+        int eqIndex = int(pc.globalDataPtr.debugViewEquation);
+        switch (eqIndex) {
+            case 1: color = dbgDiffuseContrib; break;
+            case 2: color = dbgF; break;
+            case 3: color = float3(dbgG); break;
+            case 4: color = float3(dbgD); break;
+            case 5: color = dbgSpecContrib; break;
         }
         color = linearToSRGB(color);
         return float4(color, baseColor.a);
     }
 
-    
-
     // ========================================================================
     // Tone mapping and gamma correction
     // ========================================================================
     
-    // Reinhard tone mapping
     color = color / (color + float3(1.0));
-    
-    // Gamma correction
     color = linearToSRGB(color);
     
     return float4(color, baseColor.a);
 }
-
-
-
-
-

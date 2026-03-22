@@ -10,6 +10,7 @@ namespace Fishy {
 
 class Scene;
 class Renderer;
+struct LightData;
 
 /**
  * @brief Parameters for rendering a frame.
@@ -22,9 +23,8 @@ struct RenderParams {
 	glm::mat4 projectionMatrix{1.0f};
 	glm::vec3 cameraPosition{0.0f, 0.0f, 3.0f};
 
-	// Light data (from LightingSystem - first directional light)
-	glm::vec3 lightDirection{1.0f, 1.0f, 1.0f};
-	glm::vec3 lightColor{5.0f, 5.0f, 5.0f};
+	// Light data (from LightingSystem, mutable for shadow index patching)
+	std::vector<LightData>* lights = nullptr;
 
 	// Visible entities after frustum culling (from CullingSystem)
 	const std::vector<entt::entity>* visibleEntities = nullptr;

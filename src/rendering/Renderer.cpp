@@ -11,9 +11,11 @@
 #include "core/VulkanImage.h"
 #include "core/VulkanUtils.h"
 #include "core/Window.h"
+#include "ecs/components/LightComponent.h"
 #include "ecs/components/MeshComponent.h"
 #include "ecs/components/MeshRendererComponent.h"
 #include "ecs/components/TransformComponent.h"
+#include "ecs/systems/LightingSystem.h"
 #include "ecs/systems/RenderSystem.h" // For RenderParams
 #include "passes/MainRenderPass.h"
 #include "passes/ShadowMapPass.h"
@@ -102,9 +104,11 @@ void Renderer::renderScene(Scene& scene, const RenderParams& params,
 
 	const auto& cmd = _frames[_currentFrameIndex].commandBuffer;
 
-	// Update uniforms
+	// Update per-frame GPU data
 	_currentRenderParams = &params;
 	updateUniformBuffer(_currentFrameIndex);
+	updateShadowData();    // Must come before updateLightBuffer (patches shadowIndex in _lightDataCopy)
+	updateLightBuffer();   // Uploads _lightDataCopy with patched shadow indices
 
 	// Prepare swapchain for rendering
 	prepareSwapchainForRendering(cmd);
@@ -158,6 +162,13 @@ RenderGraphContext Renderer::createRenderContext(const RenderParams& params) {
 		.bindlessTextureSet = *_bindlessTextureSet,
 		.instanceDataAddress = _frames[_currentFrameIndex].instanceDataBuffer->getDeviceAddress(),
 		.globalDataAddress = _frames[_currentFrameIndex].uniformBuffer->getDeviceAddress(),
+		.lightDataAddress = _frames[_currentFrameIndex].lightDataBuffer
+								? _frames[_currentFrameIndex].lightDataBuffer->getDeviceAddress()
+								: 0,
+		.shadowDataAddress = _frames[_currentFrameIndex].shadowDataBuffer
+								? _frames[_currentFrameIndex].shadowDataBuffer->getDeviceAddress()
+								: 0,
+		.shadowCasterCount = _shadowCasterCount,
 		.drawBatches = _drawBatches,
 		.indirectBuffer = _frames[_currentFrameIndex].indirectBuffer.get(),
 		.vertexBuffer = _unifiedVertexBuffer.get(),
@@ -551,7 +562,7 @@ void Renderer::registerShadowMapPass() {
 	FISHY_LOG_TRACE("Creating shadowMap image...");
 	vk::ImageCreateInfo imageInfo{.imageType = vk::ImageType::e2D,
 								  .format = vk::Format::eD32Sfloat,
-								  .extent = {SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, 1},
+								  .extent = {SHADOW_ATLAS_SIZE, SHADOW_ATLAS_SIZE, 1},
 								  .mipLevels = 1,
 								  .arrayLayers = 1,
 								  .samples = vk::SampleCountFlagBits::e1,
@@ -608,7 +619,7 @@ void Renderer::registerShadowMapPass() {
 
 	_renderGraph.addPass<ShadowMapPass>(*_shadowPipeline, std::move(image), std::move(sampler));
 
-	FISHY_LOG_TRACE(" shadowMap image created: {}x{}", SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
+	FISHY_LOG_TRACE(" shadowMap image created: {}x{}", SHADOW_ATLAS_SIZE, SHADOW_ATLAS_SIZE);
 }
 
 void Renderer::createUniformBuffers() {
@@ -653,112 +664,18 @@ void Renderer::updateUniformBuffer(uint32_t frameIndex) {
 	auto extent = _swapChain->getExtent();
 	UniformBufferObject ubo{};
 
-	// Use RenderParams from ECS systems
 	if (_currentRenderParams) {
 		ubo.view = _currentRenderParams->viewMatrix;
 		ubo.proj = _currentRenderParams->projectionMatrix;
-
-		// === Frustum-Based Light Space Matrix ===
-		// Use a limited shadow distance for higher resolution on nearby objects
-		constexpr float shadowDistance = 10.0f; // Max shadow render distance
-
-		// Build a shadow-specific projection with limited far plane
-		float aspect =
-			static_cast<float>(_swapChain->getExtent().width) / static_cast<float>(_swapChain->getExtent().height);
-
-		// Get near plane from current projection (typically 0.1)
-		// For shadow: use original near, but limit far to shadowDistance
-		glm::mat4 shadowProj = ubo.proj;
-
-		// Compute camera frustum corners for shadow distance
-		// Use a smaller far plane for tighter shadow bounds
-		glm::mat4 limitedProj = glm::perspective(glm::radians(45.0f), aspect, 0.1f, shadowDistance);
-		limitedProj[1][1] *= -1.0f; // Vulkan Y-flip
-		glm::mat4 invViewProj = glm::inverse(limitedProj * ubo.view);
-
-		// NDC corners of the view frustum (Vulkan Z: 0 to 1)
-		std::array<glm::vec4, 8> ndcCorners = {{
-			{-1, -1, 0, 1},
-			{1, -1, 0, 1},
-			{-1, 1, 0, 1},
-			{1, 1, 0, 1}, // Near plane
-			{-1, -1, 1, 1},
-			{1, -1, 1, 1},
-			{-1, 1, 1, 1},
-			{1, 1, 1, 1} // Far plane
-		}};
-
-		std::array<glm::vec3, 8> worldCorners;
-		for (int i = 0; i < 8; ++i) {
-			glm::vec4 p = invViewProj * ndcCorners[i];
-			worldCorners[i] = glm::vec3(p) / p.w;
-		}
-
-		// Step 2: Build light view matrix
-		glm::vec3 lightDir = glm::normalize(_currentRenderParams->lightDirection);
-
-		// Use frustum center as look-at target for better centering
-		glm::vec3 frustumCenter{0.0f};
-		for (const auto& corner : worldCorners) {
-			frustumCenter += corner;
-		}
-		frustumCenter /= 8.0f;
-
-		glm::vec3 lightPos = frustumCenter - lightDir; // Place light far enough
-		glm::mat4 lightView = glm::lookAt(lightPos, frustumCenter, glm::vec3(0.0f, 1.0f, 0.0f));
-
-		// Step 3: Transform frustum corners to light space and compute AABB
-		float minX = std::numeric_limits<float>::max();
-		float maxX = std::numeric_limits<float>::lowest();
-		float minY = std::numeric_limits<float>::max();
-		float maxY = std::numeric_limits<float>::lowest();
-		float minZ = std::numeric_limits<float>::max();
-		float maxZ = std::numeric_limits<float>::lowest();
-
-		for (const auto& corner : worldCorners) {
-			glm::vec4 lightSpacePos = lightView * glm::vec4(corner, 1.0f);
-			minX = std::min(minX, lightSpacePos.x);
-			maxX = std::max(maxX, lightSpacePos.x);
-			minY = std::min(minY, lightSpacePos.y);
-			maxY = std::max(maxY, lightSpacePos.y);
-			minZ = std::min(minZ, lightSpacePos.z);
-			maxZ = std::max(maxZ, lightSpacePos.z);
-		}
-
-		// Step 4: Extend Z bounds to capture shadow casters behind the camera
-		// Use a smaller extension for tighter bounds
-		float zExtension = 3.0f;
-		minZ -= zExtension;
-
-		// Minimal padding - let the frustum define the bounds tightly
-		float padding = 1.0f;
-		minX -= padding;
-		maxX += padding;
-		minY -= padding;
-		maxY += padding;
-
-		// Step 5: Build orthographic projection from AABB
-		float nearPlane = -maxZ;
-		float farPlane = -minZ;
-		if (nearPlane >= farPlane) {
-			nearPlane = 0.1f;
-			farPlane = 200.0f;
-		}
-		glm::mat4 lightProj = glm::ortho(minX, maxX, minY, maxY, nearPlane, farPlane);
-		lightProj[1][1] *= -1.0f; // Flip Y for Vulkan
-
-		ubo.lightSpaceMatrix = lightProj * lightView;
 		ubo.camPos = glm::vec4(_currentRenderParams->cameraPosition, 0.0f);
-		ubo.lightDir = glm::vec4(lightDir, 0.0f);
-		ubo.lightColor = glm::vec4(_currentRenderParams->lightColor, 0.0f);
+		ubo.lightCount =
+			_currentRenderParams->lights ? static_cast<uint32_t>(_currentRenderParams->lights->size()) : 0;
 	} else {
-		// Fallback defaults if no RenderParams (shouldn't happen in normal use)
 		ubo.view = glm::mat4(1.0f);
 		ubo.proj = glm::perspective(glm::radians(45.0f),
 									static_cast<float>(extent.width) / static_cast<float>(extent.height), 0.1f, 100.0f);
 		ubo.camPos = glm::vec4(0.0f, 0.0f, 3.0f, 0.0f);
-		ubo.lightDir = glm::vec4(glm::normalize(glm::vec3(1.0f, 1.0f, 1.0f)), 0.0f);
-		ubo.lightColor = glm::vec4(5.0f, 5.0f, 5.0f, 0.0f);
+		ubo.lightCount = 0;
 	}
 
 	// Debug settings
@@ -768,13 +685,162 @@ void Renderer::updateUniformBuffer(uint32_t frameIndex) {
 	// IBL parameters
 	if (_iblEnvironment) {
 		ubo.prefilteredMipLevels = static_cast<float>(_iblEnvironment->prefilteredMipLevels);
-		ubo.iblIntensity = 1.0f;
+		ubo.iblIntensity = 0.5f;
 	} else {
 		ubo.prefilteredMipLevels = 1.0f;
-		ubo.iblIntensity = 0.0f; // Disable IBL if no environment
+		ubo.iblIntensity = 0.0f;
 	}
 
 	_frames[frameIndex].uniformBuffer->upload(&ubo, sizeof(ubo));
+}
+
+void Renderer::updateLightBuffer() {
+	if (!_currentRenderParams || !_currentRenderParams->lights || _currentRenderParams->lights->empty()) {
+		return;
+	}
+
+	auto& frame = _frames[_currentFrameIndex];
+	const auto& lights = *_currentRenderParams->lights;
+	vk::DeviceSize requiredSize = lights.size() * sizeof(LightData);
+
+	if (!frame.lightDataBuffer || frame.lightDataBuffer->getSize() < requiredSize) {
+		vk::DeviceSize allocSize = std::max(requiredSize, static_cast<vk::DeviceSize>(16 * sizeof(LightData)));
+
+		frame.lightDataBuffer = std::make_unique<VulkanBuffer>(
+			_device, allocSize, vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress,
+			vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+		frame.lightDataBuffer->map();
+	}
+	frame.lightDataBuffer->upload(lights.data(), requiredSize);
+}
+
+glm::mat4 Renderer::computeFrustumLightSpaceMatrix(const glm::vec3& lightDir,
+												   const std::array<glm::vec3, 8>& frustumCorners) const {
+	// Compute frustum center
+	glm::vec3 frustumCenter{0.0f};
+	for (const auto& corner : frustumCorners) {
+		frustumCenter += corner;
+	}
+	frustumCenter /= 8.0f;
+
+	// Build light view matrix
+	glm::vec3 lightPos = frustumCenter - lightDir;
+	glm::mat4 lightView = glm::lookAt(lightPos, frustumCenter, glm::vec3(0.0f, 1.0f, 0.0f));
+
+	// Transform frustum corners to light space and compute AABB
+	float minX = std::numeric_limits<float>::max();
+	float maxX = std::numeric_limits<float>::lowest();
+	float minY = std::numeric_limits<float>::max();
+	float maxY = std::numeric_limits<float>::lowest();
+	float minZ = std::numeric_limits<float>::max();
+	float maxZ = std::numeric_limits<float>::lowest();
+
+	for (const auto& corner : frustumCorners) {
+		glm::vec4 lightSpacePos = lightView * glm::vec4(corner, 1.0f);
+		minX = std::min(minX, lightSpacePos.x);
+		maxX = std::max(maxX, lightSpacePos.x);
+		minY = std::min(minY, lightSpacePos.y);
+		maxY = std::max(maxY, lightSpacePos.y);
+		minZ = std::min(minZ, lightSpacePos.z);
+		maxZ = std::max(maxZ, lightSpacePos.z);
+	}
+
+	// Extend Z bounds to capture shadow casters behind the camera
+	minZ -= 3.0f;
+
+	// Minimal padding for tighter bounds
+	float padding = 1.0f;
+	minX -= padding;
+	maxX += padding;
+	minY -= padding;
+	maxY += padding;
+
+	// Build orthographic projection from AABB
+	float nearPlane = -maxZ;
+	float farPlane = -minZ;
+	if (nearPlane >= farPlane) {
+		nearPlane = 0.1f;
+		farPlane = 200.0f;
+	}
+	glm::mat4 lightProj = glm::ortho(minX, maxX, minY, maxY, nearPlane, farPlane);
+	lightProj[1][1] *= -1.0f; // Flip Y for Vulkan
+
+	return lightProj * lightView;
+}
+
+void Renderer::updateShadowData() {
+	if (!_currentRenderParams || !_currentRenderParams->lights || _currentRenderParams->lights->empty()) {
+		_shadowCasterCount = 0;
+		return;
+	}
+
+	// Step 1: Compute camera frustum corners (shared by all lights)
+	constexpr float shadowDistance = 10.0f;
+	float aspect = static_cast<float>(_swapChain->getExtent().width)
+				 / static_cast<float>(_swapChain->getExtent().height);
+
+	glm::mat4 limitedProj = glm::perspective(glm::radians(45.0f), aspect, 0.1f, shadowDistance);
+	limitedProj[1][1] *= -1.0f; // Vulkan Y-flip
+	glm::mat4 invViewProj = glm::inverse(limitedProj * _currentRenderParams->viewMatrix);
+
+	std::array<glm::vec4, 8> ndcCorners = {{
+		{-1, -1, 0, 1}, {1, -1, 0, 1}, {-1, 1, 0, 1}, {1, 1, 0, 1},
+		{-1, -1, 1, 1}, {1, -1, 1, 1}, {-1, 1, 1, 1}, {1, 1, 1, 1}
+	}};
+
+	std::array<glm::vec3, 8> worldCorners;
+	for (int i = 0; i < 8; ++i) {
+		glm::vec4 p = invViewProj * ndcCorners[i];
+		worldCorners[i] = glm::vec3(p) / p.w;
+	}
+
+	// Step 2: Build ShadowData for each shadow-casting directional light
+	std::vector<ShadowData> shadows;
+	uint32_t shadowIdx = 0;
+	constexpr float atlasSize = static_cast<float>(SHADOW_ATLAS_SIZE);
+	constexpr float tileNorm = static_cast<float>(SHADOW_TILE_SIZE) / atlasSize;
+
+	for (auto& light : *_currentRenderParams->lights) {
+		if (light.positionAndType.w != 0) continue;    // Directional only
+		if (light.spotAngles.z < 0) continue;           // Not a shadow caster
+		if (shadowIdx >= MAX_SHADOW_TILES) break;       // Atlas full
+
+		glm::vec3 lightDir = glm::normalize(glm::vec3(light.directionAndRange));
+		auto [tileX, tileY] = shadowTilePixelOffset(shadowIdx);
+
+		ShadowData sd;
+		sd.lightSpaceMatrix = computeFrustumLightSpaceMatrix(lightDir, worldCorners);
+		sd.atlasRegion = glm::vec4(
+			static_cast<float>(tileX) / atlasSize,
+			static_cast<float>(tileY) / atlasSize,
+			tileNorm, tileNorm
+		);
+		shadows.push_back(sd);
+
+		// Patch shadowIndex in-place
+		light.spotAngles.z = static_cast<float>(shadowIdx);
+		shadowIdx++;
+	}
+
+	_shadowCasterCount = shadowIdx;
+
+	// Step 3: Upload to SSBO
+	if (shadows.empty()) return;
+
+	auto& frame = _frames[_currentFrameIndex];
+	vk::DeviceSize requiredSize = shadows.size() * sizeof(ShadowData);
+
+	if (!frame.shadowDataBuffer || frame.shadowDataBuffer->getSize() < requiredSize) {
+		vk::DeviceSize allocSize =
+			std::max(requiredSize, static_cast<vk::DeviceSize>(MAX_SHADOW_TILES * sizeof(ShadowData)));
+
+		frame.shadowDataBuffer = std::make_unique<VulkanBuffer>(
+			_device, allocSize,
+			vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress,
+			vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+		frame.shadowDataBuffer->map();
+	}
+	frame.shadowDataBuffer->upload(shadows.data(), requiredSize);
 }
 
 bool Renderer::beginFrame() {
@@ -893,7 +959,7 @@ void Renderer::createDepthResources() {
 	vk::Extent2D extent = getSwapChainExtent();
 
 	FISHY_LOG_TRACE("Creating depth resources: {}x{} format:{}", extent.width, extent.height,
-						  vk::to_string(_depthFormat));
+					vk::to_string(_depthFormat));
 
 	// Create Image using VMA (keep vk:: style, convert to Vk for VMA)
 	vk::ImageCreateInfo imageInfo{.imageType = vk::ImageType::e2D,
@@ -1093,7 +1159,7 @@ void Renderer::buildUnifiedBuffersFromScene(Scene& scene) {
 			.indexCount = static_cast<uint32_t>(indices.size()),
 			.vertexOffset = static_cast<int32_t>(allVertices.size()),
 		};
-		mesh.meshRegionIndex = static_cast<uint32_t>(_meshRegions.size());		
+		mesh.meshRegionIndex = static_cast<uint32_t>(_meshRegions.size());
 		_meshRegions.push_back(region);
 
 		allVertices.insert(allVertices.end(), vertices.begin(), vertices.end());
@@ -1139,8 +1205,7 @@ void Renderer::buildUnifiedBuffersFromScene(Scene& scene) {
 	});
 
 	_unifiedBuffersDirty = false;
-	FISHY_LOG_TRACE("Built unified buffers from scene: {} vertices, {} indices", allVertices.size(),
-						  allIndices.size());
+	FISHY_LOG_TRACE("Built unified buffers from scene: {} vertices, {} indices", allVertices.size(), allIndices.size());
 }
 
 void Renderer::buildInstanceData(Scene& scene) {

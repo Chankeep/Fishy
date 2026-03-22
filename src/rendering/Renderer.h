@@ -87,6 +87,10 @@ private:
 	void prepareSwapchainForRendering(const vk::raii::CommandBuffer& cmd);
 	void prepareSwapchainForPresent(const vk::raii::CommandBuffer& cmd);
 	void updateUniformBuffer(uint32_t frameIndex);
+	void updateLightBuffer();
+	void updateShadowData();
+	[[nodiscard]] glm::mat4 computeFrustumLightSpaceMatrix(const glm::vec3& lightDir,
+														   const std::array<glm::vec3, 8>& frustumCorners) const;
 	void buildSceneData(Scene& scene);
 	[[nodiscard]] RenderGraphContext createRenderContext(const RenderParams& params);
 	void executeUIPass(RenderGraphContext& ctx, entt::registry& registry,
@@ -122,11 +126,15 @@ private:
 		vk::raii::Semaphore imageAvailableSemaphore = nullptr;
 		vk::raii::Fence inFlightFence = nullptr;
 		std::unique_ptr<VulkanBuffer> uniformBuffer;
-		vk::raii::DescriptorSet descriptorSet = nullptr; // Global UBO set
+		vk::raii::DescriptorSet descriptorSet = nullptr; // Set 0: IBL textures + shadow map
 		// Indirect draw buffer
 		std::unique_ptr<VulkanBuffer> indirectBuffer;
 		// Instance data SSBO for bindless rendering
 		std::unique_ptr<VulkanBuffer> instanceDataBuffer;
+		// Light data SSBO for multi-lighting
+		std::unique_ptr<VulkanBuffer> lightDataBuffer;
+		// Shadow data SSBO for multi-light shadows
+		std::unique_ptr<VulkanBuffer> shadowDataBuffer;
 	};
 
 	VulkanDevice& _device;
@@ -188,6 +196,7 @@ private:
 	std::vector<vk::DrawIndexedIndirectCommand> _indirectCommands;
 	std::vector<MeshRegion> _meshRegions;	 // Per-primitive offsets in unified buffers
 	std::vector<InstanceData> _instanceData; // CPU-side instance data for SSBO upload
+	uint32_t _shadowCasterCount = 0;          // Number of shadow-casting lights this frame
 
 	// Unified geometry buffers (rebuilt when model changes)
 	std::unique_ptr<VulkanBuffer> _unifiedVertexBuffer;

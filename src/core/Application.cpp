@@ -117,13 +117,23 @@ Application::Application()
 	Entity lightEntity = _scene->createEntity("DirectionalLight");
 	auto& light = lightEntity.addComponent<LightComponent>();
 	light.type = LightType::Directional;
-	light.color = glm::vec3(1.0f, 1.0f, 1.0f); // Warm white
-	light.intensity = 5.0f;
+	light.color = glm::vec3(1.0f, 1.0f, 1.0f);
+	light.intensity = 2.f;
 
-	// Set light direction via transform rotation
 	auto& lightTransform = lightEntity.getComponent<TransformComponent>();
-	lightTransform.setRotationEuler(glm::vec3(glm::radians(-45.0f), glm::radians(45.0f), 0.0f));
-	FISHY_LOG_TRACE("Light entity created");
+	lightTransform.setRotationEuler(glm::vec3(glm::radians(-30.0f), glm::radians(-90.0f), 0.0f));
+	FISHY_LOG_TRACE("Light entity 1 created");
+
+	// Second directional light — different angle, warm tint
+	Entity lightEntity2 = _scene->createEntity("DirectionalLight2");
+	auto& light2 = lightEntity2.addComponent<LightComponent>();
+	light2.type = LightType::Directional;
+	light2.color = glm::vec3(1.0f, 0.85f, 0.6f); // Warm sunset
+	light2.intensity = 2.f;
+
+	auto& lightTransform2 = lightEntity2.getComponent<TransformComponent>();
+	lightTransform2.setRotationEuler(glm::vec3(glm::radians(-45.0f), glm::radians(45.0f), 0.0f));
+	FISHY_LOG_TRACE("Light entity 2 created");
 
 	// Load IBL environment
 	try {
@@ -197,13 +207,7 @@ void Application::run() {
 			renderParams.cameraPosition = glm::vec3(0.0f);
 		}
 
-		// Use first light from LightingSystem if available
-		const auto& lights = _lightingSystem.getLightData();
-		if (!lights.empty()) {
-			const auto& light = lights[0];
-			renderParams.lightDirection = glm::vec3(light.directionAndRange);
-			renderParams.lightColor = glm::vec3(light.colorAndIntensity) * light.colorAndIntensity.w;
-		}
+		renderParams.lights = &_lightingSystem.getLightData();
 
 		// Start ImGui frame
 		_imguiLayer->newFrame();

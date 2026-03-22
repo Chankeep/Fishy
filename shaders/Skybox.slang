@@ -1,47 +1,18 @@
-// Skybox Shader
-// Renders a cubemap as the scene background
+// Skybox Shader — Renders a cubemap as the scene background
+
+import Common;
 
 // ============================================================================
-// Vertex Shader Input/Output
+// Skybox-specific Output
 // ============================================================================
-
-struct VSInput {
-    [[vk::location(0)]] float3 inPosition;
-    [[vk::location(1)]] float3 inNormal;    // 未使用，但 Vertex 结构需要
-    [[vk::location(2)]] float2 inTexCoord;  // 未使用
-    [[vk::location(3)]] float4 inTangent;   // 未使用
-};
 
 struct VSOutput {
     float4 pos : SV_Position;
-    float3 localPos; // 用于采样 Cubemap 的方向向量
+    float3 localPos; // Direction vector for cubemap sampling
 };
 
-// ============================================================================
-// Uniforms - 复用 Set 0 的 GlobalUBO
-// ============================================================================
-
-struct GlobalUBO {
-    float4x4 view;
-    float4x4 proj;
-    float4x4 lightSpaceMatrix;
-    float4 camPos;
-    float4 lightDir;
-    float4 lightColor;
-    float debugViewInputs;
-    float debugViewEquation;
-    float prefilteredMipLevels;
-    float iblIntensity;
-};
-
-
-// IBL 预过滤环境贴图 (Set 0, binding 1)
+// IBL prefiltered environment map (Set 0, binding 1)
 [[vk::binding(1, 0)]] SamplerCube prefilteredEnvMap;
-
-struct PushConstants {
-    uint64_t unused;          // instanceDataAddress (Skybox 不用)
-    GlobalUBO* globalDataPtr;
-};
 
 // ============================================================================
 // Vertex Shader
@@ -51,11 +22,10 @@ struct PushConstants {
 VSOutput vertMain(VSInput input, uniform PushConstants pc) {
     VSOutput output;
     
-    // 传递本地位置作为 Cubemap 采样方向
+    // Pass local position as cubemap sample direction
     output.localPos = input.inPosition;
     
-    // 移除 View 矩阵的平移分量，只保留旋转
-    // 这样 Skybox 只随相机旋转而变化，不随平移而变化
+    // Remove translation from view matrix, keep rotation only
     float4x4 rotView = pc.globalDataPtr.view;
     rotView[0][3] = 0.0;
     rotView[1][3] = 0.0;
@@ -63,8 +33,7 @@ VSOutput vertMain(VSInput input, uniform PushConstants pc) {
     
     float4 clipPos = mul(pc.globalDataPtr.proj, mul(rotView, float4(input.inPosition, 1.0)));
     
-    // 将 z 设为 w，确保深度始终为 1.0 (最远处)
-    // NDC 深度 = z/w = w/w = 1.0
+    // Set z = w so depth is always 1.0 (farthest)
     output.pos = clipPos.xyww;
     
     return output;
@@ -76,15 +45,10 @@ VSOutput vertMain(VSInput input, uniform PushConstants pc) {
 
 [shader("fragment")]
 float4 fragMain(VSOutput input) : SV_Target {
-    // 使用本地位置作为方向向量采样环境贴图
-    // 使用 LOD 0 获取最高分辨率的环境贴图
     float3 envColor = prefilteredEnvMap.SampleLevel(normalize(input.localPos), 0.0).rgb;
     
     // Tone mapping (Reinhard)
     envColor = envColor / (envColor + float3(1.0));
-    
-    // Gamma correction
-    envColor = pow(envColor, float3(1.0 / 2.2));
     
     return float4(envColor, 1.0);
 }

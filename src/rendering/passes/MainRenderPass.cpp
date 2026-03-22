@@ -50,8 +50,11 @@ void MainRenderPass::execute(RenderGraphContext& ctx, [[maybe_unused]] entt::reg
 	ctx.cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *_pipeline.getLayout(), 1, ctx.bindlessTextureSet,
 							   nullptr);
 
-	// Push constants for BDA
-	PushConstants pc{.instanceDataAddress = ctx.instanceDataAddress, .globalDataAddress = ctx.globalDataAddress};
+	// Push constants (BDA pointers)
+	PushConstants pc{.instanceDataAddress = ctx.instanceDataAddress,
+					 .globalDataAddress = ctx.globalDataAddress,
+					 .lightDataAddress = ctx.lightDataAddress,
+					 .shadowDataAddress = ctx.shadowDataAddress};
 
 	ctx.cmd.pushConstants<PushConstants>(*_pipeline.getLayout(),
 										 vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, pc);
