@@ -6,7 +6,7 @@ VulkanImage::VulkanImage(VmaAllocator allocator, const vk::ImageCreateInfo& imag
 						 const VmaAllocationCreateInfo& allocInfo)
 	: _allocator(allocator) {
 
-	// vulkan.hpp 的结构体二进制兼容 Vk 结构体，可以直接 reinterpret_cast
+	// vulkan.hpp structs are binary compatible with Vk structs, can be directly casted
 	const VkImageCreateInfo& rawInfo = static_cast<const VkImageCreateInfo&>(imageInfo);
 
 	VkResult result = vmaCreateImage(_allocator, &rawInfo, &allocInfo, &_image, &_allocation, nullptr);
@@ -20,21 +20,21 @@ VulkanImage::VulkanImage(VmaAllocator allocator, const vk::ImageCreateInfo& imag
 
 VulkanImage::~VulkanImage() { destroy(); }
 
-// 移动构造
+// Move constructor
 VulkanImage::VulkanImage(VulkanImage&& other) noexcept
 	: _allocator(other._allocator), _image(other._image), _allocation(other._allocation),
-	  _view(std::move(other._view)) { // View 也需要移动
+	  _view(std::move(other._view)) { // View also needs to be moved
 
-	// 重置源对象，防止 Double Free
+	// Reset source object to prevent Double Free
 	other._image = VK_NULL_HANDLE;
 	other._allocation = nullptr;
 	other._allocator = nullptr;
 }
 
-// 移动赋值
+// Move assignment
 VulkanImage& VulkanImage::operator=(VulkanImage&& other) noexcept {
 	if (this != &other) {
-		destroy(); // 先清理自己的旧资源
+		destroy(); // Clean up own old resources first
 
 		_allocator = other._allocator;
 		_image = other._image;
@@ -49,10 +49,10 @@ VulkanImage& VulkanImage::operator=(VulkanImage&& other) noexcept {
 }
 
 void VulkanImage::destroy() {
-	// 1. 先销毁 View (vk::raii 成员变量会自动处理，但如果有手动逻辑写在这里)
-	_view.clear(); // 显式清除 View，尽管析构函数会自动做
+	// 1. Destroy View first (vk::raii member automatically handles it, but manual logic can go here)
+	_view.clear(); // Explicitly clear View, even though destructor handles it
 
-	// 2. 再销毁 Image
+	// 2. Destroy Image next
 	if (_image && _allocator) {
 		vmaDestroyImage(_allocator, _image, _allocation);
 		_image = VK_NULL_HANDLE;
@@ -61,11 +61,11 @@ void VulkanImage::destroy() {
 }
 
 void VulkanImage::createView(const vk::raii::Device& device, const vk::ImageViewCreateInfo& viewInfo) {
-	// 确保 viewInfo 中的 image 句柄指向自己
+	// Ensure image handle in viewInfo points to self
 	vk::ImageViewCreateInfo info = viewInfo;
 	info.image = _image;
 
-	// 赋值给成员变量，利用 RAII 接管生命周期
+	// Assign to member variable, using RAII to govern lifecycle
 	_view = vk::raii::ImageView(device, info);
 }
 

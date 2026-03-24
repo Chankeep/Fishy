@@ -1,88 +1,99 @@
-# 🐟 Fishy Engine
+# Fishy Engine
 
-一个基于现代 Vulkan (C++20) 和 ECS 架构的轻量级渲染引擎。
+Fishy Engine is a lightweight, modern rendering engine built with modern C++, Vulkan 1.3+, and an Entity-Component-System (ECS) architecture.
 
-## 🎯 设计哲学
+![Fishy Engine Demo](docs/images/show.png)
 
-**"Simple & Good"**
+## Design Philosophy
 
-我们追求代码的清晰与显式，拒绝隐式的"Magic"。
-*   **架构清晰**: 严格遵循 ECS 架构 (EnTT)，数据 (Component) 与逻辑 (System) 分离。
-*   **显式编排**: `Application::run` 显式控制 Frame Loop，逻辑流向一目了然。
-*   **现代堆栈**: 全面拥抱 C++20 与 Vulkan 1.3+ 生态。
+The engine is engineered around the principle of "Simple & Good", prioritizing explicit control and architectural clarity over hidden behavior.
+- Strict separation of data (Components) and logic (Systems) using EnTT.
+- Explicit frame loop orchestration and modern Vulkan lifecycle management.
+- Complete embrace of modern C++ paradigms.
 
-## ✨ 技术栈
+## Technical Details
 
-*   **Language**: C++20
-*   **Architecture**: ECS (Entity-Component-System) via [EnTT](https://github.com/skypjack/entt)
-*   **Graphics**: Vulkan 1.3+ (Dynamic Rendering)
-    *   **Meta-loader**: `volk`
-    *   **Bootstrap**: `vk-bootstrap`
-    *   **API Wrapper**: `vulkan-hpp` (RAII)
-*   **Assets**:
-    *   **Models**: `tinygltf` (glTF 2.0)
-    *   **Textures**: `stb_image` / `ktx`
-*   **Math**: `glm`
-*   **UI**: `Dear ImGui` (Docking)
-*   **Logging**: `spdlog`
+- **Language:** C++23
+- **Graphics API:** Vulkan 1.3+ (Dynamic Rendering)
+- **Shader Language:** Slang
+- **Architecture:** ECS via EnTT
+- **Dependencies:**
+  - Vulkan Bootstrap & Volk (Initialization)
+  - VulkanMemoryAllocator (Memory Management)
+  - vulkan-hpp (C++ RAII Bindings)
+  - fastgltf (glTF 2.0 Loading)
+  - libktx & stb_image (Texture Loading)
+  - GLM (Mathematics)
+  - Dear ImGui (UI, Docking Branch)
+  - spdlog (Logging)
 
-## 🚀 已实现功能
+## Core Features
 
-### 核心架构
-- ✅ **ECS 系统集成** (EnTT Registry, System/Component 分离)
-- ✅ **多帧并行渲染** (Frames in Flight)
-- ✅ **RAII 资源管理** (自动处理 Vulkan 对象生命周期)
-- ✅ **统一日志系统** (Console + File + Ringbuffer Sink)
+### Rendering & Ray Tracing
+- [x] PBR pipeline (Cook-Torrance BRDF)
+- [x] Image Based Lighting (IBL)
+- [ ] Shadows
+  - [x] Directional Light PCF Shadows (Max 16 lights, sharing a 4096x4096 shadow atlas)
+  - [ ] Point & Spot Light Shadows
+- [x] CPU coarse culling
+- [ ] Transparent & Opaque render queues
+- [ ] Shader hot-reloading
+- [ ] Hardware Accelerated Ray Tracing (Vulkan Ray Tracing Pipeline / Ray Queries)
 
-### 渲染特性
-- ✅ **PBR 渲染管线** (Cook-Torrance BRDF)
-- ✅ **IBL (Image Based Lighting)** (环境光照)
-- ✅ **glTF 2.0 模型加载** (Mesh, Material, Texture)
-- ✅ **ImGui 编辑器交互** (实时调整参数)
+### Engine Architecture & Vulkan
+- [x] ECS Architecture via EnTT
+- [x] VMA-backed buffer and image abstractions
+- [ ] Asynchronous resource streaming (via dedicated transfer queue)
+  - [ ] ThreadPool based on std::jthread
+  - [ ] Dedicated transfer queue
+- [ ] Runtime entity/model instantiation and destruction
+- [ ] Runtime component attachment and detachment
 
-### 资源系统
-- ✅ **Vulkan Buffer/Image 封装**
-- ✅ **纹理自动加载** (支持嵌入式及外部文件)
+#### GPU Driven Pipeline
+- [x] Bindless Textures for material sampling
+- [x] Buffer Device Address (BDA) & Push Constants for SSBO/UBO access
+- [ ] GPU driven culling(Compute-based)
 
-## 📂 项目结构
+### Resources & glTF 2.0
+- [x] Static mesh parsing
+- [x] Automatic texture and cubemap loading
+- [ ] glTF Material Extensions
+  - [ ] Transmission
+  - [ ] Clearcoat
 
-```
-Fishy/
-├── src/
-│   ├── core/              # 核心模块 (App, Window, VulkanContext)
-│   ├── ecs/               # ECS 架构
-│   │   ├── components/    # 纯数据组件 (Transform, Mesh, Camera...)
-│   │   └── systems/       # 无状态系统 (Render, Transform, Lighting...)
-│   ├── renderer/          # 渲染后端 (Vulkan Wrapper, Pipeline)
-│   ├── resources/         # 资源加载 (ModelLoader, IBL...)
-│   ├── scene/             # 场景管理 (Scene 包装类)
-│   └── ui/                # ImGui 层
-├── assets/                # 资源文件 (Models, Shaders, Environments)
-└── docs/                  # 开发文档
-```
+### Editor & Tools
+- [x] ImGui-based editor interfaces
+  - [x] Scene Hierarchy with parent-child tree
+  - [x] Properties inspection
+  - [x] Real-time Log window
+  - [ ] Content Browser
+- [x] Unified logging system (Console, File, RingBuffer)
 
-## 🛠️ 构建指南
+## Project Structure
 
-### 前置要求
-- **Vulkan SDK 1.3+**
-- **C++20 编译器** (MSVC 2022 v17+ / GCC 11+ / Clang 13+)
-- **CMake 3.20+**
+- `src/core/`: Application loop, window management, and Vulkan base context.
+- `src/ecs/`: Pure data components (Transform, Mesh, Camera) and stateless systems (Render, Lighting).
+- `src/renderer/`: Graphics pipelines and Vulkan rendering wrappers.
+- `src/resources/`: Asset loaders for models and environments.
+- `src/scene/`: Scene management entity wrappers.
+- `src/ui/`: ImGui editor layer integrations.
 
-### 步骤
+## Build Instructions
+
+**Requirements:**
+- Vulkan SDK 1.3+
+- C++23 Compiler (MSVC 2022 v17.1+ / GCC 12+ / Clang 14+)
+- CMake 3.20+
+
+**Steps:**
 ```bash
-# 1. 克隆仓库
 git clone https://github.com/your-repo/Fishy.git
 cd Fishy
-
-# 2. 生成工程
 mkdir build && cd build
 cmake ..
-
-# 3. 编译
 cmake --build . --config Release
 ```
 
+## License
 
-## 📄 License
-
-MIT
+MIT License

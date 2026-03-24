@@ -1,21 +1,21 @@
 #pragma once
 
-#include "Mesh.h" // 复用现有的 Vertex 结构
+#include "Mesh.h" // Reuse existing Vertex structure
 
 #include <memory>
 
 namespace Fishy {
 
 /**
- * @brief 用于生成基础几何体网格的工具类。
+ * @brief Tool class for generating basic geometric meshes.
  */
 class MeshGenerator {
 public:
 	/**
-	 * @brief 生成一个单位立方体网格 (边长 2, 中心在原点)。
-	 * @return 包含顶点和索引数据的 Mesh 对象。
+	 * @brief Generate a unit cube mesh (side length 2, center at origin).
+	 * @return A Mesh object containing vertex and index data.
 	 *
-	 * 用于 Skybox 渲染：顶点位置同时作为采样 Cubemap 的方向向量。
+	 * Used for Skybox rendering: vertex positions also act as direction vectors for sampling the Cubemap.
 	 */
 	[[nodiscard]] static std::shared_ptr<Mesh> createCube();
 };
