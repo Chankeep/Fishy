@@ -1,14 +1,14 @@
 cmake_minimum_required(VERSION 3.20)
 
-# 项目名称
+# Project Name
 project(Fishy LANGUAGES C CXX)
 
-# 设置 C++ 标准 (Vulkan-Hpp 建议使用 C++20，或者至少 C++17)
+# Set C++ Standard (Vulkan-Hpp recommends C++20, or at least C++17)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# 全局编译定义
+# Global Compile Definitions
 add_compile_definitions(VK_NO_PROTOTYPES)
 add_compile_definitions(VULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1)
 add_compile_definitions(GLM_FORCE_DEPTH_ZERO_TO_ONE)
@@ -19,26 +19,26 @@ if(MSVC)
 endif()
 
 # ==============================================================================
-# 1. 寻找 Vulkan SDK (所有平台必须安装)
+# 1. Find Vulkan SDK (Must be installed on all platforms)
 # ==============================================================================
 find_package(Vulkan REQUIRED)
 
 # ==============================================================================
-# 2. FetchContent Dependencies (跨平台自动下载)
+# 2. FetchContent Dependencies (Cross-platform auto-download)
 # ==============================================================================
 include(FetchContent)
 
-# 优化 FetchContent：避免每次 configure 都检查更新
+# Optimize FetchContent: Avoid checking for updates on every configure
 set(FETCHCONTENT_UPDATES_DISCONNECTED ON CACHE BOOL "Don't update deps on every configure")
 
 # ------------------------------------------------------------------------------
-# GLFW - 窗口管理
+# GLFW - Window Management
 # ------------------------------------------------------------------------------
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_INSTALL OFF CACHE BOOL "" FORCE)
-# 禁用 Wayland 后端，强制使用 X11，解决 WSLg 下窗口装饰缺失问题
+# Disable Wayland backend, force X11 to fix missing window decorations under WSLg
 set(GLFW_BUILD_WAYLAND OFF CACHE BOOL "" FORCE)
 
 FetchContent_Declare(
@@ -50,7 +50,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(glfw)
 
 # ------------------------------------------------------------------------------
-# GLM - 数学库
+# GLM - Math Library
 # ------------------------------------------------------------------------------
 FetchContent_Declare(
     glm
@@ -61,7 +61,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(glm)
 
 # ------------------------------------------------------------------------------
-# vk-bootstrap - Vulkan 初始化辅助库
+# vk-bootstrap - Vulkan Initialization Helper Library
 # ------------------------------------------------------------------------------
 FetchContent_Declare(
     vk-bootstrap
@@ -72,7 +72,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(vk-bootstrap)
 
 # ------------------------------------------------------------------------------
-# volk - Vulkan 函数加载器
+# volk - Vulkan Function Loader
 # ------------------------------------------------------------------------------
 set(VOLK_PULL_IN_VULKAN OFF CACHE BOOL "" FORCE)
 
@@ -86,14 +86,14 @@ FetchContent_MakeAvailable(volk)
 target_link_libraries(volk PRIVATE Vulkan::Vulkan)
 
 # ------------------------------------------------------------------------------
-# spdlog - 日志库（推荐：编译为静态库 + 使用内置 fmt）
+# spdlog - Logging Library (Recommended: compile as static library + use built-in fmt)
 # ------------------------------------------------------------------------------
 set(SPDLOG_BUILD_SHARED     OFF CACHE BOOL "" FORCE)
 set(SPDLOG_BUILD_TESTS      OFF CACHE BOOL "" FORCE)
 set(SPDLOG_BUILD_EXAMPLE    OFF CACHE BOOL "" FORCE)
 set(SPDLOG_BUILD_BENCH      OFF CACHE BOOL "" FORCE)
 set(SPDLOG_BUILD_WAL        OFF CACHE BOOL "" FORCE)
-set(SPDLOG_COMPILED_LIB     ON  CACHE BOOL "" FORCE)   # 关键：编译成库
+set(SPDLOG_COMPILED_LIB     ON  CACHE BOOL "" FORCE)   # Key: Compile as library
 
 FetchContent_Declare(
     spdlog
@@ -105,7 +105,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(spdlog)
 
 # ------------------------------------------------------------------------------
-# fastgltf - glTF 模型加载
+# fastgltf - glTF Model Loading
 # ------------------------------------------------------------------------------
 set(FASTGLTF_COMPILE_AS_CPP20 ON CACHE BOOL "" FORCE)
 
@@ -160,7 +160,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(libktx)
 
 if(MSVC)
-    # 禁用 libktx 的警告，避免第三方库的警告干扰
+    # Disable libktx warnings to avoid interference from third-party libraries
     target_compile_options(ktx PRIVATE /W0)
 endif()
 
@@ -176,7 +176,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(entt)
 
 # ------------------------------------------------------------------------------
-# Dear ImGui - 即时模式 GUI (Docking Branch)
+# Dear ImGui - Immediate Mode GUI (Docking Branch)
 # ------------------------------------------------------------------------------
 FetchContent_Declare(
     imgui
@@ -187,7 +187,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(imgui)
 
-# 创建 ImGui 静态库 (包含核心 + GLFW/Vulkan backends)
+# Create ImGui static library (includes core + GLFW/Vulkan backends)
 add_library(imgui STATIC
     ${imgui_SOURCE_DIR}/imgui.cpp
     ${imgui_SOURCE_DIR}/imgui_demo.cpp
@@ -209,7 +209,7 @@ target_link_libraries(imgui PUBLIC
     volk::volk
 )
 
-# 使用 volk 加载 Vulkan 函数
+# Use volk to load Vulkan functions
 target_compile_definitions(imgui PUBLIC
     IMGUI_IMPL_VULKAN_USE_VOLK
     VK_NO_PROTOTYPES
@@ -225,33 +225,33 @@ find_library(SLANG_LIB
 message(STATUS "Found Slang library: ${SLANG_LIB}")
 
 # ==============================================================================
-# 2. 设置输出目录
+# 2. Set Output Directory
 # ==============================================================================
-# 让编译出来的可执行文件都在 bin 目录下，shader 也在 bin/shaders 下
+# Ensure compiled executables run in bin directory, shaders in bin/shaders
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 # ==============================================================================
-# 4. 添加源文件
+# 4. Add Source Files
 # ==============================================================================
 
-# 递归包含 src 下的所有 .cpp 和 .h 文件
-# 注意：在生产环境中手动列出文件比 GLOB_RECURSE 更好，但为了开发方便先用 GLOB
+# Recursively include all .cpp and .h files under src
+# Note: Manually listing files is better than GLOB_RECURSE in production, but use GLOB for dev convenience
 file(GLOB_RECURSE SOURCE_FILES "src/*.cpp" "src/*.h")
 
 # ==============================================================================
-# 5. 定义可执行文件
+# 5. Define Executable
 # ==============================================================================
 
 add_executable(${PROJECT_NAME} ${SOURCE_FILES})
 
-# 包含路径 (Include Directories)
+# Include Directories
 target_include_directories(${PROJECT_NAME} PRIVATE
     src
     ${Vulkan_INCLUDE_DIRS}
     $<BUILD_INTERFACE:${spdlog_SOURCE_DIR}/include>
 )
 
-# 链接库 (Linking)
+# Linking Libraries
 target_link_libraries(${PROJECT_NAME} PRIVATE
     Vulkan::Vulkan
     glfw
@@ -270,13 +270,13 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 )
 
 target_precompile_headers(${PROJECT_NAME} PRIVATE
-    # 这里放你想全局使用的库
+    # Place libraries meant for global use here
     
     "${CMAKE_SOURCE_DIR}/src/core/LogSystem.h"
 )
 
 # ==============================================================================
-# 7. 复制 Assets (资源文件) 和 Shaders 到输出目录
+# 7. Copy Assets and Shaders to Output Directory
 # ==============================================================================
 
 add_custom_command(TARGET ${PROJECT_NAME}
