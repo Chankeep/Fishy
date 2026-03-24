@@ -1,4 +1,5 @@
 #include "Window.h"
+#include "LogSystem.h"
 #include <iostream>
 #include <stdexcept>
 
@@ -68,7 +69,6 @@ void Window::FramebufferResizeCallback(GLFWwindow* window, int width, int height
 	app->_properties.width = static_cast<uint32_t>(width);
 	app->_properties.height = static_cast<uint32_t>(height);
 	app->_framebufferResized = true;
-	FISHY_LOG_INFO("Framebuffer resized: {}x{}", width, height);
 }
 
 void Window::KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {

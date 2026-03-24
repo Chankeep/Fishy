@@ -8,11 +8,11 @@ namespace Fishy {
  * @brief Component for storing an entity's name/tag.
  */
 struct TagComponent {
-	std::string tag;
+	std::string name;
 
 	TagComponent() = default;
-	explicit TagComponent(const std::string& tag) : tag(tag) {}
-	explicit TagComponent(std::string&& tag) : tag(std::move(tag)) {}
+	explicit TagComponent(const std::string& name) : name(name) {}
+	explicit TagComponent(std::string&& name) : name(std::move(name)) {}
 };
 
 } // namespace Fishy

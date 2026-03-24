@@ -26,40 +26,40 @@
 
 namespace Fishy {
 
-// 辅助结构体，用来“偷运”source_location
+// Helper struct to 'smuggle' source_location
 struct LogFormat {
 	std::string_view str;
 	std::source_location loc;
 
-	// 构造函数：接收字符串，同时自动获取调用者的位置
-	// 这里的模板 T 允许你传入 const char*, std::string, string_view 等
+	// Constructor: takes string, automatically gets caller's location
+	// Template T allows passing const char*, std::string, string_view, etc.
 	template <typename T>
 	LogFormat(const T& s, const std::source_location& l = std::source_location::current()) : str(s), loc(l) {}
 };
 
 class LogSystem {
 public:
-	// 获取单例
+	// Get single instance
 	static LogSystem& get();
 
-	// 禁止拷贝
+	// Disable copy
 	LogSystem(const LogSystem&) = delete;
 	LogSystem& operator=(const LogSystem&) = delete;
 
-	// 初始化日志系统 (stdout, file, ringbuffer)
+	// Initialize log system (stdout, file, ringbuffer)
 	void init(const std::string& log_filename = "vulkan_app.log");
 
-	// 获取 spdlog 对象指针 (用于 vk-bootstrap callback 的 user_data)
+	// Get spdlog object pointer (for user_data in vk-bootstrap callback)
 	[[nodiscard]] std::shared_ptr<spdlog::logger> logger() { return m_logger; }
 	[[nodiscard]] std::shared_ptr<spdlog::logger> logger() const { return m_logger; }
 
-	// 获取 RingBuffer Sink (用于 GUI 显示，如 ImGui)
-	// 返回类型需要你在 cpp 中包含具体的 spdlog 头文件，或者这里使用 auto/template
-	// 为了接口干净，这里返回 void* 或者你需要包含 ringbuffer_sink.h
-	// 建议：直接获取最近的日志文本
+	// Get RingBuffer Sink (used for GUI display, e.g. ImGui)
+	// Return type requires incorporating specific spdlog headers in cpp, or use auto/template here
+	// For cleaner interface, void* could be used, or ringbuffer_sink.h should be included
+	// Suggestion: Retrieve the latest log texts directly
 	[[nodiscard]] std::vector<std::string> get_ringbuffer_logs(size_t count);
 
-	// 静态 Vulkan Debug 回调函数 (符合 vulkan.h 签名)
+	// Static Vulkan Debug Callback function (matching vulkan.h signature)
 	static VKAPI_ATTR VkBool32 VKAPI_CALL vulkan_debug_callback(
 		VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity, VkDebugUtilsMessageTypeFlagsEXT messageType,
 		const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData);
@@ -91,9 +91,9 @@ private:
 
 		spdlog::source_loc spd_loc{fmt.loc.file_name(), static_cast<int>(fmt.loc.line()), fmt.loc.function_name()};
 
-		// 注意：这里我们使用 runtime 格式化，因为我们把字符串包在了结构体里
-		// 这样会牺牲掉编译期的格式检查（比如 {} 数量不对不会报错，而是运行时报错），
-		// 但换来了完美的 source_location 支持。
+		// Note: we use runtime formatting here because string is wrapped in struct.
+		// This sacrifices compile-time format checking (e.g. incorrect {} count errors during runtime instead of compile time)
+		// but gains perfect support for source_location.
 		m_logger->log(spd_loc, lvl, spdlog::fmt_lib::runtime(fmt.str), std::forward<Args>(args)...);
 	}
 

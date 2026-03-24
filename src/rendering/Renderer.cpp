@@ -11,6 +11,7 @@
 #include "core/VulkanImage.h"
 #include "core/VulkanUtils.h"
 #include "RenderTexture.h"
+#include "SceneFramebuffer.h"
 #include "core/Window.h"
 #include "ecs/components/LightComponent.h"
 #include "ecs/components/MeshComponent.h"
@@ -97,34 +98,63 @@ Renderer::~Renderer() {
 	_unifiedIndexBuffer.reset();
 }
 
-void Renderer::renderScene(Scene& scene, const RenderParams& params,
-						   std::function<void(VkCommandBuffer)> uiRenderCallback) {
+
+
+void Renderer::renderToTexture(Scene& scene, const RenderParams& params, SceneFramebuffer& target) {
 	if (!beginFrame()) {
+		return;
+	}
+
+	// Update per-frame GPU data
+	_currentRenderParams = &params;
+	updateUniformBuffer(_currentFrameIndex);
+	updateShadowData();
+	updateLightBuffer();
+
+	// Build scene data for rendering
+	buildSceneData(scene);
+
+	// Transition offscreen color: ready for rendering
+	const auto& cmd = _frames[_currentFrameIndex].commandBuffer;
+	prepareOffscreenForRendering(cmd, target);
+
+	// Create render context targeting offscreen framebuffer
+	RenderGraphContext ctx = createRenderContext(params);
+	ctx.viewportExtent = target.getExtent();
+	ctx.colorAttachmentView = target.getColorTexture().getImageView();
+	ctx.depthAttachmentView = target.getDepthTexture().getImageView();
+
+	// Execute render graph (ShadowMap -> Main -> Skybox) to offscreen
+	_renderGraph.execute(ctx, scene.getRegistry());
+
+	// Transition offscreen color: ready for ImGui sampling
+	prepareOffscreenForSampling(cmd, target);
+
+	// NOTE: do NOT endFrame() here - renderUI() will handle that
+}
+
+void Renderer::renderUI(std::function<void(VkCommandBuffer)> uiCallback) {
+	if (!_isFrameStarted) {
 		return;
 	}
 
 	const auto& cmd = _frames[_currentFrameIndex].commandBuffer;
 
-	// Update per-frame GPU data
-	_currentRenderParams = &params;
-	updateUniformBuffer(_currentFrameIndex);
-	updateShadowData();    // Must come before updateLightBuffer (patches shadowIndex in _lightDataCopy)
-	updateLightBuffer();   // Uploads _lightDataCopy with patched shadow indices
-
-	// Prepare swapchain for rendering
+	// Transition swapchain for UI rendering
 	prepareSwapchainForRendering(cmd);
 
-	// Build scene data for rendering
-	buildSceneData(scene);
+	// Execute UI pass on swapchain
+	if (_uiPass && uiCallback) {
+		_uiPass->setCallback(std::move(uiCallback));
+		_uiPass->setImageView(*_swapChainImageViews[_currentImageIndex]);
 
-	// Create render context
-	RenderGraphContext ctx = createRenderContext(params);
+		RenderGraphContext uiCtx = createRenderContext(*_currentRenderParams);
+		uiCtx.viewportExtent = _swapChain->getExtent();
+		uiCtx.colorAttachmentView = *_swapChainImageViews[_currentImageIndex];
 
-	// Execute render graph (ShadowMapPass, MainRenderPass, SkyboxPass)
-	_renderGraph.execute(ctx, scene.getRegistry());
-
-	// Execute UI pass
-	executeUIPass(ctx, scene.getRegistry(), uiRenderCallback);
+		entt::registry dummyRegistry;
+		_uiPass->execute(uiCtx, dummyRegistry);
+	}
 
 	// Prepare swapchain for presentation
 	prepareSwapchainForPresent(cmd);
@@ -145,6 +175,24 @@ void Renderer::prepareSwapchainForPresent(const vk::raii::CommandBuffer& cmd) {
 								 vk::AccessFlagBits2::eColorAttachmentWrite, vk::AccessFlagBits2::eNone,
 								 vk::PipelineStageFlagBits2::eColorAttachmentOutput,
 								 vk::PipelineStageFlagBits2::eBottomOfPipe, vk::ImageAspectFlagBits::eColor);
+}
+
+void Renderer::prepareOffscreenForRendering(const vk::raii::CommandBuffer& cmd, SceneFramebuffer& target) {
+	VulkanUtils::transitionImage(*cmd, target.getColorTexture().getImage(), vk::ImageLayout::eUndefined,
+								 vk::ImageLayout::eColorAttachmentOptimal, vk::AccessFlagBits2::eNone,
+								 vk::AccessFlagBits2::eColorAttachmentWrite, vk::PipelineStageFlagBits2::eTopOfPipe,
+								 vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+								 vk::ImageAspectFlagBits::eColor);
+}
+
+void Renderer::prepareOffscreenForSampling(const vk::raii::CommandBuffer& cmd, SceneFramebuffer& target) {
+	VulkanUtils::transitionImage(*cmd, target.getColorTexture().getImage(),
+								 vk::ImageLayout::eColorAttachmentOptimal,
+								 vk::ImageLayout::eShaderReadOnlyOptimal,
+								 vk::AccessFlagBits2::eColorAttachmentWrite, vk::AccessFlagBits2::eShaderRead,
+								 vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+								 vk::PipelineStageFlagBits2::eFragmentShader,
+								 vk::ImageAspectFlagBits::eColor);
 }
 
 void Renderer::buildSceneData(Scene& scene) {
@@ -178,15 +226,6 @@ RenderGraphContext Renderer::createRenderContext(const RenderParams& params) {
 		.colorAttachmentView = *_swapChainImageViews[_currentImageIndex],
 		.depthAttachmentView = _depthImage->getImageView(),
 	};
-}
-
-void Renderer::executeUIPass(RenderGraphContext& ctx, entt::registry& registry,
-							 std::function<void(VkCommandBuffer)>& uiRenderCallback) {
-	if (_uiPass && uiRenderCallback) {
-		_uiPass->setCallback(uiRenderCallback);
-		_uiPass->setImageView(*_swapChainImageViews[_currentImageIndex]);
-		_uiPass->execute(ctx, registry);
-	}
 }
 
 void Renderer::recreateSwapChain() {
